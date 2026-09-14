@@ -1,0 +1,23 @@
+{
+  "name": "Update Monitor",
+  "short_name": "Update Monitor",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#151e27",
+  "theme_color": "#151e27",
+  "icons": [
+    {
+      "src": "android-chrome-192x192.png?v=0.3.284",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "web-app-icon-512.png?v=0.3.284",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
