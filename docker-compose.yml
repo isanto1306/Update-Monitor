@@ -1,0 +1,19 @@
+services:
+  update-monitor:
+    container_name: update-monitor
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      UPDATE_MONITOR_USERNAME: ${UPDATE_MONITOR_USERNAME}
+      UPDATE_MONITOR_PASSWORD: ${UPDATE_MONITOR_PASSWORD}
+      UPDATE_MONITOR_SESSION_SECRET: ${UPDATE_MONITOR_SESSION_SECRET}
+      UPDATE_MONITOR_SESSION_HTTPS_ONLY: ${UPDATE_MONITOR_SESSION_HTTPS_ONLY:-false}
+      UPDATE_MONITOR_SCAN_ON_START: ${UPDATE_MONITOR_SCAN_ON_START:-true}
+      UPDATE_MONITOR_GITHUB_TOKEN: ${UPDATE_MONITOR_GITHUB_TOKEN:-}
+      UPDATE_MONITOR_BACKUP_DIR: /app/backups
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/casaos:/host/run/casaos:ro
+      - ./cache:/app/cache
+      - ./backups:/app/backups
