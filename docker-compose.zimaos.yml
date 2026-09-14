@@ -11,7 +11,7 @@ services:
     deploy:
       resources:
         reservations:
-          memory: 256M
+          memory: 512M
 
     labels:
       icon: https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/web-app-icon-512.png
