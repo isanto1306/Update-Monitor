@@ -14,7 +14,7 @@ services:
           memory: 512M
 
     labels:
-      icon: https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/web-app-icon-512.png
+      icon: https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/update-monitor-source-highres.png
 
     network_mode: host
 
@@ -93,7 +93,7 @@ x-casaos:
   index: /
   port_map: "9001"
   scheme: http
-  icon: https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/web-app-icon-512.png
+  icon: https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/update-monitor-source-highres.png
   title:
     en_US: Update Monitor
     de_DE: Update Monitor
