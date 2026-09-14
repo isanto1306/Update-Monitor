@@ -1,0 +1,152 @@
+name: update-monitor
+
+services:
+  update-monitor:
+    container_name: update-monitor
+    hostname: update-monitor
+    image: ghcr.io/isanto1306/update-monitor:latest
+    restart: unless-stopped
+    init: true
+
+    deploy:
+      resources:
+        reservations:
+          memory: 256M
+
+    labels:
+      icon: https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/web-app-icon-512.png
+
+    network_mode: host
+
+    environment:
+      UPDATE_MONITOR_USERNAME: "CHANGE_ME_USERNAME"
+      UPDATE_MONITOR_PASSWORD: "CHANGE_ME_PASSWORD_AT_LEAST_12_CHARS"
+      UPDATE_MONITOR_SESSION_SECRET: "CHANGE_ME_SESSION_SECRET_AT_LEAST_32_CHARS"
+      UPDATE_MONITOR_SESSION_HTTPS_ONLY: "false"
+      UPDATE_MONITOR_SCAN_ON_START: "true"
+      UPDATE_MONITOR_GITHUB_TOKEN: ""
+      UPDATE_MONITOR_BACKUP_DIR: /app/backups
+
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: /var/run/casaos
+        target: /host/run/casaos
+        read_only: true
+      - type: bind
+        source: /DATA/AppData/update-monitor/cache
+        target: /app/cache
+      - type: bind
+        source: /DATA/AppData/update-monitor/backups
+        target: /app/backups
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    stop_grace_period: 30s
+
+    x-casaos:
+      envs:
+        - container: UPDATE_MONITOR_USERNAME
+          description:
+            en_US: Update Monitor login username. Change before installation.
+            de_DE: Benutzername für Update Monitor. Vor der Installation ändern.
+        - container: UPDATE_MONITOR_PASSWORD
+          description:
+            en_US: Update Monitor login password (at least 12 characters). Change before installation.
+            de_DE: Passwort für Update Monitor (mindestens 12 Zeichen). Vor der Installation ändern.
+        - container: UPDATE_MONITOR_SESSION_SECRET
+          description:
+            en_US: Private session secret (at least 32 characters). Generate a unique random value before installation.
+            de_DE: Privates Session Geheimnis (mindestens 32 Zeichen). Vor der Installation einen eindeutigen Zufallswert eintragen.
+        - container: UPDATE_MONITOR_SESSION_HTTPS_ONLY
+          description:
+            en_US: Set to true only when Update Monitor is served exclusively over HTTPS.
+            de_DE: Nur auf true setzen, wenn Update Monitor ausschließlich über HTTPS bereitgestellt wird.
+        - container: UPDATE_MONITOR_SCAN_ON_START
+          description:
+            en_US: Run an initial Docker scan after Update Monitor starts.
+            de_DE: Nach dem Start von Update Monitor eine erste Docker Prüfung ausführen.
+        - container: UPDATE_MONITOR_GITHUB_TOKEN
+          description:
+            en_US: Optional GitHub token for higher API limits. Leave empty when not used.
+            de_DE: Optionaler GitHub Token für höhere API Limits. Leer lassen, wenn nicht verwendet.
+      volumes:
+        - container: /app/cache
+          description:
+            en_US: Persistent Update Monitor settings, policies, scan state and caches.
+            de_DE: Persistente Update Monitor Einstellungen, Richtlinien, Prüfstatus und Cache Daten.
+        - container: /app/backups
+          description:
+            en_US: Persistent backups created by Update Monitor.
+            de_DE: Persistente Backups, die von Update Monitor erstellt werden.
+
+x-casaos:
+  id: io.github.isanto1306.update-monitor
+  store_app_id: update-monitor
+  main: update-monitor
+  index: /
+  port_map: "9001"
+  scheme: http
+  icon: https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/web-app-icon-512.png
+  title:
+    en_US: Update Monitor
+    de_DE: Update Monitor
+  tagline:
+    en_US: Docker update monitoring, policies, backups and restore for ZimaOS
+    de_DE: Docker Update Überwachung, Richtlinien, Backups und Wiederherstellung für ZimaOS
+  description:
+    en_US: |
+      Self-hosted Docker update dashboard for ZimaOS with image and version checks,
+      per-app update policies, targeted verification, update installation, backup
+      and restore workflows, and runtime information.
+
+      **Before installation:** Use **Custom install → Advanced (show more)** and
+      replace all security placeholders before the first start. Set your own
+      `UPDATE_MONITOR_USERNAME`, choose an `UPDATE_MONITOR_PASSWORD` with at least
+      12 characters, and generate a unique `UPDATE_MONITOR_SESSION_SECRET` with
+      at least 32 characters. Do not install the app with unchanged
+      `CHANGE_ME_...` values.
+
+      `UPDATE_MONITOR_GITHUB_TOKEN` is optional. Leave it empty if you do not
+      want to use a GitHub token.
+    de_DE: |
+      Selbst gehostetes Docker Update Dashboard für ZimaOS mit Image und
+      Versionsprüfung, Richtlinien pro App, gezielter Verifizierung,
+      Update Installation, Backup und Wiederherstellung sowie Laufzeitinformationen.
+
+      **Vor der Installation:** Über **Benutzerdefinierte Installation → Erweitert**
+      alle Sicherheits Platzhalter vor dem ersten Start ändern. Einen eigenen
+      `UPDATE_MONITOR_USERNAME` festlegen, ein `UPDATE_MONITOR_PASSWORD` mit
+      mindestens 12 Zeichen wählen und einen eindeutigen
+      `UPDATE_MONITOR_SESSION_SECRET` mit mindestens 32 Zeichen erzeugen. Die App
+      nicht mit unveränderten `CHANGE_ME_...` Werten installieren.
+
+      `UPDATE_MONITOR_GITHUB_TOKEN` ist optional und kann leer bleiben.
+  tips:
+    before_install:
+      en_US: >-
+        Before the first start, use Custom install → Advanced (show more). Change
+        UPDATE_MONITOR_USERNAME, set a password with at least 12 characters, and
+        generate a unique session secret with at least 32 characters. Do not
+        leave any CHANGE_ME_... placeholder unchanged.
+      de_DE: >-
+        Vor dem ersten Start die benutzerdefinierte Installation → Erweitert
+        verwenden. Benutzername ändern, ein Passwort mit mindestens 12 Zeichen
+        setzen und ein eindeutiges Session Geheimnis mit mindestens 32 Zeichen
+        erzeugen. Keine CHANGE_ME_... Platzhalter unverändert lassen.
+  author: isanto1306
+  developer: isanto1306
+  category: Others
+  architectures:
+    - amd64
+  version: "0.3.316"
+  update_at: "2026-09-14"
+  repo: https://github.com/isanto1306/Update-Monitor
+  support: https://github.com/isanto1306/Update-Monitor/issues
+  docs: https://github.com/isanto1306/Update-Monitor#readme
