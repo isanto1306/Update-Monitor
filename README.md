@@ -2,6 +2,36 @@
 
 Update Monitor is a self-hosted web application for ZimaOS that checks Docker applications for image and version updates and provides per-application update policies, targeted checks, update installation, backup and restore workflows, and runtime information.
 
+## Screenshots
+
+### Dashboard
+
+Overview of monitored Docker applications, update state, runtime status and available actions.
+
+![Update Monitor dashboard](https://isanto1306.github.io/zima-appstore/apps/io.github.isanto1306.update-monitor/assets/screenshot-1-dashboard.webp)
+
+### Application details
+
+Detailed information for an individual application, including image source, installed version, digest information, backup controls and self-protection.
+
+<p align="center">
+  <img src="https://isanto1306.github.io/zima-appstore/apps/io.github.isanto1306.update-monitor/assets/screenshot-2-details.webp" alt="Update Monitor application details" width="430">
+</p>
+
+### Automatic updates
+
+Configure update policy, schedule, weekdays, immediate installation and backup behavior for each application.
+
+![Update Monitor automatic updates](https://isanto1306.github.io/zima-appstore/apps/io.github.isanto1306.update-monitor/assets/screenshot-3-auto-updates.webp)
+
+### Backup and restore
+
+Manage backup retention, stored backups, restore operations and cleanup from the built-in backup interface.
+
+<p align="center">
+  <img src="https://isanto1306.github.io/zima-appstore/apps/io.github.isanto1306.update-monitor/assets/screenshot-4-backups.webp" alt="Update Monitor backup settings" width="800">
+</p>
+
 ## Requirements
 
 - ZimaOS / CasaOS App Management
