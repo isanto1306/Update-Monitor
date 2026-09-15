@@ -16,6 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fix temporary frontend matcher
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply_self_update_v0320.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''section_pattern = re.compile(r"async function installImageUpdate\\\\(app,backupMode='none'\\\\)\\\\{.*?\\\\n\\\\}\\\\nfunction formatMemory", re.S)'''
+          new = '''section_pattern = re.compile(r"async function installImageUpdate\\(app,backupMode='none'\\)\\{.*?\\n\\}\\n\\nfunction formatMemory", re.S)'''
+          if old not in text:
+              raise SystemExit('temporary frontend matcher line not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply v0.3.320 self update handoff
         run: python .github/scripts/apply_self_update_v0320.py
 
@@ -61,5 +75,3 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "Add safe self update handoff v0.3.320"
           git push
-
-# retry after patch script quoting fix
