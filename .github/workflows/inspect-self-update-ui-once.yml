@@ -15,12 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Show self update UI context
+      - name: Show self update context
         shell: bash
         run: |
           echo '--- version marker ---'
           grep -n -m 3 "UPDATE_MONITOR_VERSION" static/index.html || true
-          echo '--- version info error context ---'
-          grep -n -C 35 "Versionsinformationen konnten nicht geladen werden" static/index.html || true
-          echo '--- app update call context ---'
-          grep -n -C 45 "/api/app-update" static/index.html | head -n 220 || true
+          echo '--- app update UI ---'
+          grep -n -C 55 "async function installImageUpdate" static/index.html | head -n 180 || true
+          echo '--- perform image update ---'
+          grep -n -A 230 -B 35 "^def perform_image_update" app/main.py | head -n 320 || true
+          echo '--- self identity and protection ---'
+          grep -n -A 160 -B 25 "^def update_monitor_self_identity" app/main.py | head -n 260 || true
+          grep -n -A 80 -B 20 "^def is_update_monitor_self_app" app/main.py | head -n 150 || true
+          echo '--- startup init ---'
+          grep -n -A 180 -B 50 "UPDATE_MONITOR_SCAN_ON_START" app/main.py | tail -n 260 || true
