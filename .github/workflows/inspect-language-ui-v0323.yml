@@ -1,0 +1,60 @@
+name: Inspect language UI v0323
+
+on:
+  push:
+    branches:
+      - inspect-language-ui-v0323
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect Update Monitor and Disk Monitor language code
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import urllib.request, re
+
+          def dump(label, text, needles, radius=1800):
+              print(f'===== {label} =====')
+              print('chars', len(text), 'lines', text.count("\n")+1)
+              for needle in needles:
+                  print(f'\n--- NEEDLE: {needle} ---')
+                  start=0
+                  hits=0
+                  while True:
+                      i=text.find(needle,start)
+                      if i<0: break
+                      hits += 1
+                      a=max(0,i-radius); b=min(len(text),i+len(needle)+radius)
+                      print(text[a:b])
+                      print('\n<<< END HIT >>>')
+                      start=i+len(needle)
+                      if hits>=8: break
+                  print('hits_shown',hits)
+
+          u=Path('static/index.html').read_text(encoding='utf-8')
+          dump('UPDATE MONITOR',u,[
+              "updateMonitorLanguage",
+              "const translations",
+              "translations =",
+              "languageSelect",
+              "setLanguage(",
+              "Deutsch",
+              "English",
+              "UPDATE_MONITOR_VERSION",
+          ],2200)
+
+          url='https://raw.githubusercontent.com/isanto1306/Disk-Monitor/main/static/index.html'
+          d=urllib.request.urlopen(url, timeout=30).read().decode('utf-8')
+          dump('DISK MONITOR',d,[
+              "localStorage",
+              "Français",
+              "Português",
+              "Español",
+              "language",
+              "setLanguage(",
+          ],1800)
+          PY
