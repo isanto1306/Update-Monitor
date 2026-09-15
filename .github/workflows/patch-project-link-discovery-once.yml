@@ -21,164 +21,28 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import base64
           from pathlib import Path
-
           main_path = Path('app/main.py')
           text = main_path.read_text(encoding='utf-8')
-
           old_version = 'VERSION = "0.3.316"'
           new_version = 'VERSION = "0.3.319"'
           if old_version not in text:
               raise SystemExit('Expected backend version marker was not found.')
           text = text.replace(old_version, new_version, 1)
-
           marker = 'def docker_hub_project_link(image_ref):\n'
           if marker not in text:
               raise SystemExit('docker_hub_project_link marker was not found.')
-
-          helper = r'''DOCKER_HUB_REGISTRY_PREFIXES = (
-    "docker.io/",
-    "index.docker.io/",
-    "registry-1.docker.io/",
-)
-PROJECT_FORGE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
-
-
-def docker_hub_owner_repo(image_ref):
-    """Return an exact Docker Hub owner/repository pair when it is safe to infer."""
-    value = str(image_ref or "").strip()
-    if not value:
-        return None
-
-    # A digest never changes the repository identity.
-    value = value.split("@", 1)[0].strip()
-    lowered = value.lower()
-    for prefix in DOCKER_HUB_REGISTRY_PREFIXES:
-        if lowered.startswith(prefix):
-            value = value[len(prefix):]
-            lowered = value.lower()
-            break
-
-    # Do not reinterpret an explicitly named non-Docker-Hub registry as an
-    # owner.  This keeps the fallback conservative and avoids wrong links.
-    first = value.split("/", 1)[0]
-    if "." in first or ":" in first or first.lower() == "localhost":
-        return None
-
-    parts = [part for part in value.split("/") if part]
-    if len(parts) != 2:
-        return None
-
-    owner, repo = parts
-    if ":" in repo:
-        repo = repo.rsplit(":", 1)[0]
-
-    if not owner or not repo:
-        return None
-    if not PROJECT_FORGE_COMPONENT_RE.fullmatch(owner):
-        return None
-    if not PROJECT_FORGE_COMPONENT_RE.fullmatch(repo):
-        return None
-    return owner, repo
-
-
-def _forge_repository_exists(api_url, *, github=False):
-    """Probe one fixed public forge API. Never follows a user supplied host."""
-    headers = {
-        "User-Agent": "Update-Monitor/project-link-discovery",
-        "Accept": "application/json",
-    }
-    if github:
-        headers["Accept"] = "application/vnd.github+json"
-        try:
-            token, _source = active_github_token()
-        except Exception:
-            token = ""
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-
-    request = urllib.request.Request(api_url, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=4) as response:
-            return 200 <= int(getattr(response, "status", 200)) < 300
-    except urllib.error.HTTPError as exc:
-        # 404 means the repository is definitely absent.  Other HTTP errors
-        # (rate limiting, transient forge errors) are treated as no verified
-        # result so Update Monitor never invents a link.
-        return False
-    except Exception:
-        return False
-
-
-def verified_forge_project_link(image_ref):
-    """
-    Last-resort source discovery for Docker Hub images that expose no usable
-    OCI labels and no project URL in registry metadata.
-
-    Only an exact owner/repository pair is considered. GitHub, GitLab and
-    Codeberg are queried concurrently, and a link is returned only after the
-    corresponding repository API confirms that it exists. Preference order is
-    GitHub, then GitLab, then Codeberg when more than one exact match exists.
-    """
-    owner_repo = docker_hub_owner_repo(image_ref)
-    if not owner_repo:
-        return None
-
-    owner, repo = owner_repo
-    encoded_path = urllib.parse.quote(f"{owner}/{repo}", safe="")
-    probes = [
-        (
-            "github",
-            f"https://api.github.com/repos/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}",
-            f"https://github.com/{owner}/{repo}",
-            True,
-        ),
-        (
-            "gitlab",
-            f"https://gitlab.com/api/v4/projects/{encoded_path}",
-            f"https://gitlab.com/{owner}/{repo}",
-            False,
-        ),
-        (
-            "codeberg",
-            f"https://codeberg.org/api/v1/repos/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}",
-            f"https://codeberg.org/{owner}/{repo}",
-            False,
-        ),
-    ]
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(probes)) as pool:
-        futures = {
-            provider: pool.submit(_forge_repository_exists, api_url, github=is_github)
-            for provider, api_url, _project_url, is_github in probes
-        }
-        for provider, _api_url, project_url, _is_github in probes:
-            try:
-                exists = bool(futures[provider].result(timeout=5))
-            except Exception:
-                exists = False
-            if exists:
-                return {
-                    "url": project_url,
-                    "provider": provider,
-                    "source": f"forge-probe:{provider}",
-                }
-
-    return None
-
-
-'''
+          helper = base64.b64decode('RE9DS0VSX0hVQl9SRUdJU1RSWV9QUkVGSVhFUyA9ICgKICAgICJkb2NrZXIuaW8vIiwKICAgICJpbmRleC5kb2NrZXIuaW8vIiwKICAgICJyZWdpc3RyeS0xLmRvY2tlci5pby8iLAopClBST0pFQ1RfRk9SR0VfQ09NUE9ORU5UX1JFID0gcmUuY29tcGlsZShyIl5bQS1aYS16MC05XVtBLVphLXowLTlfLi1dezAsOTl9JCIpCgoKZGVmIGRvY2tlcl9odWJfb3duZXJfcmVwbyhpbWFnZV9yZWYpOgogICAgIiIiUmV0dXJuIGFuIGV4YWN0IERvY2tlciBIdWIgb3duZXIvcmVwb3NpdG9yeSBwYWlyIHdoZW4gaXQgaXMgc2FmZSB0byBpbmZlci4iIiIKICAgIHZhbHVlID0gc3RyKGltYWdlX3JlZiBvciAiIikuc3RyaXAoKQogICAgaWYgbm90IHZhbHVlOgogICAgICAgIHJldHVybiBOb25lCgogICAgIyBBIGRpZ2VzdCBuZXZlciBjaGFuZ2VzIHRoZSByZXBvc2l0b3J5IGlkZW50aXR5LgogICAgdmFsdWUgPSB2YWx1ZS5zcGxpdCgiQCIsIDEpWzBdLnN0cmlwKCkKICAgIGxvd2VyZWQgPSB2YWx1ZS5sb3dlcigpCiAgICBmb3IgcHJlZml4IGluIERPQ0tFUl9IVUJfUkVHSVNUUllfUFJFRklYRVM6CiAgICAgICAgaWYgbG93ZXJlZC5zdGFydHN3aXRoKHByZWZpeCk6CiAgICAgICAgICAgIHZhbHVlID0gdmFsdWVbbGVuKHByZWZpeCk6XQogICAgICAgICAgICBsb3dlcmVkID0gdmFsdWUubG93ZXIoKQogICAgICAgICAgICBicmVhawoKICAgICMgRG8gbm90IHJlaW50ZXJwcmV0IGFuIGV4cGxpY2l0bHkgbmFtZWQgbm9uLURvY2tlci1IdWIgcmVnaXN0cnkgYXMgYW4KICAgICMgb3duZXIuIFRoaXMga2VlcHMgdGhlIGZhbGxiYWNrIGNvbnNlcnZhdGl2ZSBhbmQgYXZvaWRzIHdyb25nIGxpbmtzLgogICAgZmlyc3QgPSB2YWx1ZS5zcGxpdCgiLyIsIDEpWzBdCiAgICBpZiAiLiIgaW4gZmlyc3Qgb3IgIjoiIGluIGZpcnN0IG9yIGZpcnN0Lmxvd2VyKCkgPT0gImxvY2FsaG9zdCI6CiAgICAgICAgcmV0dXJuIE5vbmUKCiAgICBwYXJ0cyA9IFtwYXJ0IGZvciBwYXJ0IGluIHZhbHVlLnNwbGl0KCIvIikgaWYgcGFydF0KICAgIGlmIGxlbihwYXJ0cykgIT0gMjoKICAgICAgICByZXR1cm4gTm9uZQoKICAgIG93bmVyLCByZXBvID0gcGFydHMKICAgIGlmICI6IiBpbiByZXBvOgogICAgICAgIHJlcG8gPSByZXBvLnJzcGxpdCgiOiIsIDEpWzBdCgogICAgaWYgbm90IG93bmVyIG9yIG5vdCByZXBvOgogICAgICAgIHJldHVybiBOb25lCiAgICBpZiBub3QgUFJPSkVDVF9GT1JHRV9DT01QT05FTlRfUkUuZnVsbG1hdGNoKG93bmVyKToKICAgICAgICByZXR1cm4gTm9uZQogICAgaWYgbm90IFBST0pFQ1RfRk9SR0VfQ09NUE9ORU5UX1JFLmZ1bGxtYXRjaChyZXBvKToKICAgICAgICByZXR1cm4gTm9uZQogICAgcmV0dXJuIG93bmVyLCByZXBvCgoKZGVmIF9mb3JnZV9yZXBvc2l0b3J5X2V4aXN0cyhhcGlfdXJsLCAqLCBnaXRodWI9RmFsc2UpOgogICAgIiIiUHJvYmUgb25lIGZpeGVkIHB1YmxpYyBmb3JnZSBBUEkuIE5ldmVyIGZvbGxvd3MgYSB1c2VyIHN1cHBsaWVkIGhvc3QuIiIiCiAgICBoZWFkZXJzID0gewogICAgICAgICJVc2VyLUFnZW50IjogIlVwZGF0ZS1Nb25pdG9yL3Byb2plY3QtbGluay1kaXNjb3ZlcnkiLAogICAgICAgICJBY2NlcHQiOiAiYXBwbGljYXRpb24vanNvbiIsCiAgICB9CiAgICBpZiBnaXRodWI6CiAgICAgICAgaGVhZGVyc1siQWNjZXB0Il0gPSAiYXBwbGljYXRpb24vdm5kLmdpdGh1Yitqc29uIgogICAgICAgIHRyeToKICAgICAgICAgICAgdG9rZW4sIF9zb3VyY2UgPSBhY3RpdmVfZ2l0aHViX3Rva2VuKCkKICAgICAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgICAgICB0b2tlbiA9ICIiCiAgICAgICAgaWYgdG9rZW46CiAgICAgICAgICAgIGhlYWRlcnNbIkF1dGhvcml6YXRpb24iXSA9IGYiQmVhcmVyIHt0b2tlbn0iCgogICAgcmVxdWVzdCA9IHVybGxpYi5yZXF1ZXN0LlJlcXVlc3QoYXBpX3VybCwgaGVhZGVycz1oZWFkZXJzLCBtZXRob2Q9IkdFVCIpCiAgICB0cnk6CiAgICAgICAgd2l0aCB1cmxsaWIucmVxdWVzdC51cmxvcGVuKHJlcXVlc3QsIHRpbWVvdXQ9NCkgYXMgcmVzcG9uc2U6CiAgICAgICAgICAgIHJldHVybiAyMDAgPD0gaW50KGdldGF0dHIocmVzcG9uc2UsICJzdGF0dXMiLCAyMDApKSA8IDMwMAogICAgZXhjZXB0IHVybGxpYi5lcnJvci5IVFRQRXJyb3I6CiAgICAgICAgcmV0dXJuIEZhbHNlCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBGYWxzZQoKCmRlZiB2ZXJpZmllZF9mb3JnZV9wcm9qZWN0X2xpbmsoaW1hZ2VfcmVmKToKICAgICIiIgogICAgTGFzdC1yZXNvcnQgc291cmNlIGRpc2NvdmVyeSBmb3IgRG9ja2VyIEh1YiBpbWFnZXMgdGhhdCBleHBvc2Ugbm8gdXNhYmxlCiAgICBPQ0kgbGFiZWxzIGFuZCBubyBwcm9qZWN0IFVSTCBpbiByZWdpc3RyeSBtZXRhZGF0YS4KCiAgICBPbmx5IGFuIGV4YWN0IG93bmVyL3JlcG9zaXRvcnkgcGFpciBpcyBjb25zaWRlcmVkLiBHaXRIdWIsIEdpdExhYiBhbmQKICAgIENvZGViZXJnIGFyZSBxdWVyaWVkIGNvbmN1cnJlbnRseSwgYW5kIGEgbGluayBpcyByZXR1cm5lZCBvbmx5IGFmdGVyIHRoZQogICAgY29ycmVzcG9uZGluZyByZXBvc2l0b3J5IEFQSSBjb25maXJtcyB0aGF0IGl0IGV4aXN0cy4gUHJlZmVyZW5jZSBvcmRlciBpcwogICAgR2l0SHViLCB0aGVuIEdpdExhYiwgdGhlbiBDb2RlYmVyZyB3aGVuIG1vcmUgdGhhbiBvbmUgZXhhY3QgbWF0Y2ggZXhpc3RzLgogICAgIiIiCiAgICBvd25lcl9yZXBvID0gZG9ja2VyX2h1Yl9vd25lcl9yZXBvKGltYWdlX3JlZikKICAgIGlmIG5vdCBvd25lcl9yZXBvOgogICAgICAgIHJldHVybiBOb25lCgogICAgb3duZXIsIHJlcG8gPSBvd25lcl9yZXBvCiAgICBlbmNvZGVkX3BhdGggPSB1cmxsaWIucGFyc2UucXVvdGUoZiJ7b3duZXJ9L3tyZXBvfSIsIHNhZmU9IiIpCiAgICBwcm9iZXMgPSBbCiAgICAgICAgKAogICAgICAgICAgICAiZ2l0aHViIiwKICAgICAgICAgICAgZiJodHRwczovL2FwaS5naXRodWIuY29tL3JlcG9zL3t1cmxsaWIucGFyc2UucXVvdGUob3duZXIsIHNhZmU9JycpfS97dXJsbGliLnBhcnNlLnF1b3RlKHJlcG8sIHNhZmU9JycpfSIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9naXRodWIuY29tL3tvd25lcn0ve3JlcG99IiwKICAgICAgICAgICAgVHJ1ZSwKICAgICAgICApLAogICAgICAgICgKICAgICAgICAgICAgImdpdGxhYiIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9naXRsYWIuY29tL2FwaS92NC9wcm9qZWN0cy97ZW5jb2RlZF9wYXRofSIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9naXRsYWIuY29tL3tvd25lcn0ve3JlcG99IiwKICAgICAgICAgICAgRmFsc2UsCiAgICAgICAgKSwKICAgICAgICAoCiAgICAgICAgICAgICJjb2RlYmVyZyIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9jb2RlYmVyZy5vcmcvYXBpL3YxL3JlcG9zL3t1cmxsaWIucGFyc2UucXVvdGUob3duZXIsIHNhZmU9JycpfS97dXJsbGliLnBhcnNlLnF1b3RlKHJlcG8sIHNhZmU9JycpfSIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9jb2RlYmVyZy5vcmcve293bmVyfS97cmVwb30iLAogICAgICAgICAgICBGYWxzZSwKICAgICAgICApLAogICAgXQoKICAgIHdpdGggY29uY3VycmVudC5mdXR1cmVzLlRocmVhZFBvb2xFeGVjdXRvcihtYXhfd29ya2Vycz1sZW4ocHJvYmVzKSkgYXMgcG9vbDoKICAgICAgICBmdXR1cmVzID0gewogICAgICAgICAgICBwcm92aWRlcjogcG9vbC5zdWJtaXQoX2ZvcmdlX3JlcG9zaXRvcnlfZXhpc3RzLCBhcGlfdXJsLCBnaXRodWI9aXNfZ2l0aHViKQogICAgICAgICAgICBmb3IgcHJvdmlkZXIsIGFwaV91cmwsIF9wcm9qZWN0X3VybCwgaXNfZ2l0aHViIGluIHByb2JlcwogICAgICAgIH0KICAgICAgICBmb3IgcHJvdmlkZXIsIF9hcGlfdXJsLCBwcm9qZWN0X3VybCwgX2lzX2dpdGh1YiBpbiBwcm9iZXM6CiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIGV4aXN0cyA9IGJvb2woZnV0dXJlc1twcm92aWRlcl0ucmVzdWx0KHRpbWVvdXQ9NSkpCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICBleGlzdHMgPSBGYWxzZQogICAgICAgICAgICBpZiBleGlzdHM6CiAgICAgICAgICAgICAgICByZXR1cm4gewogICAgICAgICAgICAgICAgICAgICJ1cmwiOiBwcm9qZWN0X3VybCwKICAgICAgICAgICAgICAgICAgICAicHJvdmlkZXIiOiBwcm92aWRlciwKICAgICAgICAgICAgICAgICAgICAic291cmNlIjogZiJmb3JnZS1wcm9iZTp7cHJvdmlkZXJ9IiwKICAgICAgICAgICAgICAgIH0KCiAgICByZXR1cm4gTm9uZQoKCg==').decode('utf-8')
           if 'def verified_forge_project_link(image_ref):' in text:
               raise SystemExit('Verified forge fallback already exists.')
           text = text.replace(marker, helper + marker, 1)
-
-          old_resolver = '''    registry = docker_hub_project_link(image_ref)\n    if registry and registry.get("url"):\n        return project_link_cache_put(\n            image_ref,\n            url=registry.get("url"),\n            provider=registry.get("provider"),\n            source=registry.get("source"),\n        )\n\n    # Preserve a previously known positive link if a later revalidation cannot\n'''
-          new_resolver = '''    registry = docker_hub_project_link(image_ref)\n    if registry and registry.get("url"):\n        return project_link_cache_put(\n            image_ref,\n            url=registry.get("url"),\n            provider=registry.get("provider"),\n            source=registry.get("source"),\n        )\n\n    verified_forge = verified_forge_project_link(image_ref)\n    if verified_forge and verified_forge.get("url"):\n        return project_link_cache_put(\n            image_ref,\n            url=verified_forge.get("url"),\n            provider=verified_forge.get("provider"),\n            source=verified_forge.get("source"),\n        )\n\n    # Preserve a previously known positive link if a later revalidation cannot\n'''
+          old_resolver = base64.b64decode('ICAgIHJlZ2lzdHJ5ID0gZG9ja2VyX2h1Yl9wcm9qZWN0X2xpbmsoaW1hZ2VfcmVmKQogICAgaWYgcmVnaXN0cnkgYW5kIHJlZ2lzdHJ5LmdldCgidXJsIik6CiAgICAgICAgcmV0dXJuIHByb2plY3RfbGlua19jYWNoZV9wdXQoCiAgICAgICAgICAgIGltYWdlX3JlZiwKICAgICAgICAgICAgdXJsPXJlZ2lzdHJ5LmdldCgidXJsIiksCiAgICAgICAgICAgIHByb3ZpZGVyPXJlZ2lzdHJ5LmdldCgicHJvdmlkZXIiKSwKICAgICAgICAgICAgc291cmNlPXJlZ2lzdHJ5LmdldCgic291cmNlIiksCiAgICAgICAgKQoKICAgICMgUHJlc2VydmUgYSBwcmV2aW91c2x5IGtub3duIHBvc2l0aXZlIGxpbmsgaWYgYSBsYXRlciByZXZhbGlkYXRpb24gY2Fubm90Cg==').decode('utf-8')
+          new_resolver = base64.b64decode('ICAgIHJlZ2lzdHJ5ID0gZG9ja2VyX2h1Yl9wcm9qZWN0X2xpbmsoaW1hZ2VfcmVmKQogICAgaWYgcmVnaXN0cnkgYW5kIHJlZ2lzdHJ5LmdldCgidXJsIik6CiAgICAgICAgcmV0dXJuIHByb2plY3RfbGlua19jYWNoZV9wdXQoCiAgICAgICAgICAgIGltYWdlX3JlZiwKICAgICAgICAgICAgdXJsPXJlZ2lzdHJ5LmdldCgidXJsIiksCiAgICAgICAgICAgIHByb3ZpZGVyPXJlZ2lzdHJ5LmdldCgicHJvdmlkZXIiKSwKICAgICAgICAgICAgc291cmNlPXJlZ2lzdHJ5LmdldCgic291cmNlIiksCiAgICAgICAgKQoKICAgIHZlcmlmaWVkX2ZvcmdlID0gdmVyaWZpZWRfZm9yZ2VfcHJvamVjdF9saW5rKGltYWdlX3JlZikKICAgIGlmIHZlcmlmaWVkX2ZvcmdlIGFuZCB2ZXJpZmllZF9mb3JnZS5nZXQoInVybCIpOgogICAgICAgIHJldHVybiBwcm9qZWN0X2xpbmtfY2FjaGVfcHV0KAogICAgICAgICAgICBpbWFnZV9yZWYsCiAgICAgICAgICAgIHVybD12ZXJpZmllZF9mb3JnZS5nZXQoInVybCIpLAogICAgICAgICAgICBwcm92aWRlcj12ZXJpZmllZF9mb3JnZS5nZXQoInByb3ZpZGVyIiksCiAgICAgICAgICAgIHNvdXJjZT12ZXJpZmllZF9mb3JnZS5nZXQoInNvdXJjZSIpLAogICAgICAgICkKCiAgICAjIFByZXNlcnZlIGEgcHJldmlvdXNseSBrbm93biBwb3NpdGl2ZSBsaW5rIGlmIGEgbGF0ZXIgcmV2YWxpZGF0aW9uIGNhbm5vdAo=').decode('utf-8')
           if old_resolver not in text:
               raise SystemExit('Expected project-link resolver block was not found.')
           text = text.replace(old_resolver, new_resolver, 1)
           main_path.write_text(text, encoding='utf-8')
-
           index_path = Path('static/index.html')
           index = index_path.read_text(encoding='utf-8')
           old_frontend = "const UPDATE_MONITOR_VERSION = 'v0.3.318';"
