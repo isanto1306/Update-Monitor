@@ -88,4 +88,4 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.321**
+Current release: **v0.3.322**
