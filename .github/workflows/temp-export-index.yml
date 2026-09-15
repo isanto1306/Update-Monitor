@@ -1,0 +1,23 @@
+name: Temporary export current index
+
+on:
+  push:
+    paths:
+      - '.github/workflows/temp-export-index.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Upload current index
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-monitor-current-index
+          path: static/index.html
+          if-no-files-found: error
+          retention-days: 1
