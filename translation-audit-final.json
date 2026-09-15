@@ -1,0 +1,21 @@
+{
+  "version": "v0.3.323",
+  "languages": [
+    "de",
+    "en",
+    "fr",
+    "pt",
+    "es"
+  ],
+  "translation_keys": 330,
+  "inline_translation_keys": {
+    "fr": 122,
+    "pt": 122,
+    "es": 122
+  },
+  "javascript_syntax": "ok",
+  "dictionary_parity": "ok",
+  "placeholder_parity": "ok",
+  "duplicate_html_ids": "none",
+  "css_touched": false
+}
