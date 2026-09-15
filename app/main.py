@@ -1457,7 +1457,12 @@ def resolve_project_link(image_ref, metadata_url=None, metadata_source=None):
 
     cached = project_link_cache_get(image_ref)
     if cached and project_link_cache_is_fresh(cached):
-        return cached
+        # Positive entries remain authoritative. Negative entries created by
+        # older Update Monitor versions are intentionally rechecked once so
+        # the verified forge fallback can discover links that were previously
+        # unavailable. Current-generation negative results keep the normal TTL.
+        if cached.get("url") or str(cached.get("source") or "") == "not-found:v2":
+            return cached
 
     local = image_project_link(image_ref)
     if local and local.get("url"):
@@ -1510,7 +1515,7 @@ def resolve_project_link(image_ref, metadata_url=None, metadata_source=None):
         image_ref,
         url=None,
         provider=None,
-        source="not-found",
+        source="not-found:v2",
     )
 
 
