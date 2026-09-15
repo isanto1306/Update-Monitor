@@ -1,0 +1,22 @@
+name: Inspect provider logos once
+
+on:
+  push:
+    branches:
+      - provider-logo-adjustment
+    paths:
+      - '.github/workflows/inspect-provider-logos-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show provider UI context
+        shell: bash
+        run: |
+          echo '--- provider matches ---'
+          grep -niE 'github|gitlab|codeberg|docker hub|dockerhub|project.*link|provider' static/index.html | head -n 500 || true
