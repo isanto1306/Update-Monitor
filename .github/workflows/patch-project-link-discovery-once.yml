@@ -1,4 +1,4 @@
-name: Improve project link discovery once
+name: Refresh legacy negative project link cache once
 
 on:
   push:
@@ -17,39 +17,24 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Add verified forge fallback and bump version
+      - name: Refresh old negative cache entries for new discovery logic
         shell: bash
         run: |
           python - <<'PY'
-          import base64
           from pathlib import Path
-          main_path = Path('app/main.py')
-          text = main_path.read_text(encoding='utf-8')
-          old_version = 'VERSION = "0.3.316"'
-          new_version = 'VERSION = "0.3.319"'
-          if old_version not in text:
-              raise SystemExit('Expected backend version marker was not found.')
-          text = text.replace(old_version, new_version, 1)
-          marker = 'def docker_hub_project_link(image_ref):\n'
-          if marker not in text:
-              raise SystemExit('docker_hub_project_link marker was not found.')
-          helper = base64.b64decode('RE9DS0VSX0hVQl9SRUdJU1RSWV9QUkVGSVhFUyA9ICgKICAgICJkb2NrZXIuaW8vIiwKICAgICJpbmRleC5kb2NrZXIuaW8vIiwKICAgICJyZWdpc3RyeS0xLmRvY2tlci5pby8iLAopClBST0pFQ1RfRk9SR0VfQ09NUE9ORU5UX1JFID0gcmUuY29tcGlsZShyIl5bQS1aYS16MC05XVtBLVphLXowLTlfLi1dezAsOTl9JCIpCgoKZGVmIGRvY2tlcl9odWJfb3duZXJfcmVwbyhpbWFnZV9yZWYpOgogICAgIiIiUmV0dXJuIGFuIGV4YWN0IERvY2tlciBIdWIgb3duZXIvcmVwb3NpdG9yeSBwYWlyIHdoZW4gaXQgaXMgc2FmZSB0byBpbmZlci4iIiIKICAgIHZhbHVlID0gc3RyKGltYWdlX3JlZiBvciAiIikuc3RyaXAoKQogICAgaWYgbm90IHZhbHVlOgogICAgICAgIHJldHVybiBOb25lCgogICAgIyBBIGRpZ2VzdCBuZXZlciBjaGFuZ2VzIHRoZSByZXBvc2l0b3J5IGlkZW50aXR5LgogICAgdmFsdWUgPSB2YWx1ZS5zcGxpdCgiQCIsIDEpWzBdLnN0cmlwKCkKICAgIGxvd2VyZWQgPSB2YWx1ZS5sb3dlcigpCiAgICBmb3IgcHJlZml4IGluIERPQ0tFUl9IVUJfUkVHSVNUUllfUFJFRklYRVM6CiAgICAgICAgaWYgbG93ZXJlZC5zdGFydHN3aXRoKHByZWZpeCk6CiAgICAgICAgICAgIHZhbHVlID0gdmFsdWVbbGVuKHByZWZpeCk6XQogICAgICAgICAgICBsb3dlcmVkID0gdmFsdWUubG93ZXIoKQogICAgICAgICAgICBicmVhawoKICAgICMgRG8gbm90IHJlaW50ZXJwcmV0IGFuIGV4cGxpY2l0bHkgbmFtZWQgbm9uLURvY2tlci1IdWIgcmVnaXN0cnkgYXMgYW4KICAgICMgb3duZXIuIFRoaXMga2VlcHMgdGhlIGZhbGxiYWNrIGNvbnNlcnZhdGl2ZSBhbmQgYXZvaWRzIHdyb25nIGxpbmtzLgogICAgZmlyc3QgPSB2YWx1ZS5zcGxpdCgiLyIsIDEpWzBdCiAgICBpZiAiLiIgaW4gZmlyc3Qgb3IgIjoiIGluIGZpcnN0IG9yIGZpcnN0Lmxvd2VyKCkgPT0gImxvY2FsaG9zdCI6CiAgICAgICAgcmV0dXJuIE5vbmUKCiAgICBwYXJ0cyA9IFtwYXJ0IGZvciBwYXJ0IGluIHZhbHVlLnNwbGl0KCIvIikgaWYgcGFydF0KICAgIGlmIGxlbihwYXJ0cykgIT0gMjoKICAgICAgICByZXR1cm4gTm9uZQoKICAgIG93bmVyLCByZXBvID0gcGFydHMKICAgIGlmICI6IiBpbiByZXBvOgogICAgICAgIHJlcG8gPSByZXBvLnJzcGxpdCgiOiIsIDEpWzBdCgogICAgaWYgbm90IG93bmVyIG9yIG5vdCByZXBvOgogICAgICAgIHJldHVybiBOb25lCiAgICBpZiBub3QgUFJPSkVDVF9GT1JHRV9DT01QT05FTlRfUkUuZnVsbG1hdGNoKG93bmVyKToKICAgICAgICByZXR1cm4gTm9uZQogICAgaWYgbm90IFBST0pFQ1RfRk9SR0VfQ09NUE9ORU5UX1JFLmZ1bGxtYXRjaChyZXBvKToKICAgICAgICByZXR1cm4gTm9uZQogICAgcmV0dXJuIG93bmVyLCByZXBvCgoKZGVmIF9mb3JnZV9yZXBvc2l0b3J5X2V4aXN0cyhhcGlfdXJsLCAqLCBnaXRodWI9RmFsc2UpOgogICAgIiIiUHJvYmUgb25lIGZpeGVkIHB1YmxpYyBmb3JnZSBBUEkuIE5ldmVyIGZvbGxvd3MgYSB1c2VyIHN1cHBsaWVkIGhvc3QuIiIiCiAgICBoZWFkZXJzID0gewogICAgICAgICJVc2VyLUFnZW50IjogIlVwZGF0ZS1Nb25pdG9yL3Byb2plY3QtbGluay1kaXNjb3ZlcnkiLAogICAgICAgICJBY2NlcHQiOiAiYXBwbGljYXRpb24vanNvbiIsCiAgICB9CiAgICBpZiBnaXRodWI6CiAgICAgICAgaGVhZGVyc1siQWNjZXB0Il0gPSAiYXBwbGljYXRpb24vdm5kLmdpdGh1Yitqc29uIgogICAgICAgIHRyeToKICAgICAgICAgICAgdG9rZW4sIF9zb3VyY2UgPSBhY3RpdmVfZ2l0aHViX3Rva2VuKCkKICAgICAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgICAgICB0b2tlbiA9ICIiCiAgICAgICAgaWYgdG9rZW46CiAgICAgICAgICAgIGhlYWRlcnNbIkF1dGhvcml6YXRpb24iXSA9IGYiQmVhcmVyIHt0b2tlbn0iCgogICAgcmVxdWVzdCA9IHVybGxpYi5yZXF1ZXN0LlJlcXVlc3QoYXBpX3VybCwgaGVhZGVycz1oZWFkZXJzLCBtZXRob2Q9IkdFVCIpCiAgICB0cnk6CiAgICAgICAgd2l0aCB1cmxsaWIucmVxdWVzdC51cmxvcGVuKHJlcXVlc3QsIHRpbWVvdXQ9NCkgYXMgcmVzcG9uc2U6CiAgICAgICAgICAgIHJldHVybiAyMDAgPD0gaW50KGdldGF0dHIocmVzcG9uc2UsICJzdGF0dXMiLCAyMDApKSA8IDMwMAogICAgZXhjZXB0IHVybGxpYi5lcnJvci5IVFRQRXJyb3I6CiAgICAgICAgcmV0dXJuIEZhbHNlCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBGYWxzZQoKCmRlZiB2ZXJpZmllZF9mb3JnZV9wcm9qZWN0X2xpbmsoaW1hZ2VfcmVmKToKICAgICIiIgogICAgTGFzdC1yZXNvcnQgc291cmNlIGRpc2NvdmVyeSBmb3IgRG9ja2VyIEh1YiBpbWFnZXMgdGhhdCBleHBvc2Ugbm8gdXNhYmxlCiAgICBPQ0kgbGFiZWxzIGFuZCBubyBwcm9qZWN0IFVSTCBpbiByZWdpc3RyeSBtZXRhZGF0YS4KCiAgICBPbmx5IGFuIGV4YWN0IG93bmVyL3JlcG9zaXRvcnkgcGFpciBpcyBjb25zaWRlcmVkLiBHaXRIdWIsIEdpdExhYiBhbmQKICAgIENvZGViZXJnIGFyZSBxdWVyaWVkIGNvbmN1cnJlbnRseSwgYW5kIGEgbGluayBpcyByZXR1cm5lZCBvbmx5IGFmdGVyIHRoZQogICAgY29ycmVzcG9uZGluZyByZXBvc2l0b3J5IEFQSSBjb25maXJtcyB0aGF0IGl0IGV4aXN0cy4gUHJlZmVyZW5jZSBvcmRlciBpcwogICAgR2l0SHViLCB0aGVuIEdpdExhYiwgdGhlbiBDb2RlYmVyZyB3aGVuIG1vcmUgdGhhbiBvbmUgZXhhY3QgbWF0Y2ggZXhpc3RzLgogICAgIiIiCiAgICBvd25lcl9yZXBvID0gZG9ja2VyX2h1Yl9vd25lcl9yZXBvKGltYWdlX3JlZikKICAgIGlmIG5vdCBvd25lcl9yZXBvOgogICAgICAgIHJldHVybiBOb25lCgogICAgb3duZXIsIHJlcG8gPSBvd25lcl9yZXBvCiAgICBlbmNvZGVkX3BhdGggPSB1cmxsaWIucGFyc2UucXVvdGUoZiJ7b3duZXJ9L3tyZXBvfSIsIHNhZmU9IiIpCiAgICBwcm9iZXMgPSBbCiAgICAgICAgKAogICAgICAgICAgICAiZ2l0aHViIiwKICAgICAgICAgICAgZiJodHRwczovL2FwaS5naXRodWIuY29tL3JlcG9zL3t1cmxsaWIucGFyc2UucXVvdGUob3duZXIsIHNhZmU9JycpfS97dXJsbGliLnBhcnNlLnF1b3RlKHJlcG8sIHNhZmU9JycpfSIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9naXRodWIuY29tL3tvd25lcn0ve3JlcG99IiwKICAgICAgICAgICAgVHJ1ZSwKICAgICAgICApLAogICAgICAgICgKICAgICAgICAgICAgImdpdGxhYiIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9naXRsYWIuY29tL2FwaS92NC9wcm9qZWN0cy97ZW5jb2RlZF9wYXRofSIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9naXRsYWIuY29tL3tvd25lcn0ve3JlcG99IiwKICAgICAgICAgICAgRmFsc2UsCiAgICAgICAgKSwKICAgICAgICAoCiAgICAgICAgICAgICJjb2RlYmVyZyIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9jb2RlYmVyZy5vcmcvYXBpL3YxL3JlcG9zL3t1cmxsaWIucGFyc2UucXVvdGUob3duZXIsIHNhZmU9JycpfS97dXJsbGliLnBhcnNlLnF1b3RlKHJlcG8sIHNhZmU9JycpfSIsCiAgICAgICAgICAgIGYiaHR0cHM6Ly9jb2RlYmVyZy5vcmcve293bmVyfS97cmVwb30iLAogICAgICAgICAgICBGYWxzZSwKICAgICAgICApLAogICAgXQoKICAgIHdpdGggY29uY3VycmVudC5mdXR1cmVzLlRocmVhZFBvb2xFeGVjdXRvcihtYXhfd29ya2Vycz1sZW4ocHJvYmVzKSkgYXMgcG9vbDoKICAgICAgICBmdXR1cmVzID0gewogICAgICAgICAgICBwcm92aWRlcjogcG9vbC5zdWJtaXQoX2ZvcmdlX3JlcG9zaXRvcnlfZXhpc3RzLCBhcGlfdXJsLCBnaXRodWI9aXNfZ2l0aHViKQogICAgICAgICAgICBmb3IgcHJvdmlkZXIsIGFwaV91cmwsIF9wcm9qZWN0X3VybCwgaXNfZ2l0aHViIGluIHByb2JlcwogICAgICAgIH0KICAgICAgICBmb3IgcHJvdmlkZXIsIF9hcGlfdXJsLCBwcm9qZWN0X3VybCwgX2lzX2dpdGh1YiBpbiBwcm9iZXM6CiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIGV4aXN0cyA9IGJvb2woZnV0dXJlc1twcm92aWRlcl0ucmVzdWx0KHRpbWVvdXQ9NSkpCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICBleGlzdHMgPSBGYWxzZQogICAgICAgICAgICBpZiBleGlzdHM6CiAgICAgICAgICAgICAgICByZXR1cm4gewogICAgICAgICAgICAgICAgICAgICJ1cmwiOiBwcm9qZWN0X3VybCwKICAgICAgICAgICAgICAgICAgICAicHJvdmlkZXIiOiBwcm92aWRlciwKICAgICAgICAgICAgICAgICAgICAic291cmNlIjogZiJmb3JnZS1wcm9iZTp7cHJvdmlkZXJ9IiwKICAgICAgICAgICAgICAgIH0KCiAgICByZXR1cm4gTm9uZQoKCg==').decode('utf-8')
-          if 'def verified_forge_project_link(image_ref):' in text:
-              raise SystemExit('Verified forge fallback already exists.')
-          text = text.replace(marker, helper + marker, 1)
-          old_resolver = base64.b64decode('ICAgIHJlZ2lzdHJ5ID0gZG9ja2VyX2h1Yl9wcm9qZWN0X2xpbmsoaW1hZ2VfcmVmKQogICAgaWYgcmVnaXN0cnkgYW5kIHJlZ2lzdHJ5LmdldCgidXJsIik6CiAgICAgICAgcmV0dXJuIHByb2plY3RfbGlua19jYWNoZV9wdXQoCiAgICAgICAgICAgIGltYWdlX3JlZiwKICAgICAgICAgICAgdXJsPXJlZ2lzdHJ5LmdldCgidXJsIiksCiAgICAgICAgICAgIHByb3ZpZGVyPXJlZ2lzdHJ5LmdldCgicHJvdmlkZXIiKSwKICAgICAgICAgICAgc291cmNlPXJlZ2lzdHJ5LmdldCgic291cmNlIiksCiAgICAgICAgKQoKICAgICMgUHJlc2VydmUgYSBwcmV2aW91c2x5IGtub3duIHBvc2l0aXZlIGxpbmsgaWYgYSBsYXRlciByZXZhbGlkYXRpb24gY2Fubm90Cg==').decode('utf-8')
-          new_resolver = base64.b64decode('ICAgIHJlZ2lzdHJ5ID0gZG9ja2VyX2h1Yl9wcm9qZWN0X2xpbmsoaW1hZ2VfcmVmKQogICAgaWYgcmVnaXN0cnkgYW5kIHJlZ2lzdHJ5LmdldCgidXJsIik6CiAgICAgICAgcmV0dXJuIHByb2plY3RfbGlua19jYWNoZV9wdXQoCiAgICAgICAgICAgIGltYWdlX3JlZiwKICAgICAgICAgICAgdXJsPXJlZ2lzdHJ5LmdldCgidXJsIiksCiAgICAgICAgICAgIHByb3ZpZGVyPXJlZ2lzdHJ5LmdldCgicHJvdmlkZXIiKSwKICAgICAgICAgICAgc291cmNlPXJlZ2lzdHJ5LmdldCgic291cmNlIiksCiAgICAgICAgKQoKICAgIHZlcmlmaWVkX2ZvcmdlID0gdmVyaWZpZWRfZm9yZ2VfcHJvamVjdF9saW5rKGltYWdlX3JlZikKICAgIGlmIHZlcmlmaWVkX2ZvcmdlIGFuZCB2ZXJpZmllZF9mb3JnZS5nZXQoInVybCIpOgogICAgICAgIHJldHVybiBwcm9qZWN0X2xpbmtfY2FjaGVfcHV0KAogICAgICAgICAgICBpbWFnZV9yZWYsCiAgICAgICAgICAgIHVybD12ZXJpZmllZF9mb3JnZS5nZXQoInVybCIpLAogICAgICAgICAgICBwcm92aWRlcj12ZXJpZmllZF9mb3JnZS5nZXQoInByb3ZpZGVyIiksCiAgICAgICAgICAgIHNvdXJjZT12ZXJpZmllZF9mb3JnZS5nZXQoInNvdXJjZSIpLAogICAgICAgICkKCiAgICAjIFByZXNlcnZlIGEgcHJldmlvdXNseSBrbm93biBwb3NpdGl2ZSBsaW5rIGlmIGEgbGF0ZXIgcmV2YWxpZGF0aW9uIGNhbm5vdAo=').decode('utf-8')
-          if old_resolver not in text:
-              raise SystemExit('Expected project-link resolver block was not found.')
-          text = text.replace(old_resolver, new_resolver, 1)
-          main_path.write_text(text, encoding='utf-8')
-          index_path = Path('static/index.html')
-          index = index_path.read_text(encoding='utf-8')
-          old_frontend = "const UPDATE_MONITOR_VERSION = 'v0.3.318';"
-          new_frontend = "const UPDATE_MONITOR_VERSION = 'v0.3.319';"
-          if old_frontend not in index:
-              raise SystemExit('Expected frontend version marker was not found.')
-          index_path.write_text(index.replace(old_frontend, new_frontend, 1), encoding='utf-8')
+          path = Path('app/main.py')
+          text = path.read_text(encoding='utf-8')
+          old = '    cached = project_link_cache_get(image_ref)\n    if cached and project_link_cache_is_fresh(cached):\n        return cached\n'
+          new = '    cached = project_link_cache_get(image_ref)\n    if cached and project_link_cache_is_fresh(cached):\n        # Positive entries remain authoritative. Negative entries created by\n        # older Update Monitor versions are intentionally rechecked once so\n        # the verified forge fallback can discover links that were previously\n        # unavailable. Current-generation negative results keep the normal TTL.\n        if cached.get("url") or str(cached.get("source") or "") == "not-found:v2":\n            return cached\n'
+          if old not in text:
+              raise SystemExit('Expected fresh-cache block was not found.')
+          text = text.replace(old, new, 1)
+          old_final = '        source="not-found",\n    )\n\n\ndef _remote_digest_error_is_transient(message):'
+          new_final = '        source="not-found:v2",\n    )\n\n\ndef _remote_digest_error_is_transient(message):'
+          if old_final not in text:
+              raise SystemExit('Expected negative-cache marker was not found.')
+          text = text.replace(old_final, new_final, 1)
+          path.write_text(text, encoding='utf-8')
           PY
 
       - name: Validate Python syntax
@@ -60,7 +45,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/main.py static/index.html
+          git add app/main.py
           git diff --cached --quiet && exit 0
-          git commit -m "Improve project link discovery and bump v0.3.319"
+          git commit -m "Refresh legacy negative project link cache"
           git push
