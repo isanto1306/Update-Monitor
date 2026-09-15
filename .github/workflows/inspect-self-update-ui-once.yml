@@ -15,10 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Show self update context
+      - name: Show installImageUpdate function
         shell: bash
         run: |
-          for fn in "waitForPostUpdateVerification" "appUpdateVerifiedCurrent" "isUpdateTransportFailure" "async function loadStatus" "function verificationBaseline"; do
-            echo "--- $fn ---"
-            grep -n -A 180 -B 35 "$fn" static/index.html | head -n 260 || true
-          done
+          start=$(grep -n -m1 "async function installImageUpdate" static/index.html | cut -d: -f1)
+          echo "start=$start"
+          if [ -n "$start" ]; then
+            end=$((start + 260))
+            sed -n "${start},${end}p" static/index.html
+          fi
