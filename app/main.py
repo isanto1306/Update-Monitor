@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.319"
+VERSION = "0.3.320"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -67,6 +67,11 @@ PROJECT_LINK_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
 PROJECT_LINK_NEGATIVE_TTL_SECONDS = 24 * 60 * 60
 PROJECT_LINK_CACHE_LOCK = threading.Lock()
 PROJECT_LINK_CACHE = {}
+
+# Persistent handoff state for updating Update Monitor itself. The actual
+# container recreation is performed by a short-lived helper so the updater is
+# not killed before it can hand control to the replacement container.
+SELF_UPDATE_STATE_FILE = CACHE_DIR / "self-update.json"
 
 # Persistent canonical Compose image-source assignments.
 IMAGE_SOURCE_STATE_FILE = CACHE_DIR / "image-sources.json"
@@ -7465,6 +7470,367 @@ def reject_self_destructive_action(app_item, action):
             ),
         )
 
+
+def self_update_handoff_owned_by_current_process(stack_key=None):
+    """True while this process is the old instance waiting to be replaced."""
+    marker = load_json(SELF_UPDATE_STATE_FILE, {})
+    if not isinstance(marker, dict) or marker.get("consumed_at"):
+        return False
+
+    requested_stack = str(stack_key or "").strip()
+    marker_stack = str(marker.get("stack_key") or "").strip()
+    if requested_stack and marker_stack and requested_stack != marker_stack:
+        return False
+
+    old_id = str(marker.get("old_container_id") or "").strip()
+    if not old_id:
+        return False
+    current_id = str(
+        update_monitor_self_identity().get("container_id") or ""
+    ).strip()
+    return bool(current_id and current_id == old_id)
+
+
+_SELF_UPDATE_HELPER_SCRIPT = r"""\
+import base64
+import json
+import os
+import subprocess
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+marker_path = Path('/app/cache/self-update.json')
+payload = json.loads(base64.b64decode(os.environ['UM_SELF_UPDATE_PAYLOAD']).decode('utf-8'))
+
+
+def write_marker(status, **extra):
+    current = {}
+    try:
+        current = json.loads(marker_path.read_text(encoding='utf-8'))
+        if not isinstance(current, dict):
+            current = {}
+    except Exception:
+        current = {}
+    current.update(payload)
+    current.update(extra)
+    current['status'] = status
+    current['updated_at_epoch'] = time.time()
+    tmp = marker_path.with_name(marker_path.name + '.tmp')
+    tmp.write_text(json.dumps(current, indent=2, sort_keys=True), encoding='utf-8')
+    os.replace(tmp, marker_path)
+
+
+def docker_json(*args):
+    proc = subprocess.run(
+        ['docker', *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except Exception:
+        return None
+
+
+try:
+    time.sleep(4.0)
+    write_marker('recreate-requested')
+
+    base = Path('/host/run/casaos/app-management.url').read_text(encoding='utf-8').strip().rstrip('/')
+    old_id = str(payload['old_container_id'])
+    project = str(payload.get('compose_project') or '').strip()
+    query = {'pull': 'true', 'force': 'true'}
+    if project:
+        query['app:name'] = project
+    url = (
+        base
+        + '/v2/app_management/container/'
+        + urllib.parse.quote(old_id, safe='')
+        + '?'
+        + urllib.parse.urlencode(query)
+    )
+    request = urllib.request.Request(
+        url,
+        data=b'',
+        method='PATCH',
+        headers={'Accept': 'application/json', 'Content-Type': 'application/json'},
+    )
+    with urllib.request.urlopen(request, timeout=900) as response:
+        status = int(getattr(response, 'status', 200) or 200)
+        response.read(1024 * 1024)
+    if not 200 <= status < 300:
+        raise RuntimeError(f'ZimaOS recreate returned HTTP {status}')
+    write_marker('recreate-accepted', recreate_http_status=status)
+
+    name = str(payload['container_name'])
+    expected = {
+        str(value).strip().lower()
+        for value in (payload.get('expected_digests') or [])
+        if str(value).strip()
+    }
+    deadline = time.time() + 600
+    last_state = None
+
+    while time.time() < deadline:
+        rows = docker_json('inspect', name)
+        row = rows[0] if isinstance(rows, list) and rows else None
+        if isinstance(row, dict):
+            current_id = str(row.get('Id') or '').strip()
+            state = row.get('State') if isinstance(row.get('State'), dict) else {}
+            running = bool(state.get('Running'))
+            restarting = bool(state.get('Restarting'))
+            health = str(((state.get('Health') or {}).get('Status') or '')).strip().lower()
+            image_id = str(row.get('Image') or '').strip()
+            repo_digests = set()
+            if image_id:
+                image_rows = docker_json('image', 'inspect', image_id)
+                image_row = image_rows[0] if isinstance(image_rows, list) and image_rows else None
+                if isinstance(image_row, dict):
+                    repo_digests = {
+                        str(value).rsplit('@', 1)[-1].strip().lower()
+                        for value in (image_row.get('RepoDigests') or [])
+                        if '@sha256:' in str(value)
+                    }
+            last_state = {
+                'container_id': current_id,
+                'running': running,
+                'restarting': restarting,
+                'health': health or None,
+                'image_id': image_id,
+                'repo_digests': sorted(repo_digests),
+            }
+            if (
+                current_id
+                and current_id != old_id
+                and running
+                and not restarting
+                and health != 'unhealthy'
+                and expected
+                and repo_digests.intersection(expected)
+            ):
+                write_marker(
+                    'restarted-verified',
+                    new_container_id=current_id,
+                    new_image_id=image_id,
+                    matched_digests=sorted(repo_digests.intersection(expected)),
+                )
+                break
+        time.sleep(2.0)
+    else:
+        write_marker('verification-timeout', last_runtime=last_state)
+except Exception as exc:
+    write_marker('failed', error=str(exc)[:1000])
+"""
+
+
+def _launch_self_update_helper(marker):
+    payload = base64.b64encode(
+        json.dumps(marker, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    old_id = str(marker.get("old_container_id") or "").strip()
+    image_ref = str(marker.get("image_ref") or "").strip()
+    if not old_id or not image_ref:
+        raise RuntimeError("Self update handoff is missing Docker identity information")
+
+    helper_name = "update-monitor-self-update-" + secrets.token_hex(5)
+    rc, out, err = run(
+        [
+            "docker", "run", "-d", "--rm",
+            "--name", helper_name,
+            "--network", "host",
+            "--volumes-from", old_id,
+            "--entrypoint", "python",
+            "-e", "UM_SELF_UPDATE_PAYLOAD=" + payload,
+            image_ref,
+            "-c", _SELF_UPDATE_HELPER_SCRIPT,
+        ],
+        30,
+    )
+    if rc != 0:
+        raise RuntimeError(
+            "Could not start the self update helper: " + str(err or out or f"Exit {rc}")
+        )
+
+    marker["helper_container_name"] = helper_name
+    marker["helper_container_id"] = str(out or "").strip() or None
+    marker["status"] = "helper-started"
+    marker["helper_started_at"] = utc_now()
+    save_json(SELF_UPDATE_STATE_FILE, marker)
+    return helper_name
+
+
+def perform_self_image_update_handoff(app_item):
+    """Pull and verify our own update, then hand recreation to a helper."""
+    if not is_update_monitor_self_app(app_item):
+        raise RuntimeError("Self update handoff was requested for a different app")
+
+    project = str(app_item.get("compose_project") or "").strip()
+    if not project:
+        raise RuntimeError("ZimaOS Compose app ID is missing")
+
+    identity = update_monitor_self_identity()
+    self_name = str(identity.get("container_name") or "update-monitor").strip().lstrip("/")
+    old_container_id = str(identity.get("container_id") or "").strip()
+    if not old_container_id:
+        old_container_id = str(docker_container_id(self_name) or "").strip()
+    if not old_container_id:
+        raise RuntimeError("Could not resolve the running Update Monitor container")
+
+    target = None
+    for item in (app_item.get("items") or []):
+        if item.get("status") != "IMAGE_UPDATE" or item.get("update_policy") != "follow_tag":
+            continue
+        names = {
+            str(container.get("name") or "").strip().lstrip("/")
+            for container in (item.get("containers") or [])
+            if isinstance(container, dict)
+        }
+        if self_name in names:
+            target = item
+            break
+    if target is None:
+        raise RuntimeError("No eligible same-tag self update was found")
+
+    image_ref = str(
+        target.get("tracking_image_ref") or target.get("image_ref") or ""
+    ).strip()
+    if not image_ref:
+        raise RuntimeError("Could not determine the Update Monitor image")
+
+    with scan_lock:
+        update_platform = str(scan_state.get("platform") or "").strip()
+    if not update_platform:
+        rc, platform_raw, platform_error = run(
+            ["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"],
+            timeout=20,
+        )
+        if rc != 0:
+            raise RuntimeError(platform_error or "Could not determine Docker platform")
+        platform_map = {
+            "linux/x86_64": "linux/amd64",
+            "linux/amd64": "linux/amd64",
+            "linux/aarch64": "linux/arm64",
+            "linux/arm64": "linux/arm64",
+            "linux/armv7l": "linux/arm/v7",
+        }
+        update_platform = platform_map.get(platform_raw.strip(), platform_raw.strip())
+
+    stack_key = str(app_item.get("stack_key") or "").strip()
+    update_action_progress(stack_key, phase="pulling")
+    pulled = docker_pull_verified(image_ref, update_platform)
+    pulled["method"] = "verified-docker-pull+self-update-handoff"
+    expected_digests = sorted({
+        str(value or "").strip().lower()
+        for value in (pulled.get("expected_digests") or [])
+        if str(value or "").strip()
+    })
+    if not expected_digests:
+        raise RuntimeError("No verified remote digest is available for the self update")
+
+    before_image_id = str(docker_container_image_id(self_name) or "").strip()
+    marker = {
+        "schema": 1,
+        "stack_key": stack_key,
+        "compose_project": project,
+        "container_name": self_name,
+        "old_container_id": old_container_id,
+        "old_image_id": before_image_id or None,
+        "image_ref": image_ref,
+        "expected_digests": expected_digests,
+        "requested_at": utc_now(),
+        "service_started_at": SERVICE_STARTED_AT,
+        "status": "prepared",
+    }
+    save_json(SELF_UPDATE_STATE_FILE, marker)
+    update_action_progress(stack_key, phase="restarting")
+    helper_name = _launch_self_update_helper(marker)
+
+    return {
+        "project": project,
+        "containers": [self_name],
+        "before_image_ids": {self_name: before_image_id} if before_image_id else {},
+        "target_verification": {image_ref: pulled},
+        "self_update_handoff": True,
+        "restart_expected": True,
+        "service_started_at": SERVICE_STARTED_AT,
+        "helper_container_name": helper_name,
+        "engine": "verified-pull+self-update-helper",
+    }
+
+
+def reconcile_self_update_after_restart():
+    """Verify a helper-driven replacement and queue one targeted self scan."""
+    marker = load_json(SELF_UPDATE_STATE_FILE, {})
+    if not isinstance(marker, dict) or marker.get("consumed_at"):
+        return False
+
+    old_id = str(marker.get("old_container_id") or "").strip()
+    stack_key = str(marker.get("stack_key") or "").strip()
+    image_ref = str(marker.get("image_ref") or "").strip()
+    expected = {
+        str(value or "").strip().lower()
+        for value in (marker.get("expected_digests") or [])
+        if str(value or "").strip()
+    }
+    if not old_id or not stack_key or not image_ref or not expected:
+        return False
+
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        identity = update_monitor_self_identity()
+        current_id = str(identity.get("container_id") or "").strip()
+        name = str(identity.get("container_name") or marker.get("container_name") or "update-monitor").strip().lstrip("/")
+        if current_id and current_id != old_id:
+            image_id = str(docker_container_image_id(name) or "").strip()
+            repo = str(parse_image_ref(image_ref).get("normalized_repo") or "").strip()
+            local_digests = {
+                str(value or "").strip().lower()
+                for value in (docker_image_repo_digests(image_id, repo) if image_id else [])
+                if str(value or "").strip()
+            }
+            runtime = docker_container_runtime_snapshot(name) or {}
+            if (
+                image_id
+                and local_digests.intersection(expected)
+                and str(runtime.get("status") or "") == "running"
+                and not runtime.get("restarting")
+                and runtime.get("health") != "unhealthy"
+            ):
+                marker["status"] = "restarted-verified"
+                marker["new_container_id"] = current_id
+                marker["new_image_id"] = image_id
+                marker["matched_digests"] = sorted(local_digests.intersection(expected))
+                marker["consumed_at"] = utc_now()
+                save_json(SELF_UPDATE_STATE_FILE, marker)
+                verification = {
+                    "target_verification": {
+                        image_ref: {
+                            "image_ref": image_ref,
+                            "expected_digests": sorted(expected),
+                            "local_digests": sorted(local_digests),
+                            "method": "self-update-restart-verification",
+                        }
+                    }
+                }
+                schedule_app_scan(
+                    stack_key,
+                    delay=0.25,
+                    verification_result=verification,
+                )
+                return True
+        time.sleep(1.0)
+
+    marker["reconcile_error"] = "Replacement container did not reach the verified target digest"
+    marker["reconcile_failed_at"] = utc_now()
+    save_json(SELF_UPDATE_STATE_FILE, marker)
+    return False
+
 def _container_completed_one_shot(container):
     """Return True for a successfully finished on-failure one-shot container.
 
@@ -9528,6 +9894,8 @@ def schedule_app_scan(
     stack_key = str(stack_key or "").strip()
     if not stack_key:
         return False
+    if self_update_handoff_owned_by_current_process(stack_key):
+        return False
 
     requested_at = utc_now()
     verified_targets = _post_update_verified_targets(verification_result)
@@ -10139,6 +10507,7 @@ def startup():
 
     threading.Thread(target=scheduler_loop, name="update-monitor-scheduler", daemon=True).start()
     threading.Thread(target=message_bus_listener_loop, name="update-monitor-message-bus", daemon=True).start()
+    threading.Timer(1.0, reconcile_self_update_after_restart).start()
 
     for index, stack_key in enumerate(false_pin_stacks):
         schedule_app_scan(
@@ -13623,6 +13992,8 @@ def _backup_image_snapshot(app_item, inspects):
 
 def create_pre_update_backup(app_item, mode, stack_key=None):
     mode = _normalize_backup_mode(mode, "none")
+    if mode == "full" and is_update_monitor_self_app(app_item):
+        mode = "quick"
     if mode == "none":
         return None
 
@@ -15076,6 +15447,9 @@ def perform_image_update(app_item):
     The old path accepted a changed container/image ID as success. This path
     instead verifies the actual remote digest before and after recreation.
     """
+    if is_update_monitor_self_app(app_item):
+        return perform_self_image_update_handoff(app_item)
+
     project = app_item.get("compose_project")
     if not project:
         raise RuntimeError("ZimaOS Compose app ID is missing")

@@ -18615,7 +18615,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.319';
+const UPDATE_MONITOR_VERSION = 'v0.3.320';
 let state = {
   language: localStorage.getItem('updateMonitorLanguage') === 'de' ? 'de' : 'en',
   timeFormat: localStorage.getItem('updateMonitorTimeFormat') === '12' ? '12' : '24',
@@ -23324,7 +23324,17 @@ function openBackupPreview(app){
     version.textContent=available?`Verfügbar: ${available}`:'Update verfügbar';
     version.title=version.textContent;
   }
-  setBackupPreviewChoice('full');
+  const selfUpdate=!!app.self_protected;
+  document.querySelectorAll('[data-backup-preview-choice]').forEach(button=>{
+    const isFull=String(button.dataset.backupPreviewChoice||'')==='full';
+    button.disabled=selfUpdate&&isFull;
+    if(isFull){
+      button.title=selfUpdate
+        ?(state.language==='en'?'Full backup is unavailable while Update Monitor updates itself.':'Vollständiges Backup ist beim Selbst Update nicht verfügbar.')
+        :'';
+    }
+  });
+  setBackupPreviewChoice(selfUpdate?'quick':'full');
   updateBackupPreviewRetentionText();
   const backdrop=document.getElementById('backupPreviewBackdrop');
   if(backdrop){
@@ -23406,13 +23416,62 @@ function bindBackupPreview(){
   }
 }
 
+async function waitForSelfUpdateRestart(stackKey,previousStartedAt,timeoutMs=6*60*1000){
+  const key=String(stackKey||'');
+  if(!key)return false;
+  const previous=String(previousStartedAt||'');
+  const deadline=Date.now()+Math.max(30000,Number(timeoutMs)||0);
+  let sawOffline=false;
+  let restarted=false;
+
+  while(Date.now()<deadline){
+    const d=await loadStatus();
+    if(!d){
+      sawOffline=true;
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      continue;
+    }
+
+    const startedAt=String(d&&d.service_runtime&&d.service_runtime.started_at||'');
+    if(
+      (previous&&startedAt&&startedAt!==previous)
+      ||(!previous&&sawOffline&&startedAt)
+    ){
+      restarted=true;
+    }
+
+    if(restarted){
+      const apps=(d.scan&&Array.isArray(d.scan.apps))?d.scan.apps:[];
+      const refreshed=apps.find(candidate=>String(candidate&&candidate.stack_key||'')===key);
+      const pending=state.pendingPostScans.has(key)||state.pendingPostScans.has('*');
+      const active=matchingVerificationScan(d.scan,key)&&String(d.scan&&d.scan.state||'idle')==='scanning';
+      if(appUpdateVerifiedCurrent(refreshed)&&!pending&&!active){
+        state.verifyingApps.delete(key);
+        state.verificationBaselines.delete(key);
+        state.updateMessages.delete(key);
+        render();
+        return true;
+      }
+    }
+
+    await new Promise(resolve=>setTimeout(resolve,1000));
+  }
+
+  state.verifyingApps.delete(key);
+  state.verificationBaselines.delete(key);
+  render();
+  return false;
+}
+
 async function installImageUpdate(app,backupMode='none'){
   if(!app||!(app.can_image_update||app.can_version_update)||state.updatingApps.has(app.stack_key)||state.checkingApps.has(app.stack_key)||state.verifyingApps.has(app.stack_key))return;
   const stackKey=String(app.stack_key||'');
   const baselineFinishedAt=verificationBaseline();
+  const selfUpdateStartedAt=String(state.serviceRuntime&&state.serviceRuntime.started_at||'');
   let verificationExpected=false;
   let verificationNeedsConfirmation=false;
   let deferredTransportError=null;
+  let selfUpdateHandoff=false;
 
   state.updatingApps.add(stackKey);
   state.updateMessages.delete(stackKey);
@@ -23421,44 +23480,66 @@ async function installImageUpdate(app,backupMode='none'){
   startActionProgressPolling(stackKey,'update',normalizedBackupMode==='none'?'starting':'backup');
 
   try{
-    await api('/api/app-update',{
+    const updateResult=await api('/api/app-update',{
       method:'POST',
       body:JSON.stringify({stack_key:stackKey,backup_mode:normalizedBackupMode})
     });
-    beginVerificationState(stackKey,baselineFinishedAt);
-    verificationExpected=true;
-    // Success is already represented by the button state transition
-    // UPDATE LÄUFT… -> PRÜFUNG… -> Aktuell. Do not duplicate it with a green
-    // message below the card; errors remain visible separately.
-    state.updateMessages.delete(stackKey);
+    if(updateResult&&updateResult.self_update_handoff){
+      selfUpdateHandoff=true;
+      beginVerificationState(stackKey,baselineFinishedAt);
+      state.updateMessages.delete(stackKey);
+    }else{
+      beginVerificationState(stackKey,baselineFinishedAt);
+      verificationExpected=true;
+      state.updateMessages.delete(stackKey);
+    }
   }catch(err){
     if(err.message!=='auth'){
       const transportFailure=isUpdateTransportFailure(err);
-
-      // "Failed to fetch" only says the browser lost the HTTP response. The
-      // backend may already have completed the Docker update successfully.
-      // Do not show a false red failure before the authoritative app recheck.
-      if(transportFailure){
+      if(transportFailure&&app.self_protected){
+        selfUpdateHandoff=true;
+        beginVerificationState(stackKey,baselineFinishedAt);
+        state.updateMessages.delete(stackKey);
+      }else if(transportFailure){
         deferredTransportError=String(err.message||'Failed to fetch');
         state.updateMessages.delete(stackKey);
+        beginVerificationState(stackKey,baselineFinishedAt);
+        verificationNeedsConfirmation=true;
       }else{
         state.updateMessages.set(
           stackKey,
           {ok:false,kind:'update',text:t('updateFailed').replace('{error}',err.message||'-')}
         );
+        beginVerificationState(stackKey,baselineFinishedAt);
+        verificationNeedsConfirmation=true;
       }
-
-      // Errors that happen after Docker/ZimaOS was already touched still get an
-      // authoritative targeted recheck. Mark it tentatively; after the request
-      // finishes we confirm the backend actually queued pending_post_scans.
-      beginVerificationState(stackKey,baselineFinishedAt);
-      verificationNeedsConfirmation=true;
     }
   }finally{
     await finishActionProgressPolling(stackKey);
     state.updatingApps.delete(stackKey);
     state.actionProgress.delete(stackKey);
     render();
+  }
+
+  if(selfUpdateHandoff){
+    const verified=await waitForSelfUpdateRestart(stackKey,selfUpdateStartedAt);
+    if(!verified){
+      state.updateMessages.set(
+        stackKey,
+        {
+          ok:false,
+          kind:'update',
+          text:t('updateFailed').replace(
+            '{error}',
+            state.language==='en'
+              ?'The self update could not be verified after the restart.'
+              :'Das Selbst Update konnte nach dem Neustart nicht bestätigt werden.'
+          )
+        }
+      );
+      render();
+    }
+    return;
   }
 
   if(verificationNeedsConfirmation){
@@ -23472,8 +23553,6 @@ async function installImageUpdate(app,backupMode='none'){
       state.verifyingApps.delete(stackKey);
       state.verificationBaselines.delete(stackKey);
 
-      // If the request transport failed but the refreshed authoritative state
-      // already says CURRENT, the update succeeded and there is no error to show.
       const refreshedApps=(state.data&&Array.isArray(state.data.apps))
         ?state.data.apps
         :[];
@@ -23484,8 +23563,6 @@ async function installImageUpdate(app,backupMode='none'){
       if(deferredTransportError&&appUpdateVerifiedCurrent(refreshedApp)){
         state.updateMessages.delete(stackKey);
       }else if(deferredTransportError){
-        // Only now, after no verification was queued and CURRENT could not be
-        // confirmed, expose the transport problem to the user.
         state.updateMessages.set(
           stackKey,
           {
@@ -23501,12 +23578,9 @@ async function installImageUpdate(app,backupMode='none'){
   }
 
   if(verificationExpected){
-    // The backend queues pending_post_scans before /api/app-update returns.
-    // Wait for that exact app verification to finish instead of guessing with a timer.
     await waitForPostUpdateVerification(stackKey);
   }
 }
-
 function formatMemory(bytes){
   const value=Number(bytes);
   if(!Number.isFinite(value)||value<0)return '-';
