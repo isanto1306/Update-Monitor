@@ -31,7 +31,7 @@ main = replace_once(
     'self update state constant',
 )
 
-helper_code = r"""
+helper_code = r'''
 
 def self_update_handoff_owned_by_current_process(stack_key=None):
     """True while this process is the old instance waiting to be replaced."""
@@ -53,7 +53,7 @@ def self_update_handoff_owned_by_current_process(stack_key=None):
     return bool(current_id and current_id == old_id)
 
 
-_SELF_UPDATE_HELPER_SCRIPT = r'''\
+_SELF_UPDATE_HELPER_SCRIPT = r"""\
 import base64
 import json
 import os
@@ -101,8 +101,6 @@ def docker_json(*args):
 
 
 try:
-    # Give the old web process enough time to return the handoff response to
-    # the browser before ZimaOS replaces it.
     time.sleep(4.0)
     write_marker('recreate-requested')
 
@@ -190,7 +188,7 @@ try:
         write_marker('verification-timeout', last_runtime=last_state)
 except Exception as exc:
     write_marker('failed', error=str(exc)[:1000])
-'''
+"""
 
 
 def _launch_self_update_helper(marker):
@@ -394,7 +392,7 @@ def reconcile_self_update_after_restart():
     marker["reconcile_failed_at"] = utc_now()
     save_json(SELF_UPDATE_STATE_FILE, marker)
     return False
-"""
+'''
 
 anchor = '\ndef _container_completed_one_shot(container):\n'
 if anchor not in main:
