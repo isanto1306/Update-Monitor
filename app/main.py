@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.316"
+VERSION = "0.3.319"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -1231,6 +1231,134 @@ def _best_project_url_from_text(text):
     return {"url": url, "provider": provider, "source": "registry:description"}
 
 
+DOCKER_HUB_REGISTRY_PREFIXES = (
+    "docker.io/",
+    "index.docker.io/",
+    "registry-1.docker.io/",
+)
+PROJECT_FORGE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
+
+
+def docker_hub_owner_repo(image_ref):
+    """Return an exact Docker Hub owner/repository pair when it is safe to infer."""
+    value = str(image_ref or "").strip()
+    if not value:
+        return None
+
+    # A digest never changes the repository identity.
+    value = value.split("@", 1)[0].strip()
+    lowered = value.lower()
+    for prefix in DOCKER_HUB_REGISTRY_PREFIXES:
+        if lowered.startswith(prefix):
+            value = value[len(prefix):]
+            lowered = value.lower()
+            break
+
+    # Do not reinterpret an explicitly named non-Docker-Hub registry as an
+    # owner. This keeps the fallback conservative and avoids wrong links.
+    first = value.split("/", 1)[0]
+    if "." in first or ":" in first or first.lower() == "localhost":
+        return None
+
+    parts = [part for part in value.split("/") if part]
+    if len(parts) != 2:
+        return None
+
+    owner, repo = parts
+    if ":" in repo:
+        repo = repo.rsplit(":", 1)[0]
+
+    if not owner or not repo:
+        return None
+    if not PROJECT_FORGE_COMPONENT_RE.fullmatch(owner):
+        return None
+    if not PROJECT_FORGE_COMPONENT_RE.fullmatch(repo):
+        return None
+    return owner, repo
+
+
+def _forge_repository_exists(api_url, *, github=False):
+    """Probe one fixed public forge API. Never follows a user supplied host."""
+    headers = {
+        "User-Agent": "Update-Monitor/project-link-discovery",
+        "Accept": "application/json",
+    }
+    if github:
+        headers["Accept"] = "application/vnd.github+json"
+        try:
+            token, _source = active_github_token()
+        except Exception:
+            token = ""
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+    request = urllib.request.Request(api_url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=4) as response:
+            return 200 <= int(getattr(response, "status", 200)) < 300
+    except urllib.error.HTTPError:
+        return False
+    except Exception:
+        return False
+
+
+def verified_forge_project_link(image_ref):
+    """
+    Last-resort source discovery for Docker Hub images that expose no usable
+    OCI labels and no project URL in registry metadata.
+
+    Only an exact owner/repository pair is considered. GitHub, GitLab and
+    Codeberg are queried concurrently, and a link is returned only after the
+    corresponding repository API confirms that it exists. Preference order is
+    GitHub, then GitLab, then Codeberg when more than one exact match exists.
+    """
+    owner_repo = docker_hub_owner_repo(image_ref)
+    if not owner_repo:
+        return None
+
+    owner, repo = owner_repo
+    encoded_path = urllib.parse.quote(f"{owner}/{repo}", safe="")
+    probes = [
+        (
+            "github",
+            f"https://api.github.com/repos/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}",
+            f"https://github.com/{owner}/{repo}",
+            True,
+        ),
+        (
+            "gitlab",
+            f"https://gitlab.com/api/v4/projects/{encoded_path}",
+            f"https://gitlab.com/{owner}/{repo}",
+            False,
+        ),
+        (
+            "codeberg",
+            f"https://codeberg.org/api/v1/repos/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}",
+            f"https://codeberg.org/{owner}/{repo}",
+            False,
+        ),
+    ]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(probes)) as pool:
+        futures = {
+            provider: pool.submit(_forge_repository_exists, api_url, github=is_github)
+            for provider, api_url, _project_url, is_github in probes
+        }
+        for provider, _api_url, project_url, _is_github in probes:
+            try:
+                exists = bool(futures[provider].result(timeout=5))
+            except Exception:
+                exists = False
+            if exists:
+                return {
+                    "url": project_url,
+                    "provider": provider,
+                    "source": f"forge-probe:{provider}",
+                }
+
+    return None
+
+
 def docker_hub_project_link(image_ref):
     """
     Last-resort metadata fallback for Docker Hub.
@@ -1356,6 +1484,15 @@ def resolve_project_link(image_ref, metadata_url=None, metadata_source=None):
             url=registry.get("url"),
             provider=registry.get("provider"),
             source=registry.get("source"),
+        )
+
+    verified_forge = verified_forge_project_link(image_ref)
+    if verified_forge and verified_forge.get("url"):
+        return project_link_cache_put(
+            image_ref,
+            url=verified_forge.get("url"),
+            provider=verified_forge.get("provider"),
+            source=verified_forge.get("source"),
         )
 
     # Preserve a previously known positive link if a later revalidation cannot
