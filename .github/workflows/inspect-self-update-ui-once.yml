@@ -1,0 +1,26 @@
+name: Inspect self update UI once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/inspect-self-update-ui-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show self update UI context
+        shell: bash
+        run: |
+          echo '--- version marker ---'
+          grep -n -m 3 "UPDATE_MONITOR_VERSION" static/index.html || true
+          echo '--- version info error context ---'
+          grep -n -C 35 "Versionsinformationen konnten nicht geladen werden" static/index.html || true
+          echo '--- app update call context ---'
+          grep -n -C 45 "/api/app-update" static/index.html | head -n 220 || true
