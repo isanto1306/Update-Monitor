@@ -18,5 +18,9 @@ jobs:
       - name: Show provider UI context
         shell: bash
         run: |
-          echo '--- provider matches ---'
-          grep -niE 'github|gitlab|codeberg|docker hub|dockerhub|project.*link|provider' static/index.html | head -n 500 || true
+          echo '--- base styles ---'
+          sed -n '7945,8010p' static/index.html
+          echo '--- later overrides ---'
+          sed -n '15245,15395p' static/index.html
+          echo '--- render functions ---'
+          sed -n '20045,20105p' static/index.html
