@@ -1,4 +1,4 @@
-name: Temporary export current index
+name: Temporary translation audit
 
 on:
   push:
@@ -6,18 +6,53 @@ on:
       - '.github/workflows/temp-export-index.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  audit:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Upload current index
-        uses: actions/upload-artifact@v4
         with:
-          name: update-monitor-current-index
-          path: static/index.html
-          if-no-files-found: error
-          retention-days: 1
+          fetch-depth: 0
+      - name: Build translation audit
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const vm = require('vm');
+          const html = fs.readFileSync('static/index.html','utf8');
+          const marker = 'const translations = ';
+          const start = html.indexOf(marker);
+          const end = html.indexOf('\nfunction t(', start);
+          if (start < 0 || end < 0) throw new Error('translation block not found');
+          let expr = html.slice(start + marker.length, end).trim().replace(/;\s*$/,'');
+          const translations = vm.runInNewContext('(' + expr + ')');
+          const usedKeys = [...html.matchAll(/\bt\(\s*['\"]([^'\"]+)['\"]\s*\)/g)].map(m=>m[1]);
+          const uniqueUsed = [...new Set(usedKeys)].sort();
+          const report = {
+            version: (html.match(/const UPDATE_MONITOR_VERSION\s*=\s*['\"]([^'\"]+)/)||[])[1] || null,
+            languages: Object.keys(translations),
+            translations,
+            used_translation_keys: uniqueUsed,
+            html_sha256: require('crypto').createHash('sha256').update(html).digest('hex'),
+            checks: {
+              language_init: (html.match(/language:\s*[^,]+/)||[])[0] || null,
+              language_onchange: (html.match(/document\.getElementById\('languageSelect'\)\.onchange=[\s\S]{0,280}?\n};/)||[])[0] || null,
+              has_inline_translations: html.includes('INLINE_TRANSLATIONS'),
+              french_option: html.includes('value="fr"'),
+              portuguese_option: html.includes('value="pt"'),
+              spanish_option: html.includes('value="es"')
+            }
+          };
+          fs.writeFileSync('translation-audit-current.json', JSON.stringify(report,null,2)+'\n');
+          NODE
+      - name: Commit audit report
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add translation-audit-current.json
+          git commit -m 'Temporary translation audit report' || exit 0
+          git push
