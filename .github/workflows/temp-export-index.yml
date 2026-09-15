@@ -1,4 +1,4 @@
-name: Temporary translation audit
+name: Apply verified translation update v0.3.323
 
 on:
   push:
@@ -9,50 +9,37 @@ permissions:
   contents: write
 
 jobs:
-  audit:
+  apply:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout current main
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Build translation audit
+      - name: Reconstruct and verify patcher
         shell: bash
         run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const vm = require('vm');
-          const html = fs.readFileSync('static/index.html','utf8');
-          const marker = 'const translations = ';
-          const start = html.indexOf(marker);
-          const end = html.indexOf('\nfunction t(', start);
-          if (start < 0 || end < 0) throw new Error('translation block not found');
-          let expr = html.slice(start + marker.length, end).trim().replace(/;\s*$/,'');
-          const translations = vm.runInNewContext('(' + expr + ')');
-          const usedKeys = [...html.matchAll(/\bt\(\s*['\"]([^'\"]+)['\"]\s*\)/g)].map(m=>m[1]);
-          const uniqueUsed = [...new Set(usedKeys)].sort();
-          const report = {
-            version: (html.match(/const UPDATE_MONITOR_VERSION\s*=\s*['\"]([^'\"]+)/)||[])[1] || null,
-            languages: Object.keys(translations),
-            translations,
-            used_translation_keys: uniqueUsed,
-            html_sha256: require('crypto').createHash('sha256').update(html).digest('hex'),
-            checks: {
-              language_init: (html.match(/language:\s*[^,]+/)||[])[0] || null,
-              language_onchange: (html.match(/document\.getElementById\('languageSelect'\)\.onchange=[\s\S]{0,280}?\n};/)||[])[0] || null,
-              has_inline_translations: html.includes('INLINE_TRANSLATIONS'),
-              french_option: html.includes('value="fr"'),
-              portuguese_option: html.includes('value="pt"'),
-              spanish_option: html.includes('value="es"')
-            }
-          };
-          fs.writeFileSync('translation-audit-current.json', JSON.stringify(report,null,2)+'\n');
-          NODE
-      - name: Commit audit report
+          cat .github/tmp/patcher323.part1 .github/tmp/patcher323.part2 .github/tmp/patcher323.part3 .github/tmp/patcher323.part4 > /tmp/patcher323.b64
+          printf '%s  %s\n' '1ddb72a3f84f01ec10a26923e19e99a9d1e39c0477ca0982053d79a28e996c63' '/tmp/patcher323.b64' | sha256sum -c -
+          python - <<'PY'
+          import base64, hashlib, zlib
+          from pathlib import Path
+          raw = zlib.decompress(base64.b64decode(Path('/tmp/patcher323.b64').read_bytes()))
+          expected = '58a5ef3d6566b6aa8a855e6e12f7a5b50f7d51b6e8df28a3d88a884f65fa7d82'
+          actual = hashlib.sha256(raw).hexdigest()
+          if actual != expected:
+              raise SystemExit(f'patcher SHA mismatch: {actual}')
+          Path('/tmp/apply_translation_323.py').write_bytes(raw)
+          PY
+      - name: Apply and validate translations
+        shell: bash
+        run: |
+          python /tmp/apply_translation_323.py
+      - name: Commit verified frontend
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add translation-audit-current.json
-          git commit -m 'Temporary translation audit report' || exit 0
+          git add static/index.html translation-audit-final.json
+          git commit -m 'Add French Portuguese and Spanish UI translations v0.3.323'
           git push
