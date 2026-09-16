@@ -1,4 +1,4 @@
-name: Temporary browser startup smoke test
+name: Temporary browser startup diagnostic
 
 on:
   push:
@@ -9,45 +9,30 @@ permissions:
   contents: read
 
 jobs:
-  smoke:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Install Playwright Chromium
+      - name: Show failing source and verify applyLanguage IDs
+        shell: bash
         run: |
-          npm install --no-save playwright@1.55.0
-          npx playwright install --with-deps chromium
-      - name: Start static server
-        run: |
-          python3 -m http.server 8765 --directory static >/tmp/update-monitor-http.log 2>&1 &
-          echo $! > /tmp/http.pid
-      - name: Run startup smoke test
-        run: |
-          node <<'NODE'
-          const { chromium } = require('playwright');
-          (async()=>{
-            const browser=await chromium.launch({headless:true});
-            const page=await browser.newPage();
-            const errors=[];
-            page.on('pageerror',e=>{ errors.push(String(e.stack||e)); console.log('PAGEERROR:',String(e.stack||e)); });
-            page.on('console',m=>console.log('CONSOLE',m.type()+':',m.text()));
-            await page.route('**/api/auth/status',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({authenticated:false})}));
-            await page.goto('http://127.0.0.1:8765/',{waitUntil:'domcontentloaded'});
-            await page.waitForTimeout(1000);
-            const info=await page.evaluate(()=>({
-              lang:document.documentElement.lang,
-              loginExists:!!document.getElementById('loginScreen'),
-              loginDisplay:document.getElementById('loginScreen')?getComputedStyle(document.getElementById('loginScreen')).display:null,
-              loginVisibility:document.getElementById('loginScreen')?getComputedStyle(document.getElementById('loginScreen')).visibility:null,
-              loginOpacity:document.getElementById('loginScreen')?getComputedStyle(document.getElementById('loginScreen')).opacity:null,
-              bodyText:(document.body.innerText||'').slice(0,500)
-            }));
-            console.log('STARTUP_STATE',JSON.stringify(info,null,2));
-            await browser.close();
-            if(errors.length) process.exit(2);
-            if(!info.loginExists || info.loginDisplay==='none' || info.loginVisibility==='hidden' || info.loginOpacity==='0') process.exit(3);
-          })().catch(e=>{console.error(e);process.exit(1)});
-          NODE
+          echo '=== FAILING SOURCE ==='
+          nl -ba static/index.html | sed -n '18966,18980p'
+          echo '=== APPLYLANGUAGE DOM ID CHECK ==='
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          s=Path('static/index.html').read_text(encoding='utf-8')
+          a=s.index('function applyLanguage(){')
+          b=s.index('\n}',a)+2
+          body=s[a:b]
+          ids=re.findall(r"getElementById\(['\"]([^'\"]+)['\"]\)",body)
+          html_ids=set(re.findall(r'id=["\']([^"\']+)["\']',s))
+          print('applyLanguage refs:', len(ids))
+          missing=[x for x in ids if x not in html_ids]
+          print('missing:', missing)
+          for x in missing:
+              for i,line in enumerate(s.splitlines(),1):
+                  if x in line:
+                      print(i, line.strip())
+          PY
