@@ -1,4 +1,4 @@
-# validation rerun 2
+# validation rerun 3
 name: Apply Update Monitor v0.3.342 fixes
 
 on:
@@ -32,6 +32,45 @@ jobs:
       - name: Decode patch script
         run: |
           base64 -d .github/patch-v0.3.342.py.gz.b64 | gzip -dc > /tmp/patch-v0.3.342.py
+
+      - name: Adapt backup anchor to current v0.3.341
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/patch-v0.3.342.py')
+          s = p.read_text(encoding='utf-8')
+          start_marker = "old_manual_backup = '''"
+          end_marker = 'main = replace_once(main, old_manual_backup, new_manual_backup, "manual auto backup rule")'
+          start = s.find(start_marker)
+          end = s.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('manual auto backup patch block not found')
+          end += len(end_marker)
+          replacement = '''old_manual_backup = \'\'\'    requested_backup_mode = str(data.backup_mode or "none").strip().lower()
+              if requested_backup_mode not in {"none", "quick", "full"}:
+                  app_update_lock.release()
+                  raise HTTPException(status_code=400, detail="Invalid backup mode")
+              backup_mode = _normalize_backup_mode(requested_backup_mode, "none")\'\'\'
+          new_manual_backup = \'\'\'    requested_backup_mode = str(data.backup_mode or "none").strip().lower()
+              if requested_backup_mode not in {"none", "quick", "full"}:
+                  app_update_lock.release()
+                  raise HTTPException(status_code=400, detail="Invalid backup mode")
+
+              # If this app is already configured for automatic updating, the user has
+              # already chosen the backup rule. A faster manual click must use exactly
+              # that saved rule instead of opening/accepting a second backup decision.
+              auto_policy = get_monitor_policy(data.stack_key)
+              auto_rule_applies = bool(auto_policy.get("auto_enabled")) and str(
+                  auto_policy.get("mode") or ""
+              ) in {"upgrade", "follow"}
+              if auto_rule_applies:
+                  backup_mode = _normalize_backup_mode(auto_policy.get("auto_backup_mode"), "none")
+              else:
+                  backup_mode = _normalize_backup_mode(requested_backup_mode, "none")\'\'\'
+          main = replace_once(main, old_manual_backup, new_manual_backup, "manual auto backup rule")'''
+          p.write_text(s[:start] + replacement + s[end:], encoding='utf-8')
+          PY
+          python -m py_compile /tmp/patch-v0.3.342.py
 
       - name: Upload decoded patch script
         uses: actions/upload-artifact@v4
