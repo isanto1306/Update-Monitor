@@ -1,0 +1,155 @@
+name: Apply Update Monitor v0.3.343 port conflict fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v0.3.343-port-conflicts.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch port conflict logic and version
+        shell: python
+        run: |
+          from pathlib import Path
+
+          index_path = Path('static/index.html')
+          main_path = Path('app/main.py')
+          index = index_path.read_text(encoding='utf-8')
+          main = main_path.read_text(encoding='utf-8')
+
+          old_filter = '''      const runtime=String(container&&container.state||'').trim().toLowerCase();
+      // Stopped/exited containers only describe configured overlaps; they are
+      // not active host-port conflicts. Paused/restarting containers still own
+      // their Docker network bindings and remain active for this check.
+      if(!['running','paused','restarting'].includes(runtime))return;
+      const rawBindings=Array.isArray(container.port_bindings)&&container.port_bindings.length
+'''
+          new_filter = '''      const runtime=String(container&&container.state||'').trim().toLowerCase();
+      // Include configured host-port bindings for running and stopped containers.
+      // A stopped container can still conflict with another app when both are started.
+      const rawBindings=Array.isArray(container.port_bindings)&&container.port_bindings.length
+'''
+          if index.count(old_filter) != 1:
+              raise SystemExit(f'port runtime filter anchor count: {index.count(old_filter)}')
+          index = index.replace(old_filter, new_filter, 1)
+
+          old_collect = '''        if(!entry.apps.has(appKey))entry.apps.set(appKey,{app_key:appKey,app_name:String(candidate.app&&candidate.app.name||appKey||'-'),containers:new Set()});
+        entry.apps.get(appKey).containers.add(String(candidate.container&&candidate.container.name||''));
+'''
+          new_collect = '''        if(!entry.apps.has(appKey))entry.apps.set(appKey,{app_key:appKey,app_name:String(candidate.app&&candidate.app.name||appKey||'-'),containers:new Map()});
+        const containerName=String(candidate.container&&candidate.container.name||'-');
+        const containerState=String(candidate.container&&candidate.container.state||'unknown').trim().toLowerCase()||'unknown';
+        entry.apps.get(appKey).containers.set(containerName,containerState);
+'''
+          if index.count(old_collect) != 1:
+              raise SystemExit(f'port collect anchor count: {index.count(old_collect)}')
+          index = index.replace(old_collect, new_collect, 1)
+
+          old_output = '''      containers:Array.from(value.containers).filter(Boolean).sort((a,b)=>a.localeCompare(b))
+'''
+          new_output = '''      containers:Array.from(value.containers.entries()).map(([name,state])=>({name,state})).sort((a,b)=>a.name.localeCompare(b.name))
+'''
+          if index.count(old_output) != 1:
+              raise SystemExit(f'port output anchor count: {index.count(old_output)}')
+          index = index.replace(old_output, new_output, 1)
+
+          anchor = '''function renderPortConflictBanner(){
+'''
+          helper = '''function portConflictRuntimeStateWord(value){
+  const raw=String(value||'').trim().toLowerCase();
+  if(raw==='running')return t('runtimeWordRunning');
+  if(['exited','stopped','dead','created'].includes(raw))return t('runtimeWordStopped');
+  return localizeRuntimeStateWord(raw);
+}
+
+function renderPortConflictBanner(){
+'''
+          if index.count(anchor) != 1:
+              raise SystemExit(f'port helper anchor count: {index.count(anchor)}')
+          index = index.replace(anchor, helper, 1)
+
+          old_render = '''      ${conflict.apps.map(app=>`<div class="port-conflict-app"><strong>${esc(app.app_name)}</strong><span>${esc(app.containers.join(', '))}</span></div>`).join('')}
+'''
+          new_render = '''      ${conflict.apps.map(app=>`<div class="port-conflict-app"><strong>${esc(app.app_name)}</strong><span>${app.containers.map(container=>esc(container.name)+' · '+esc(portConflictRuntimeStateWord(container.state))).join('<br>')}</span></div>`).join('')}
+'''
+          if index.count(old_render) != 1:
+              raise SystemExit(f'port render anchor count: {index.count(old_render)}')
+          index = index.replace(old_render, new_render, 1)
+
+          version_hits = index.count('0.3.342')
+          if version_hits < 2:
+              raise SystemExit(f'frontend version hits too low: {version_hits}')
+          index = index.replace('0.3.342', '0.3.343')
+          if '0.3.342' in index:
+              raise SystemExit('stale frontend 0.3.342 remains')
+
+          old_main = 'VERSION = "0.3.342"'
+          if main.count(old_main) != 1:
+              raise SystemExit(f'backend version anchor count: {main.count(old_main)}')
+          main = main.replace(old_main, 'VERSION = "0.3.343"', 1)
+
+          index_path.write_text(index, encoding='utf-8')
+          main_path.write_text(main, encoding='utf-8')
+
+      - name: Validate JavaScript syntax
+        shell: python
+        run: |
+          import re, subprocess
+          from pathlib import Path
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          blocks = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.I|re.S)
+          if not blocks:
+              raise SystemExit('No inline scripts found')
+          for i, block in enumerate(blocks):
+              path = Path(f'/tmp/update-monitor-inline-{i}.js')
+              path.write_text(block, encoding='utf-8')
+              subprocess.run(['node','--check',str(path)], check=True)
+
+      - name: Regression test port conflicts
+        shell: python
+        run: |
+          from pathlib import Path
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          required = [
+              "A stopped container can still conflict with another app when both are started.",
+              "containers:new Map()",
+              "containers:Array.from(value.containers.entries())",
+              "function portConflictRuntimeStateWord(value)",
+              "['exited','stopped','dead','created'].includes(raw)",
+              "portConflictRuntimeStateWord(container.state)",
+              "const UPDATE_MONITOR_VERSION = 'v0.3.343';",
+          ]
+          for needle in required:
+              if needle not in html:
+                  raise SystemExit(f'Missing regression marker: {needle}')
+          forbidden = "if(!['running','paused','restarting'].includes(runtime))return;"
+          if forbidden in html:
+              raise SystemExit('Stopped container filter is still present')
+          main = Path('app/main.py').read_text(encoding='utf-8')
+          if 'VERSION = "0.3.343"' not in main:
+              raise SystemExit('Backend version is not 0.3.343')
+
+      - name: Validate diff
+        run: |
+          git diff --check
+          git diff -- static/index.html app/main.py
+
+      - name: Commit v0.3.343
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/apply-v0.3.343-port-conflicts.yml
+          git add static/index.html app/main.py .github/workflows/apply-v0.3.343-port-conflicts.yml
+          git commit -m "Restore configured port conflicts with runtime status v0.3.343"
+          git push origin main
