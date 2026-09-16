@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.342"
+        href="favicon.ico?v=0.3.343"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.342"
+        href="favicon-16x16.png?v=0.3.343"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.342"
+        href="favicon-32x32.png?v=0.3.343"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.342"
+        href="apple-touch-icon.png?v=0.3.343"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.342"
+        href="site.webmanifest?v=0.3.343"
     >
 
     <meta
@@ -18236,7 +18236,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <style id="um-auto-backup-language-width-v0329">
-/* v0.3.342 — only the automatic-update Backup selector for the longer
+/* v0.3.343 — only the automatic-update Backup selector for the longer
    French, Portuguese and Spanish labels. German/English and all fixed
    header/summary geometry remain unchanged. */
 html[lang="fr"] .policy-auto-layout-behavior .policy-backup-preview-controls,
@@ -18385,7 +18385,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.342</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.343</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18725,7 +18725,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.342';
+const UPDATE_MONITOR_VERSION = 'v0.3.343';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -21213,10 +21213,8 @@ function detectPortConflicts(apps){
   (apps||[]).forEach((app,appIndex)=>{
     (Array.isArray(app&&app.containers)?app.containers:[]).forEach(container=>{
       const runtime=String(container&&container.state||'').trim().toLowerCase();
-      // Stopped/exited containers only describe configured overlaps; they are
-      // not active host-port conflicts. Paused/restarting containers still own
-      // their Docker network bindings and remain active for this check.
-      if(!['running','paused','restarting'].includes(runtime))return;
+      // Include configured host-port bindings for running and stopped containers.
+      // A stopped container can still conflict with another app when both are started.
       const rawBindings=Array.isArray(container.port_bindings)&&container.port_bindings.length
         ?container.port_bindings
         :fallbackPortBindings(container);
@@ -21238,8 +21236,10 @@ function detectPortConflicts(apps){
       const entry=conflictMap.get(key);
       [a,b].forEach(candidate=>{
         const appKey=String(candidate.app&&candidate.app.stack_key||candidate.appIndex);
-        if(!entry.apps.has(appKey))entry.apps.set(appKey,{app_key:appKey,app_name:String(candidate.app&&candidate.app.name||appKey||'-'),containers:new Set()});
-        entry.apps.get(appKey).containers.add(String(candidate.container&&candidate.container.name||''));
+        if(!entry.apps.has(appKey))entry.apps.set(appKey,{app_key:appKey,app_name:String(candidate.app&&candidate.app.name||appKey||'-'),containers:new Map()});
+        const containerName=String(candidate.container&&candidate.container.name||'-');
+        const containerState=String(candidate.container&&candidate.container.state||'unknown').trim().toLowerCase()||'unknown';
+        entry.apps.get(appKey).containers.set(containerName,containerState);
       });
     }
   }
@@ -21250,9 +21250,16 @@ function detectPortConflicts(apps){
     apps:Array.from(entry.apps.values()).map(value=>({
       app_key:value.app_key,
       app_name:value.app_name,
-      containers:Array.from(value.containers).filter(Boolean).sort((a,b)=>a.localeCompare(b))
+      containers:Array.from(value.containers.entries()).map(([name,state])=>({name,state})).sort((a,b)=>a.name.localeCompare(b.name))
     })).sort((a,b)=>a.app_name.localeCompare(b.app_name))
   })).sort((a,b)=>Number(a.port)-Number(b.port)||String(a.protocol).localeCompare(String(b.protocol)));
+}
+
+function portConflictRuntimeStateWord(value){
+  const raw=String(value||'').trim().toLowerCase();
+  if(raw==='running')return t('runtimeWordRunning');
+  if(['exited','stopped','dead','created'].includes(raw))return t('runtimeWordStopped');
+  return localizeRuntimeStateWord(raw);
 }
 
 function renderPortConflictBanner(){
@@ -21285,7 +21292,7 @@ function openPortConflictDialog(){
     <div class="port-conflict-entry">
       <div class="port-conflict-port">${esc(t('port'))} ${esc(conflict.port)}</div>
       <div class="port-conflict-apps-label">${esc(t('portConflictApps'))}</div>
-      ${conflict.apps.map(app=>`<div class="port-conflict-app"><strong>${esc(app.app_name)}</strong><span>${esc(app.containers.join(', '))}</span></div>`).join('')}
+      ${conflict.apps.map(app=>`<div class="port-conflict-app"><strong>${esc(app.app_name)}</strong><span>${app.containers.map(container=>esc(container.name)+' · '+esc(portConflictRuntimeStateWord(container.state))).join('<br>')}</span></div>`).join('')}
     </div>`).join('');
   backdrop.classList.add('visible');
   backdrop.setAttribute('aria-hidden','false');
