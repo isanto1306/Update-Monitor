@@ -138,7 +138,7 @@ jobs:
           assert 'minmax(118px,1.15fr)' in html
           assert 'minmax(112px,1.08fr)' in html
           assert 'grid-template-columns:30px 68px' in html
-          assert '.update-resource-title{\n            display:none !important;' in html
+          assert re.search(r'\.update-card-stat-resource\s+\.update-resource-title\s*\{\s*display:none !important;', html, re.S)
           PY
           node --check /tmp/update-monitor.js
           git diff --check
