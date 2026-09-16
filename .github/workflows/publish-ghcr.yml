@@ -1,52 +1,100 @@
-name: Publish Docker image
+name: One-time self update reload fix
 
 on:
   push:
     branches:
-      - main
-    tags:
-      - 'v*'
-  workflow_dispatch:
+      - fix-self-update-reload-v0332
 
 permissions:
-  contents: read
-  packages: write
+  contents: write
 
 jobs:
-  build-and-push:
+  patch:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Patch self update reload and bump version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          index_path = Path("static/index.html")
+          index = index_path.read_text(encoding="utf-8")
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/update-monitor
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=tag
-            type=sha,prefix=sha-
+          function_marker = "async function waitForSelfUpdateRestart("
+          if index.count(function_marker) != 1:
+              raise SystemExit(f"Expected exactly one {function_marker!r}, found {index.count(function_marker)}")
 
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          function_start = index.index(function_marker)
+          function_end = index.index("\nasync function installImageUpdate(", function_start)
+          function_text = index[function_start:function_end]
+
+          gate_start_marker = "    if(restarted){"
+          gate_start = function_text.index(gate_start_marker)
+          wait_marker = "\n\n    await new Promise(resolve=>setTimeout(resolve,1000));"
+          gate_end = function_text.index(wait_marker, gate_start)
+
+          replacement_gate = "    if(restarted){\n      return true;\n    }"
+          function_text = (
+              function_text[:gate_start]
+              + replacement_gate
+              + function_text[gate_end:]
+          )
+          index = index[:function_start] + function_text + index[function_end:]
+
+          old_comment = (
+              "    if(verified){\n"
+              "      // The replacement container is running and its targeted verification is complete.\n"
+              "      // Reload this browser tab so Edge/other browsers immediately load the new frontend.\n"
+              "      window.setTimeout(()=>window.location.reload(),700);\n"
+              "      return;\n"
+              "    }"
+          )
+          new_comment = (
+              "    if(verified){\n"
+              "      // The replacement container is running. Reload immediately so the browser\n"
+              "      // loads the new frontend; targeted verification continues independently.\n"
+              "      window.setTimeout(()=>window.location.reload(),700);\n"
+              "      return;\n"
+              "    }"
+          )
+          if index.count(old_comment) != 1:
+              raise SystemExit(f"Expected one self-update reload comment block, found {index.count(old_comment)}")
+          index = index.replace(old_comment, new_comment, 1)
+
+          old_version = "0.3.331"
+          new_version = "0.3.332"
+          version_hits = index.count(old_version)
+          if version_hits < 1:
+              raise SystemExit(f"Expected at least one {old_version} in static/index.html")
+          index = index.replace(old_version, new_version)
+          index_path.write_text(index, encoding="utf-8")
+
+          main_path = Path("app/main.py")
+          main = main_path.read_text(encoding="utf-8")
+          old_main_version = 'VERSION = "0.3.331"'
+          new_main_version = 'VERSION = "0.3.332"'
+          if main.count(old_main_version) != 1:
+              raise SystemExit(f"Expected exactly one backend version declaration, found {main.count(old_main_version)}")
+          main = main.replace(old_main_version, new_main_version, 1)
+          main_path.write_text(main, encoding="utf-8")
+
+          original_workflow = base64.b64decode("bmFtZTogUHVibGlzaCBEb2NrZXIgaW1hZ2UKCm9uOgogIHB1c2g6CiAgICBicmFuY2hlczoKICAgICAgLSBtYWluCiAgICB0YWdzOgogICAgICAtICd2KicKICB3b3JrZmxvd19kaXNwYXRjaDoKCnBlcm1pc3Npb25zOgogIGNvbnRlbnRzOiByZWFkCiAgcGFja2FnZXM6IHdyaXRlCgpqb2JzOgogIGJ1aWxkLWFuZC1wdXNoOgogICAgcnVucy1vbjogdWJ1bnR1LWxhdGVzdAoKICAgIHN0ZXBzOgogICAgICAtIG5hbWU6IENoZWNrIG91dCByZXBvc2l0b3J5CiAgICAgICAgdXNlczogYWN0aW9ucy9jaGVja291dEB2NAoKICAgICAgLSBuYW1lOiBTZXQgdXAgRG9ja2VyIEJ1aWxkeAogICAgICAgIHVzZXM6IGRvY2tlci9zZXR1cC1idWlsZHgtYWN0aW9uQHYzCgogICAgICAtIG5hbWU6IExvZyBpbiB0byBHSENSCiAgICAgICAgdXNlczogZG9ja2VyL2xvZ2luLWFjdGlvbkB2MwogICAgICAgIHdpdGg6CiAgICAgICAgICByZWdpc3RyeTogZ2hjci5pbwogICAgICAgICAgdXNlcm5hbWU6ICR7eyBnaXRodWIuYWN0b3IgfX0KICAgICAgICAgIHBhc3N3b3JkOiAke3sgc2VjcmV0cy5HSVRIVUJfVE9LRU4gfX0KCiAgICAgIC0gbmFtZTogRG9ja2VyIG1ldGFkYXRhCiAgICAgICAgaWQ6IG1ldGEKICAgICAgICB1c2VzOiBkb2NrZXIvbWV0YWRhdGEtYWN0aW9uQHY1CiAgICAgICAgd2l0aDoKICAgICAgICAgIGltYWdlczogZ2hjci5pby8ke3sgZ2l0aHViLnJlcG9zaXRvcnlfb3duZXIgfX0vdXBkYXRlLW1vbml0b3IKICAgICAgICAgIHRhZ3M6IHwKICAgICAgICAgICAgdHlwZT1yYXcsdmFsdWU9bGF0ZXN0LGVuYWJsZT17e2lzX2RlZmF1bHRfYnJhbmNofX0KICAgICAgICAgICAgdHlwZT1yZWYsZXZlbnQ9dGFnCiAgICAgICAgICAgIHR5cGU9c2hhLHByZWZpeD1zaGEtCgogICAgICAtIG5hbWU6IEJ1aWxkIGFuZCBwdXNoIGltYWdlCiAgICAgICAgdXNlczogZG9ja2VyL2J1aWxkLXB1c2gtYWN0aW9uQHY2CiAgICAgICAgd2l0aDoKICAgICAgICAgIGNvbnRleHQ6IC4KICAgICAgICAgIHB1c2g6IHRydWUKICAgICAgICAgIHRhZ3M6ICR7eyBzdGVwcy5tZXRhLm91dHB1dHMudGFncyB9fQogICAgICAgICAgbGFiZWxzOiAke3sgc3RlcHMubWV0YS5vdXRwdXRzLmxhYmVscyB9fQogICAgICAgICAgcGxhdGZvcm1zOiBsaW51eC9hbWQ2NAogICAgICAgICAgY2FjaGUtZnJvbTogdHlwZT1naGEKICAgICAgICAgIGNhY2hlLXRvOiB0eXBlPWdoYSxtb2RlPW1heAo=").decode("utf-8")
+          Path(".github/workflows/publish-ghcr.yml").write_text(original_workflow, encoding="utf-8")
+
+          print(f"Patched self-update reload; frontend version hits updated: {version_hits}")
+          PY
+
+          git diff --check
+          git add static/index.html app/main.py .github/workflows/publish-ghcr.yml
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Fix self update browser reload"
+          git push origin HEAD:fix-self-update-reload-v0332
