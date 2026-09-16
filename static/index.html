@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.341"
+        href="favicon.ico?v=0.3.342"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.341"
+        href="favicon-16x16.png?v=0.3.342"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.341"
+        href="favicon-32x32.png?v=0.3.342"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.341"
+        href="apple-touch-icon.png?v=0.3.342"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.341"
+        href="site.webmanifest?v=0.3.342"
     >
 
     <meta
@@ -15525,6 +15525,16 @@ html[data-um-input="hybrid"] .policy-time-keypad-inline .policy-time-keypad-key.
   grid-template-columns:repeat(2,minmax(0,1fr));
   gap:8px;
 }
+.docker-info-container-list{display:grid;gap:7px;margin-top:8px}
+.docker-info-container-disclosure{border:1px solid rgba(112,137,160,.22);border-radius:8px;background:rgba(255,255,255,.012);overflow:hidden}
+.docker-info-container-disclosure>summary{display:grid;grid-template-columns:minmax(130px,.8fr) minmax(70px,.35fr) minmax(180px,1.5fr);gap:8px;align-items:center;padding:9px 10px;cursor:pointer;list-style:none}
+.docker-info-container-disclosure>summary::-webkit-details-marker{display:none}
+.docker-info-container-summary-name{color:#9fd0ff;font-weight:830;overflow-wrap:anywhere}
+.docker-info-container-summary-state{color:#a9b8c2;font-size:9.5px}
+.docker-info-container-summary-image{color:#c7d2da;font-size:9.5px;overflow-wrap:anywhere}
+.docker-info-container-disclosure[open]>summary{border-bottom:1px solid rgba(112,137,160,.16)}
+.docker-info-container-disclosure>.docker-info-container-card{border:0!important;border-radius:0!important;background:transparent!important}
+@media (max-width:720px){.docker-info-container-disclosure>summary{grid-template-columns:minmax(0,1fr) auto}.docker-info-container-summary-image{grid-column:1/-1}}
 .docker-info-container-card,.docker-info-image-card{
   padding:10px;
   border:1px solid rgba(112,137,160,.22);
@@ -16435,6 +16445,12 @@ body.scan-ui-locked #systemInfoPanel{
   font-weight:850;
   margin-bottom:7px;
 }
+.header-warning-filters{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+.header-warning-filters button{border:1px solid rgba(112,137,160,.28);border-radius:7px;background:rgba(255,255,255,.02);color:#aebbc4;padding:4px 7px;font:inherit;font-size:9px;cursor:pointer}
+.header-warning-filters button.active{border-color:rgba(79,163,255,.55);color:#cfe7ff;background:rgba(79,163,255,.08)}
+.header-warning-group{border:1px solid rgba(112,137,160,.2);border-radius:8px;overflow:hidden}
+.header-warning-group>summary{padding:8px 9px;cursor:pointer;color:#d8e2e8;font-size:10px;font-weight:800}
+.header-warning-group-items{display:grid;gap:7px;padding:0 7px 7px}
 .header-warning-list{
   display:flex;
   flex-direction:column;
@@ -18220,7 +18236,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <style id="um-auto-backup-language-width-v0329">
-/* v0.3.341 — only the automatic-update Backup selector for the longer
+/* v0.3.342 — only the automatic-update Backup selector for the longer
    French, Portuguese and Spanish labels. German/English and all fixed
    header/summary geometry remain unchanged. */
 html[lang="fr"] .policy-auto-layout-behavior .policy-backup-preview-controls,
@@ -18369,7 +18385,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.341</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.342</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18709,7 +18725,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.341';
+const UPDATE_MONITOR_VERSION = 'v0.3.342';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -19956,6 +19972,17 @@ function actionProgressLabel(kind,progress,phase=''){
   return progress===null?t('uninstalling'):t('uninstallProgress').replace('{progress}',progress);
 }
 
+function safeUninstallButtonLabel(){
+  return ({
+    de:'DEINSTALLIEREN',
+    en:'UNINSTALL',
+    fr:'DÉSINSTALLER',
+    pt:'DESINSTALAR',
+    es:'DESINSTALAR'
+  }[state.language]||'UNINSTALL');
+}
+
+
 function renderUninstallPanel(app,index){
   // Folder-preservation semantics are provided by the official ZimaOS
   // delete_config_folder parameter. Local/non-ZimaOS containers do not expose
@@ -19968,7 +19995,7 @@ function renderUninstallPanel(app,index){
   const progressView=actionProgressView(app.stack_key,'uninstall');
   const progressClass=busy&&progressView.hasPercent?' has-percent':'';
   const progressStyle=busy&&progressView.hasPercent?` style="--action-progress:${progressView.progress}%"`:'';
-  const buttonLabel=busy?actionProgressLabel('uninstall',progressView.progress,progressView.phase):t('uninstallButton');
+  const buttonLabel=busy?actionProgressLabel('uninstall',progressView.progress,progressView.phase):safeUninstallButtonLabel();
   const helpText=selfProtected?t('selfProtectionUninstall'):t('uninstallFolderHelp');
   const protectionTitle=selfProtected?` title="${esc(selfProtectionTitle())}"`:'';
 
@@ -20519,6 +20546,25 @@ function dockerInfoContainerCard(container,index){
     <div class="docker-info-env-note">${dockerInfoText('Umgebungsvariablen werden aus Sicherheitsgründen nicht angezeigt. Anzahl: ','Environment variable values are hidden for security. Count: ')}${Number(container.environment_variable_count)||0}</div>
   </article>`;
 }
+function dockerInfoContainerDisclosure(container,index,total){
+  const runtime=String(container&&container.state&&container.state.status||'-');
+  const image=String(container&&container.image_ref||'-');
+  const opened=Number(total)<=4?' open':'';
+  return `<details class="docker-info-container-disclosure"${opened}>
+    <summary>
+      <span class="docker-info-container-summary-name">${esc(container.name||`Container ${index+1}`)}</span>
+      <span class="docker-info-container-summary-state">${esc(runtime)}</span>
+      <span class="docker-info-container-summary-image">${esc(image)}</span>
+    </summary>
+    ${dockerInfoContainerCard(container,index)}
+  </details>`;
+}
+function dockerInfoContainerList(containers){
+  const values=Array.isArray(containers)?containers:[];
+  return `<div class="docker-info-container-list">${values.map((container,index)=>dockerInfoContainerDisclosure(container,index,values.length)).join('')}</div>`;
+}
+
+
 function dockerInfoImageCard(data){
   const image=data.image;
   if(!image)return `<section class="docker-info-section docker-info-section-full"><div class="docker-info-section-title">Image</div><div class="docker-info-empty">${dockerInfoText('Image-Informationen konnten nicht gelesen werden.','Image information could not be read.')}</div></section>`;
@@ -20580,7 +20626,7 @@ async function openDockerInfo(stackKey,imageRef){
     body.innerHTML=
       dockerInfoSection(dockerInfoText('Übersicht','Overview'),headerRows,'docker-info-section-full')+
       dockerInfoImageCard(data)+
-      containers.map((container,index)=>dockerInfoContainerCard(container,index)).join('');
+      dockerInfoContainerList(containers);
   }catch(error){
     body.innerHTML=`<div class="docker-info-error">${esc(dockerInfoText('Docker-Informationen konnten nicht geladen werden: ','Could not load Docker information: ')+String(error&&error.message||error||''))}</div>`;
   }
@@ -21142,43 +21188,71 @@ async function unlockBackupEncryption(){
   }
 }
 
+function normalizedHostBinding(binding){
+  const hostPort=String(binding&&binding.host_port||'').trim();
+  const protocol=String(binding&&binding.protocol||'tcp').trim().toLowerCase()||'tcp';
+  const hostIp=String(binding&&binding.host_ip||'0.0.0.0').trim().toLowerCase()||'0.0.0.0';
+  return {hostPort,protocol,hostIp};
+}
+function hostBindingWildcard(ip){
+  return !ip||ip==='0.0.0.0'||ip==='::'||ip==='[::]'||ip==='*';
+}
+function hostBindingsOverlap(a,b){
+  if(!a.hostPort||!b.hostPort||a.hostPort!==b.hostPort||a.protocol!==b.protocol)return false;
+  return hostBindingWildcard(a.hostIp)||hostBindingWildcard(b.hostIp)||a.hostIp===b.hostIp;
+}
+function fallbackPortBindings(container){
+  return (Array.isArray(container&&container.ports)?container.ports:[]).map(value=>{
+    const raw=String(value||'').trim();
+    const match=raw.match(/^(\d+)(?:\/(TCP|UDP|SCTP))?$/i);
+    return match?{host_ip:'0.0.0.0',host_port:match[1],protocol:(match[2]||'tcp').toLowerCase()}:null;
+  }).filter(Boolean);
+}
 function detectPortConflicts(apps){
-  const byPort=new Map();
-  (apps||[]).forEach(app=>{
-    const appKey=String(app&&app.stack_key||'');
-    const appName=String(app&&app.name||appKey||'-');
-    (app&&Array.isArray(app.containers)?app.containers:[]).forEach(container=>{
-      const containerName=String(container&&container.name||'-');
-      (container&&Array.isArray(container.ports)?container.ports:[]).forEach(rawPort=>{
-        const port=String(rawPort||'').trim().toUpperCase();
-        if(!port)return;
-        if(!byPort.has(port))byPort.set(port,new Map());
-        const appsForPort=byPort.get(port);
-        const entry=appsForPort.get(appKey)||{app_key:appKey,app_name:appName,containers:new Set()};
-        entry.containers.add(containerName);
-        appsForPort.set(appKey,entry);
+  const candidates=[];
+  (apps||[]).forEach((app,appIndex)=>{
+    (Array.isArray(app&&app.containers)?app.containers:[]).forEach(container=>{
+      const runtime=String(container&&container.state||'').trim().toLowerCase();
+      // Stopped/exited containers only describe configured overlaps; they are
+      // not active host-port conflicts. Paused/restarting containers still own
+      // their Docker network bindings and remain active for this check.
+      if(!['running','paused','restarting'].includes(runtime))return;
+      const rawBindings=Array.isArray(container.port_bindings)&&container.port_bindings.length
+        ?container.port_bindings
+        :fallbackPortBindings(container);
+      rawBindings.forEach(raw=>{
+        const binding=normalizedHostBinding(raw);
+        if(!binding.hostPort)return;
+        candidates.push({app,appIndex,container,binding});
       });
     });
   });
 
-  const conflicts=[];
-  byPort.forEach((appsForPort,port)=>{
-    if(appsForPort.size<2)return;
-    conflicts.push({
-      port,
-      apps:[...appsForPort.values()].map(item=>({
-        app_key:item.app_key,
-        app_name:item.app_name,
-        containers:[...item.containers].sort((a,b)=>a.localeCompare(b))
-      })).sort((a,b)=>a.app_name.localeCompare(b.app_name))
-    });
-  });
-  conflicts.sort((a,b)=>{
-    const an=parseInt(a.port,10),bn=parseInt(b.port,10);
-    if(Number.isFinite(an)&&Number.isFinite(bn)&&an!==bn)return an-bn;
-    return a.port.localeCompare(b.port);
-  });
-  return conflicts;
+  const conflictMap=new Map();
+  for(let i=0;i<candidates.length;i++){
+    for(let j=i+1;j<candidates.length;j++){
+      const a=candidates[i],b=candidates[j];
+      if(a.appIndex===b.appIndex||!hostBindingsOverlap(a.binding,b.binding))continue;
+      const key=`${a.binding.hostPort}/${a.binding.protocol}`;
+      if(!conflictMap.has(key))conflictMap.set(key,{port:a.binding.hostPort,protocol:a.binding.protocol,apps:new Map()});
+      const entry=conflictMap.get(key);
+      [a,b].forEach(candidate=>{
+        const appKey=String(candidate.app&&candidate.app.stack_key||candidate.appIndex);
+        if(!entry.apps.has(appKey))entry.apps.set(appKey,{app_key:appKey,app_name:String(candidate.app&&candidate.app.name||appKey||'-'),containers:new Set()});
+        entry.apps.get(appKey).containers.add(String(candidate.container&&candidate.container.name||''));
+      });
+    }
+  }
+
+  return Array.from(conflictMap.values()).map(entry=>({
+    port:entry.port,
+    protocol:entry.protocol,
+    apps:Array.from(entry.apps.values()).map(value=>({
+      app_key:value.app_key,
+      app_name:value.app_name,
+      containers:Array.from(value.containers).filter(Boolean).sort((a,b)=>a.localeCompare(b))
+    })).sort((a,b)=>a.app_name.localeCompare(b.app_name))
+  })).sort((a,b)=>Number(a.port)-Number(b.port)||String(a.protocol).localeCompare(String(b.protocol)));
 }
 
 function renderPortConflictBanner(){
@@ -22270,7 +22344,13 @@ function render(){
   document.querySelectorAll('[data-update-index]').forEach(button=>{
     button.onclick=()=>{
       const app=visible[Number(button.dataset.updateIndex)];
-      if(app)openBackupPreview(app);
+      if(!app)return;
+      const savedMode=savedAutoBackupMode(app);
+      if(savedMode!==null){
+        installImageUpdate(app,savedMode);
+      }else{
+        openBackupPreview(app);
+      }
     };
   });
 
@@ -23484,6 +23564,15 @@ function setBackupPreviewChoice(choice){
   }
 }
 
+function savedAutoBackupMode(app){
+  const policy=appPolicy(app);
+  if(!policy||!policy.auto_enabled)return null;
+  if(!['upgrade','follow'].includes(String(policy.mode||'')))return null;
+  const mode=String(policy.auto_backup_mode||'none').toLowerCase();
+  return ['quick','full','none'].includes(mode)?mode:'none';
+}
+
+
 function openBackupPreview(app){
   if(!app)return;
   backupPreviewApp=app;
@@ -24468,13 +24557,14 @@ function scanStepText(scan){
     containers:t('scanContainers'),
     inspect:t('scanInspect'),
     images:t('scanImages'),
+    versions:({de:'Versionen prüfen',en:'Checking versions',fr:'Vérification des versions',pt:'A verificar versões',es:'Comprobando versiones'}[state.language]||'Checking versions'),
     results:t('scanResults'),
     done:t('scanDone')
   };
   let text=labels[step]||t('scanStarting');
   const current=Number(scan&&scan.progress_current);
   const total=Number(scan&&scan.progress_total);
-  if(step==='images'&&Number.isFinite(current)&&Number.isFinite(total)&&total>0){
+  if((step==='images'||step==='versions')&&Number.isFinite(current)&&Number.isFinite(total)&&total>0){
     text=`${text} · ${Math.max(0,current)}/${Math.max(0,total)}`;
   }
   return text;
@@ -24546,46 +24636,54 @@ function closeHeaderWarningPopover(){
   if(button)button.setAttribute('aria-expanded','false');
 }
 
+let headerWarningFilter='all';
+function warningFilterLabels(){
+  return ({
+    de:{all:'Alle',important:'Wichtig',info:'Hinweise',versionGroup:'Versionsbestätigung erforderlich'},
+    en:{all:'All',important:'Important',info:'Notices',versionGroup:'Version confirmation required'},
+    fr:{all:'Tous',important:'Important',info:'Informations',versionGroup:'Confirmation de version requise'},
+    pt:{all:'Todos',important:'Importante',info:'Avisos',versionGroup:'Confirmação de versão necessária'},
+    es:{all:'Todos',important:'Importante',info:'Avisos',versionGroup:'Confirmación de versión necesaria'}
+  }[state.language]||{all:'All',important:'Important',info:'Notices',versionGroup:'Version confirmation required'});
+}
+function renderDockerVersionWarning(warning){
+  const meta=[warning.appName,warning.displayed?`${t('installedVersion')}: ${warning.displayed}`:'',warning.image].filter(Boolean).join(' · ');
+  const link=warning.projectUrl
+    ?`<a class="header-warning-link" href="${esc(warning.projectUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('dockerVersionOpenProject'))}</a>`:'';
+  const scanning=!!(state.data&&state.data.state==='scanning');
+  const confirm=`<button class="header-warning-confirm" type="button" data-version-confirm data-stack-key="${esc(warning.stackKey)}" data-image-ref="${esc(warning.image)}" ${scanning?'disabled':''}>${esc(t('dockerVersionConfirm'))}</button>`;
+  return `<div class="header-warning-item docker-version-warning"><strong>${esc(warning.title)}</strong>${meta?`<small>${esc(meta)}</small>`:''}<span>${esc(warning.text)}</span><div class="header-warning-actions">${link}${confirm}</div></div>`;
+}
 function renderHeaderWarningPopover(){
   const title=document.getElementById('headerWarningTitle');
   const list=document.getElementById('headerWarningList');
   if(title)title.textContent=t('warningTitle');
   if(!list)return;
 
+  const labels=warningFilterLabels();
   const warnings=currentHeaderWarnings();
-  list.innerHTML=warnings.map(warning=>{
-    if(warning.kind==='docker-version'){
-      const meta=[
-        warning.appName,
-        warning.displayed?`${t('installedVersion')}: ${warning.displayed}`:'',
-        warning.image
-      ].filter(Boolean).join(' · ');
+  const important=warnings.filter(warning=>warning.kind==='scan-lock');
+  const versions=warnings.filter(warning=>warning.kind==='docker-version');
+  const showImportant=headerWarningFilter==='all'||headerWarningFilter==='important';
+  const showInfo=headerWarningFilter==='all'||headerWarningFilter==='info';
+  const filters=`<div class="header-warning-filters">
+    <button type="button" data-warning-filter="all" class="${headerWarningFilter==='all'?'active':''}">${esc(labels.all)}</button>
+    <button type="button" data-warning-filter="important" class="${headerWarningFilter==='important'?'active':''}">${esc(labels.important)}</button>
+    <button type="button" data-warning-filter="info" class="${headerWarningFilter==='info'?'active':''}">${esc(labels.info)}</button>
+  </div>`;
+  const importantHtml=showImportant?important.map(warning=>`<div class="header-warning-item scan-warning-item"><strong>${esc(warning.title)}</strong><span>${esc(warning.text)}</span></div>`).join(''):'';
+  let infoHtml='';
+  if(showInfo&&versions.length===1)infoHtml=renderDockerVersionWarning(versions[0]);
+  if(showInfo&&versions.length>1){
+    infoHtml=`<details class="header-warning-group"><summary>${esc(labels.versionGroup)} · ${versions.length}</summary><div class="header-warning-group-items">${versions.map(renderDockerVersionWarning).join('')}</div></details>`;
+  }
+  list.innerHTML=filters+importantHtml+infoHtml;
 
-      const link=warning.projectUrl
-        ?`<a class="header-warning-link" href="${esc(warning.projectUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('dockerVersionOpenProject'))}</a>`
-        :'';
-      const scanning=!!(state.data&&state.data.state==='scanning');
-      const confirm=`<button class="header-warning-confirm" type="button" data-version-confirm data-stack-key="${esc(warning.stackKey)}" data-image-ref="${esc(warning.image)}" ${scanning?'disabled':''}>${esc(t('dockerVersionConfirm'))}</button>`;
-
-      return `<div class="header-warning-item docker-version-warning">
-        <strong>${esc(warning.title)}</strong>
-        ${meta?`<small>${esc(meta)}</small>`:''}
-        <span>${esc(warning.text)}</span>
-        <div class="header-warning-actions">${link}${confirm}</div>
-      </div>`;
-    }
-
-    return `<div class="header-warning-item scan-warning-item">
-      <strong>${esc(warning.title)}</strong>
-      <span>${esc(warning.text)}</span>
-    </div>`;
-  }).join('');
-
+  list.querySelectorAll('[data-warning-filter]').forEach(button=>{
+    button.onclick=event=>{event.stopPropagation();headerWarningFilter=String(button.dataset.warningFilter||'all');renderHeaderWarningPopover();};
+  });
   list.querySelectorAll('[data-version-confirm]').forEach(button=>{
-    button.onclick=event=>{
-      event.stopPropagation();
-      confirmDockerVersion(button);
-    };
+    button.onclick=event=>{event.stopPropagation();confirmDockerVersion(button);};
   });
 }
 

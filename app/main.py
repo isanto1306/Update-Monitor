@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.341"
+VERSION = "0.3.342"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -57,6 +57,7 @@ GITHUB_VERSION_CACHE_TTL_SECONDS = 6 * 60 * 60
 GITHUB_VERSION_CACHE_STALE_SECONDS = 7 * 24 * 60 * 60
 GITHUB_VERSION_CACHE_LOCK = threading.Lock()
 GITHUB_TOKEN_FILE = CACHE_DIR / "github-token"
+SESSION_SECRET_FILE = CACHE_DIR / "session-secret"
 UPDATE_MONITOR_GITHUB_TOKEN = os.getenv("UPDATE_MONITOR_GITHUB_TOKEN", "").strip()
 
 # Persistent source/project link cache.  This is intentionally independent
@@ -138,9 +139,65 @@ def env_bool(name, default=False):
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _session_secret_valid(value):
+    value = str(value or "")
+    return (
+        len(value) >= 32
+        and not value.upper().startswith("CHANGE_ME")
+        and "\n" not in value
+        and "\r" not in value
+    )
+
+
+def _write_session_secret(value):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = SESSION_SECRET_FILE.with_suffix(".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, SESSION_SECRET_FILE)
+        os.chmod(SESSION_SECRET_FILE, 0o600)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
+def resolve_session_secret():
+    """Return one stable private session secret persisted below /app/cache.
+
+    Migration order is deliberate: an already-persisted secret wins, otherwise
+    a valid legacy environment value is persisted unchanged. Only a missing,
+    placeholder or too-short environment value causes generation of a new
+    random secret. This keeps backup auto-unlock keys stable across restarts.
+    """
+    try:
+        persisted = SESSION_SECRET_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        persisted = ""
+    except Exception:
+        persisted = ""
+    if _session_secret_valid(persisted):
+        return persisted
+
+    env_value = os.getenv("UPDATE_MONITOR_SESSION_SECRET", "")
+    if _session_secret_valid(env_value):
+        _write_session_secret(env_value)
+        return env_value
+
+    generated = secrets.token_urlsafe(48)
+    _write_session_secret(generated)
+    return generated
+
+
 UPDATE_MONITOR_USERNAME = require_private_env("UPDATE_MONITOR_USERNAME", 1)
 UPDATE_MONITOR_PASSWORD = require_private_env("UPDATE_MONITOR_PASSWORD", 12)
-SESSION_SECRET = require_private_env("UPDATE_MONITOR_SESSION_SECRET", 32)
+SESSION_SECRET = resolve_session_secret()
 SESSION_HTTPS_ONLY = env_bool("UPDATE_MONITOR_SESSION_HTTPS_ONLY", False)
 
 app = FastAPI(title="Update Monitor", version=VERSION, docs_url=None, redoc_url=None, openapi_url=None)
@@ -2769,21 +2826,49 @@ def _linuxserver_tag_channel(tag):
     return "stable"
 
 
+_GENERIC_RELEASE_CHANNEL_MARKERS = {
+    "nightly": ("nightly",),
+    "testing": ("testing", "test", "edge", "canary"),
+    "dev": ("dev", "develop", "development"),
+    "alpha": ("alpha",),
+    "beta": ("beta",),
+    "rc": ("rc", "preview", "pre"),
+}
+
+
+def _generic_tag_channel(tag):
+    value = str(tag or "").strip().lower()
+    if not value:
+        return "stable"
+    for channel, markers in _GENERIC_RELEASE_CHANNEL_MARKERS.items():
+        for marker in markers:
+            # prerelease spellings commonly use beta1 / rc2 without a delimiter
+            # after the marker, while nightly/dev names usually use separators.
+            if re.search(
+                rf"(?:^|[-._]){re.escape(marker)}(?:\d+|$|[-._])",
+                value,
+                re.I,
+            ):
+                return channel
+    return "stable"
+
+
 def _filter_version_channel_tags(tags, repo_key=None, current_tag=None):
     """Keep selectable versions on the same release channel as the active tag.
 
-    LinuxServer images publish several aliases for the same repository, e.g.
-    ``version-3.1.0.4875`` for stable and
-    ``nightly-version-3.1.3.5020`` for nightly.  Mixing these families makes a
-    stable ``latest`` installation advertise nightly/develop builds as normal
-    updates.  Other registries keep their existing behavior.
+    LinuxServer keeps its specialized stable/nightly/develop/testing handling.
+    Other registries use a conservative generic channel classifier so a stable
+    or latest installation never advertises alpha/beta/rc/nightly builds as a
+    normal update. An explicitly configured prerelease tag stays on that same
+    prerelease channel.
     """
     values = [str(value or "").strip() for value in (tags or []) if str(value or "").strip()]
-    if not _is_linuxserver_repo(repo_key):
-        return values
+    if _is_linuxserver_repo(repo_key):
+        wanted = _linuxserver_tag_channel(current_tag or "latest")
+        return [tag for tag in values if _linuxserver_tag_channel(tag) == wanted]
 
-    wanted = _linuxserver_tag_channel(current_tag or "latest")
-    return [tag for tag in values if _linuxserver_tag_channel(tag) == wanted]
+    wanted = _generic_tag_channel(current_tag or "latest")
+    return [tag for tag in values if _generic_tag_channel(tag) == wanted]
 
 
 def registry_selectable_version_tags(registry_tags_value, repo_key=None, limit=100, current_tag=None):
@@ -3495,59 +3580,58 @@ def container_stack_metadata(container):
 
 
 
-def container_published_ports(container):
-    """
-    Return the host-side published ports for one Docker container.
-
-    HostConfig.PortBindings is preferred because it is also available for
-    stopped containers. NetworkSettings.Ports is used as a fallback/merge.
-    IPv4/IPv6 duplicates of the same host port are collapsed.
-    TCP is shown as the plain port number; non-TCP protocols keep a suffix,
-    e.g. 19132/UDP.
-    """
+def container_published_port_bindings(container):
+    """Return structured host bindings, including host IP and protocol."""
     values = []
     seen = set()
 
-    def add_binding(container_port, binding):
-        binding = binding or {}
-        host_port = str(binding.get("HostPort") or "").strip()
+    def add(host_ip, host_port, protocol):
+        host_port = str(host_port or "").strip()
+        protocol = str(protocol or "tcp").strip().lower() or "tcp"
+        host_ip = str(host_ip or "").strip() or "0.0.0.0"
         if not host_port:
             return
+        key = (host_ip.lower(), host_port, protocol)
+        if key in seen:
+            return
+        seen.add(key)
+        values.append({
+            "host_ip": host_ip,
+            "host_port": host_port,
+            "protocol": protocol,
+        })
 
-        raw_container_port = str(container_port or "").strip()
-        protocol = "tcp"
-        if "/" in raw_container_port:
-            protocol = raw_container_port.rsplit("/", 1)[-1].strip().lower() or "tcp"
+    port_bindings = ((container or {}).get("HostConfig") or {}).get("PortBindings") or {}
+    for container_port, bindings in port_bindings.items():
+        protocol = str(container_port or "").rsplit("/", 1)[-1].lower()
+        for binding in bindings or []:
+            if isinstance(binding, dict):
+                add(binding.get("HostIp"), binding.get("HostPort"), protocol)
 
-        label = host_port if protocol == "tcp" else f"{host_port}/{protocol.upper()}"
-        key = label.casefold()
-        if key not in seen:
-            seen.add(key)
-            values.append(label)
+    network_ports = ((container or {}).get("NetworkSettings") or {}).get("Ports") or {}
+    for container_port, bindings in network_ports.items():
+        protocol = str(container_port or "").rsplit("/", 1)[-1].lower()
+        for binding in bindings or []:
+            if isinstance(binding, dict):
+                add(binding.get("HostIp"), binding.get("HostPort"), protocol)
 
-    host_bindings = ((container.get("HostConfig") or {}).get("PortBindings") or {})
-    if isinstance(host_bindings, dict):
-        for container_port, bindings in host_bindings.items():
-            for binding in bindings or []:
-                if isinstance(binding, dict):
-                    add_binding(container_port, binding)
+    return values
 
-    network_bindings = ((container.get("NetworkSettings") or {}).get("Ports") or {})
-    if isinstance(network_bindings, dict):
-        for container_port, bindings in network_bindings.items():
-            for binding in bindings or []:
-                if isinstance(binding, dict):
-                    add_binding(container_port, binding)
 
-    def sort_key(value):
-        raw = str(value or "")
-        number = raw.split("/", 1)[0]
-        try:
-            return (0, int(number), raw)
-        except Exception:
-            return (1, 0, raw.lower())
+def container_published_ports(container):
+    """Return compact host-side published-port labels for card display."""
+    values = []
+    seen = set()
+    for binding in container_published_port_bindings(container):
+        host_port = str(binding.get("host_port") or "").strip()
+        protocol = str(binding.get("protocol") or "tcp").strip().lower()
+        key = (host_port, protocol)
+        if not host_port or key in seen:
+            continue
+        seen.add(key)
+        values.append(host_port if protocol == "tcp" else f"{host_port}/{protocol.upper()}")
+    return values
 
-    return sorted(values, key=sort_key)
 
 def select_current_compose_containers(containers):
     """
@@ -4065,6 +4149,24 @@ def _version_group_is_infrastructure(group):
     return True
 
 
+def _version_group_has_direct_app_identity(group, app_item):
+    """Return True only for a strong direct app-name -> image identity match."""
+    tokens = _version_group_name_tokens(app_item)
+    if not tokens:
+        return False
+    for item in (group or {}).get("items") or []:
+        repo = _version_item_repo_key(item)
+        repo_leaf = repo.rsplit("/", 1)[-1].lower() if repo else ""
+        services = {
+            str(container.get("compose_service") or "").strip().lower()
+            for container in item.get("containers") or []
+            if str(container.get("compose_service") or "").strip()
+        }
+        if any(token == repo_leaf or token in services for token in tokens):
+            return True
+    return False
+
+
 def select_primary_version_group(app_item):
     """
     Choose exactly one app-level version family.
@@ -4135,7 +4237,17 @@ def select_primary_version_group(app_item):
         if (group.get("available") or {}).get("display_tags")
     ]
     if len(with_versions) == 1:
-        return with_versions[0]
+        candidate = with_versions[0]
+        # A single resolvable component is not automatically the application
+        # version. This is especially important for large independent stacks
+        # such as Mailcow where ACME/Redis/etc. have their own tag series.
+        if (
+            len(groups) < 4
+            or len(candidate.get("items") or []) > 1
+            or _version_group_published_port_count(candidate) > 0
+            or _version_group_has_direct_app_identity(candidate, app_item)
+        ):
+            return candidate
 
     scored = sorted(
         (
@@ -4154,6 +4266,13 @@ def select_primary_version_group(app_item):
     # Require a meaningful and clearly better match before choosing a lone
     # main-image group from a multi-image stack.
     if best_score >= 40 and (best_score - second_score) >= 20:
+        if (
+            len(groups) >= 4
+            and len(best_group.get("items") or []) == 1
+            and _version_group_published_port_count(best_group) == 0
+            and not _version_group_has_direct_app_identity(best_group, app_item)
+        ):
+            return None
         return best_group
 
     return None
@@ -4512,7 +4631,7 @@ def _display_installed_version_hint(item, selectable):
     return None, None
 
 
-def enrich_scan_installed_versions(results, platform):
+def enrich_scan_installed_versions(results, platform, progress_callback=None):
     """
     Resolve the concrete release behind generic configured tags during the normal
     scan, without requiring the user to open the version picker first.
@@ -4629,6 +4748,9 @@ def enrich_scan_installed_versions(results, platform):
         task_key = (repo_key, local_digests)
         pending.setdefault(task_key, []).append(item)
 
+    completed_items = len(items) - sum(len(task_items) for task_items in pending.values())
+    if progress_callback:
+        progress_callback(completed_items, len(items))
     if not pending:
         return 0
 
@@ -4894,6 +5016,10 @@ def enrich_scan_installed_versions(results, platform):
                             "digest-resolution",
                             detail,
                         )
+
+            completed_items += len(task_items)
+            if progress_callback:
+                progress_callback(completed_items, len(items))
 
     return resolved_count
 
@@ -8827,6 +8953,7 @@ def scan_all(stack_key=None):
                     "compose_container_number": meta.get("compose_container_number"),
                     "created_at": c.get("Created"),
                     "ports": container_published_ports(c),
+                    "port_bindings": container_published_port_bindings(c),
                     "network_mode": str((c.get("HostConfig") or {}).get("NetworkMode") or ""),
                     "runtime_image_ref": runtime_ref,
                 })
@@ -9448,16 +9575,42 @@ def scan_all(stack_key=None):
                     deployment_total,
                 )
 
-        # v0.3.119: a targeted post-update scan must not turn into a hidden full
-        # version-catalogue scan. Resolve versions only for the freshly scanned
-        # app, then merge its verified records back into the previous snapshot.
-        update_scan_progress("versions", 93)
+        # Targeted post-update scans stay targeted. Preserve the existing
+        # repository-level parallel resolver while publishing real progress from
+        # its completed image groups. The later version stages keep advancing the
+        # percentage instead of leaving the UI frozen at 93%.
         if stack_key:
             fresh_results = list(results)
-            enrich_scan_installed_versions(fresh_results, platform)
-            enrich_scan_available_versions(fresh_results, platform)
-            enrich_follow_policy_targets(fresh_results, platform)
+            version_results = fresh_results
+        else:
+            version_results = results
 
+        version_total = len(version_results)
+        update_scan_progress("versions", 91, 0, version_total)
+
+        def installed_version_progress(current, total):
+            current = max(0, min(int(current or 0), int(total or version_total or 0)))
+            total = max(0, int(total or version_total or 0))
+            fraction = (current / total) if total else 1.0
+            update_scan_progress(
+                "versions",
+                min(94, 91 + round(fraction * 3)),
+                current,
+                total,
+            )
+
+        enrich_scan_installed_versions(
+            version_results,
+            platform,
+            progress_callback=installed_version_progress,
+        )
+        update_scan_progress("versions", 95, version_total, version_total)
+        enrich_scan_available_versions(version_results, platform)
+        update_scan_progress("versions", 96, version_total, version_total)
+        enrich_follow_policy_targets(version_results, platform)
+        update_scan_progress("versions", 97, version_total, version_total)
+
+        if stack_key:
             # Replace the old app completely. Match both the historical
             # stack_key and Compose project so stale pre-update results cannot
             # survive when ZimaOS changed container metadata during recreation.
@@ -9473,15 +9626,8 @@ def scan_all(stack_key=None):
                     )
                 )
             ] + fresh_results
-        else:
-            # A real full scan intentionally refreshes version information for
-            # every app. This is also the one shared verification after an
-            # automatic-update batch.
-            enrich_scan_installed_versions(results, platform)
-            enrich_scan_available_versions(results, platform)
-            enrich_follow_policy_targets(results, platform)
 
-        update_scan_progress("results", 94)
+        update_scan_progress("results", 98)
         counter = Counter(x["status"] for x in results)
         fixed = sum(1 for x in results if x.get("update_policy") == "fixed_version")
         summary = {
@@ -9493,7 +9639,7 @@ def scan_all(stack_key=None):
             "ERROR": counter["ERROR"],
             "FIXED": fixed,
         }
-        update_scan_progress("results", 97)
+        update_scan_progress("results", 98)
         apps, app_summary = build_apps(results)
         update_scan_progress("results", 99)
         finished_at = utc_now()
@@ -13839,19 +13985,22 @@ def _backup_mount_identity(mount):
     return f"{mount_type}:{source}" if source else ""
 
 
-def _backup_mount_is_media_or_system(mount):
-    source = str((mount or {}).get("Source") or "").strip().lower().rstrip("/")
+def _backup_mount_is_system(mount):
     destination = str((mount or {}).get("Destination") or "").strip().lower().rstrip("/")
     if not destination:
         return True
-
     system_destinations = {
         "/var/run/docker.sock", "/run/docker.sock", "/etc/localtime", "/etc/timezone",
         "/dev", "/proc", "/sys",
     }
-    if destination in system_destinations or destination.endswith(".sock"):
-        return True
+    return destination in system_destinations or destination.endswith(".sock")
 
+
+def _backup_bind_is_media(mount):
+    if str((mount or {}).get("Type") or "").strip().lower() != "bind":
+        return False
+    source = str((mount or {}).get("Source") or "").strip().lower().rstrip("/")
+    destination = str((mount or {}).get("Destination") or "").strip().lower().rstrip("/")
     media_roots = {
         "/media", "/movies", "/movie", "/tv", "/music", "/photos", "/photo",
         "/downloads", "/download", "/library", "/libraries", "/mnt", "/storage",
@@ -13859,14 +14008,22 @@ def _backup_mount_is_media_or_system(mount):
     }
     if destination in media_roots or any(destination.startswith(root + "/") for root in media_roots):
         return True
-
     source_media_markers = (
         "/media/", "/movies/", "/movie/", "/tv/", "/music/", "/photos/",
         "/downloads/", "/download/", "/library/", "/libraries/", "/videos/",
     )
-    if any(marker in source + "/" for marker in source_media_markers):
+    return any(marker in source + "/" for marker in source_media_markers)
+
+
+def _backup_mount_is_media_or_system(mount):
+    if _backup_mount_is_system(mount):
         return True
-    return False
+    # Docker named/anonymous volumes are Docker-managed application data. Their
+    # resolved host Source may legitimately live below /media on ZimaOS and must
+    # never be classified as a media bind merely because of Docker's data root.
+    if str((mount or {}).get("Type") or "").strip().lower() == "volume":
+        return False
+    return _backup_bind_is_media(mount)
 
 
 def _backup_mount_is_app_data(mount):
@@ -13897,19 +14054,46 @@ def _backup_mount_is_app_data(mount):
     return any(destination == root or destination.startswith(root + "/") for root in exact_or_prefix)
 
 
-def _backup_candidate_mounts(inspects):
+def _backup_candidate_mounts_with_inventory(inspects):
     selected = []
-    seen = set()
+    seen_selected = set()
+    seen_detected = set()
+    inventory = {
+        "volumes_detected": 0,
+        "volumes_selected": 0,
+        "binds_detected": 0,
+        "binds_selected": 0,
+        "media_binds_excluded": 0,
+        "system_mounts_excluded": 0,
+    }
     for row in inspects:
         container_name = str(row.get("Name") or "").lstrip("/").strip()
         for mount in row.get("Mounts") or []:
-            if not isinstance(mount, dict) or not _backup_mount_is_app_data(mount):
+            if not isinstance(mount, dict):
                 continue
             identity = _backup_mount_identity(mount)
-            destination = str(mount.get("Destination") or "").strip()
-            if not identity or not destination or identity in seen:
+            mount_type = str(mount.get("Type") or "").strip().lower()
+            if identity and identity not in seen_detected:
+                seen_detected.add(identity)
+                if mount_type == "volume":
+                    inventory["volumes_detected"] += 1
+                elif mount_type == "bind":
+                    inventory["binds_detected"] += 1
+                if _backup_mount_is_system(mount):
+                    inventory["system_mounts_excluded"] += 1
+                elif _backup_bind_is_media(mount):
+                    inventory["media_binds_excluded"] += 1
+
+            if not _backup_mount_is_app_data(mount):
                 continue
-            seen.add(identity)
+            destination = str(mount.get("Destination") or "").strip()
+            if not identity or not destination or identity in seen_selected:
+                continue
+            seen_selected.add(identity)
+            if mount_type == "volume":
+                inventory["volumes_selected"] += 1
+            elif mount_type == "bind":
+                inventory["binds_selected"] += 1
             selected.append({
                 "identity": identity,
                 "container": container_name,
@@ -13919,6 +14103,11 @@ def _backup_candidate_mounts(inspects):
                 "name": str(mount.get("Name") or "") or None,
                 "rw": bool(mount.get("RW", True)),
             })
+    return selected, inventory
+
+
+def _backup_candidate_mounts(inspects):
+    selected, _inventory = _backup_candidate_mounts_with_inventory(inspects)
     return selected
 
 
@@ -14031,7 +14220,9 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
     compose_yaml = casaos_compose_yaml(project)
     (work_dir / "compose.yaml").write_text(compose_yaml, encoding="utf-8")
 
-    mounts = _backup_candidate_mounts(inspects)
+    mounts, mount_inventory = _backup_candidate_mounts_with_inventory(inspects)
+    if mount_inventory["volumes_selected"] != mount_inventory["volumes_detected"]:
+        raise RuntimeError("Full backup mount discovery excluded one or more Docker volumes")
     running_before = [
         str(row.get("Name") or "").lstrip("/")
         for row in inspects
@@ -14060,6 +14251,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
         "images": _backup_image_snapshot(app_item, inspects),
         "persistent_data_detected": bool(mounts),
         "persistent_mount_count": len(mounts),
+        "mount_inventory": dict(mount_inventory),
         "persistent_mounts": [
             {
                 "identity": mount.get("identity"),
@@ -14149,6 +14341,24 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
             "Backup was created, but one or more containers could not be restarted: "
             + "; ".join(restart_errors)
         )
+
+    if mode == "full":
+        copied_volume_count = sum(
+            1 for mount in metadata.get("data_mounts") or []
+            if str((mount or {}).get("type") or "").strip().lower() == "volume"
+        )
+        copied_bind_count = sum(
+            1 for mount in metadata.get("data_mounts") or []
+            if str((mount or {}).get("type") or "").strip().lower() == "bind"
+        )
+        metadata.setdefault("mount_inventory", {})["volumes_copied"] = copied_volume_count
+        metadata.setdefault("mount_inventory", {})["binds_copied"] = copied_bind_count
+        expected_volumes = int((metadata.get("mount_inventory") or {}).get("volumes_detected") or 0)
+        if copied_volume_count != expected_volumes:
+            _write_backup_json(work_dir / "metadata.json", metadata)
+            raise RuntimeError(
+                f"Full backup incomplete: copied {copied_volume_count} of {expected_volumes} Docker volumes"
+            )
 
     metadata["completed_at"] = utc_now()
     if encryption_key is not None:
@@ -17247,7 +17457,18 @@ def app_update(data: AppUpdateRequest, request: Request):
     if requested_backup_mode not in {"none", "quick", "full"}:
         app_update_lock.release()
         raise HTTPException(status_code=400, detail="Invalid backup mode")
-    backup_mode = _normalize_backup_mode(requested_backup_mode, "none")
+
+    # If this app is already configured for automatic updating, the user has
+    # already chosen the backup rule. A faster manual click must use exactly
+    # that saved rule instead of opening/accepting a second backup decision.
+    auto_policy = get_monitor_policy(data.stack_key)
+    auto_rule_applies = bool(auto_policy.get("auto_enabled")) and str(
+        auto_policy.get("mode") or ""
+    ) in {"upgrade", "follow"}
+    if auto_rule_applies:
+        backup_mode = _normalize_backup_mode(auto_policy.get("auto_backup_mode"), "none")
+    else:
+        backup_mode = _normalize_backup_mode(requested_backup_mode, "none")
 
     update_error = None
     result = None

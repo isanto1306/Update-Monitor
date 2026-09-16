@@ -21,7 +21,7 @@ services:
     environment:
       UPDATE_MONITOR_USERNAME: "CHANGE_ME_USERNAME"
       UPDATE_MONITOR_PASSWORD: "CHANGE_ME_PASSWORD_AT_LEAST_12_CHARS"
-      UPDATE_MONITOR_SESSION_SECRET: "CHANGE_ME_SESSION_SECRET_AT_LEAST_32_CHARS"
+      UPDATE_MONITOR_SESSION_SECRET: ""
       UPDATE_MONITOR_SESSION_HTTPS_ONLY: "false"
       UPDATE_MONITOR_SCAN_ON_START: "true"
       UPDATE_MONITOR_GITHUB_TOKEN: ""
@@ -62,8 +62,8 @@ services:
             de_DE: Passwort für Update Monitor (mindestens 12 Zeichen). Vor der Installation ändern.
         - container: UPDATE_MONITOR_SESSION_SECRET
           description:
-            en_US: Private session secret (at least 32 characters). Generate a unique random value before installation.
-            de_DE: Privates Session Geheimnis (mindestens 32 Zeichen). Vor der Installation einen eindeutigen Zufallswert eintragen.
+            en_US: Optional session secret. Leave empty to generate and persist a strong private value automatically.
+            de_DE: Optionales Session Geheimnis. Leer lassen, damit automatisch ein starker privater Wert erzeugt und gespeichert wird.
         - container: UPDATE_MONITOR_SESSION_HTTPS_ONLY
           description:
             en_US: Set to true only when Update Monitor is served exclusively over HTTPS.
@@ -112,9 +112,9 @@ x-casaos:
       **Before installation:** Use **Custom install → Advanced (show more)** and
       replace all security placeholders before the first start. Set your own
       `UPDATE_MONITOR_USERNAME`, choose an `UPDATE_MONITOR_PASSWORD` with at least
-      12 characters, and generate a unique `UPDATE_MONITOR_SESSION_SECRET` with
-      at least 32 characters. Do not install the app with unchanged
-      `CHANGE_ME_...` values.
+      12 characters, and optionally provide `UPDATE_MONITOR_SESSION_SECRET`. If it is empty or
+      invalid, Update Monitor generates a strong persistent secret automatically.
+      Do not install the app with unchanged username/password placeholders.
 
       `UPDATE_MONITOR_GITHUB_TOKEN` is optional. Leave it empty if you do not
       want to use a GitHub token.
