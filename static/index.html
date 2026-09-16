@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.338"
+        href="favicon.ico?v=0.3.339"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.338"
+        href="favicon-16x16.png?v=0.3.339"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.338"
+        href="favicon-32x32.png?v=0.3.339"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.338"
+        href="apple-touch-icon.png?v=0.3.339"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.338"
+        href="site.webmanifest?v=0.3.339"
     >
 
     <meta
@@ -18220,7 +18220,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <style id="um-auto-backup-language-width-v0329">
-/* v0.3.338 — only the automatic-update Backup selector for the longer
+/* v0.3.339 — only the automatic-update Backup selector for the longer
    French, Portuguese and Spanish labels. German/English and all fixed
    header/summary geometry remain unchanged. */
 html[lang="fr"] .policy-auto-layout-behavior .policy-backup-preview-controls,
@@ -18253,8 +18253,8 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<style id="um-card-resource-port-v0336">
-/* v0.3.338 — compact CPU/RAM rows; more width reserved for Port. */
+<style id="um-card-resource-port-v0339">
+/* v0.3.339 — three equal resource cells with same-size background icons. */
 .update-card-summary > .update-card-stats{
   height:94px !important;
   min-height:94px !important;
@@ -18268,101 +18268,90 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   min-width:0 !important;
   min-height:74px !important;
   box-sizing:border-box !important;
+  overflow:hidden !important;
+  isolation:isolate !important;
 }
 
-/* Container: icon beside the heading, value below. */
+/* All three watermark icons use exactly the same 66 x 66 px box. */
+.update-card-summary > .update-card-stats > .update-card-stat:first-child,
+.update-card-summary > .update-card-stats > .update-card-stat-resource,
+.update-card-summary > .update-card-stats > .update-card-stat-port{
+  padding:7px 8px !important;
+  text-align:center !important;
+}
+.update-card-summary > .update-card-stats > .update-card-stat:first-child::before,
+.update-card-summary > .update-card-stats > .update-card-stat-resource::before,
+.update-card-summary > .update-card-stats > .update-card-stat-port::before{
+  position:absolute !important;
+  left:50% !important;
+  top:50% !important;
+  width:66px !important;
+  height:66px !important;
+  transform:translate(-50%,-50%) !important;
+  background:#69adff !important;
+  opacity:.16 !important;
+  z-index:0 !important;
+  pointer-events:none !important;
+}
+
+/* Container watermark. */
 .update-card-summary > .update-card-stats > .update-card-stat:first-child{
   --status-band-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M4%207l8-4%208%204-8%204-8-4Z%22%2F%3E%3Cpath%20d%3D%22M4%207v10l8%204%208-4V7M12%2011v10%22%2F%3E%3C%2Fsvg%3E") !important;
-  display:flex !important;
-  flex-direction:column !important;
-  justify-content:flex-start !important;
-  padding:9px 7px 7px 36px !important;
-  overflow:hidden !important;
-  text-align:left !important;
-  contain:layout paint !important;
-}
-.update-card-summary > .update-card-stats > .update-card-stat:first-child::before{
-  left:8px !important;
-  top:10px !important;
-  width:22px !important;
-  height:22px !important;
-  transform:none !important;
-  background:#69adff !important;
+  display:grid !important;
+  grid-template-rows:22px minmax(0,1fr) !important;
+  align-items:center !important;
+  justify-items:center !important;
 }
 .update-card-summary > .update-card-stats > .update-card-stat:first-child .update-card-stat-label{
+  position:relative !important;
+  z-index:2 !important;
   width:100% !important;
-  margin:0 0 7px !important;
+  margin:0 !important;
   padding:0 !important;
-  text-align:left !important;
+  align-self:start !important;
+  text-align:center !important;
   white-space:nowrap !important;
 }
 .update-card-summary > .update-card-stats > .update-card-stat:first-child .update-card-stat-value{
+  position:relative !important;
+  z-index:2 !important;
   width:100% !important;
   min-width:0 !important;
   margin:0 !important;
   padding:0 !important;
-  text-align:left !important;
+  align-self:center !important;
+  text-align:center !important;
   white-space:nowrap !important;
 }
 
-/* CPU / RAM: chip + title on top, two full-width rows below. */
+/* CPU/RAM watermark with labels + bars directly over it. */
 .update-card-summary > .update-card-stats > .update-card-stat-resource{
   --status-band-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%227%22%20y%3D%227%22%20width%3D%2210%22%20height%3D%2210%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M9%201v3m6-3v3M9%2020v3m6-3v3M20%209h3m-3%206h3M1%209h3m-3%206h3%22%2F%3E%3C%2Fsvg%3E") !important;
   display:grid !important;
-  grid-template-columns:27px minmax(0,1fr) !important;
-  grid-template-rows:27px minmax(0,1fr) !important;
-  column-gap:6px !important;
-  row-gap:2px !important;
-  align-content:center !important;
-  padding:8px 8px 7px !important;
-  overflow:visible !important;
-}
-.update-card-summary > .update-card-stats > .update-card-stat-resource::before{
-  position:relative !important;
-  left:auto !important;
-  top:auto !important;
-  grid-column:1 !important;
-  grid-row:1 !important;
-  align-self:center !important;
-  justify-self:center !important;
-  width:24px !important;
-  height:24px !important;
-  transform:none !important;
-  background:#69adff !important;
+  place-items:center !important;
+  cursor:default !important;
 }
 .update-card-stat-resource .update-resource-title{
-  grid-column:2 !important;
-  grid-row:1 !important;
-  align-self:center !important;
-  min-width:0 !important;
-  margin:0 !important;
-  padding:0 !important;
-  color:#69adff !important;
-  font-size:12px !important;
-  font-weight:500 !important;
-  line-height:1.05 !important;
-  text-align:left !important;
-  white-space:nowrap !important;
+  display:none !important;
 }
 .update-resource-bars{
-  grid-column:1 / -1 !important;
-  grid-row:2 !important;
-  align-self:center !important;
+  position:relative !important;
+  z-index:2 !important;
   width:100% !important;
   min-width:0 !important;
   display:flex !important;
   flex-direction:column !important;
-  gap:7px !important;
+  justify-content:center !important;
+  gap:8px !important;
 }
 .update-resource-row{
-  position:relative !important;
   width:100% !important;
   min-width:0 !important;
-  min-height:13px !important;
+  min-height:14px !important;
   display:grid !important;
-  grid-template-columns:34px minmax(0,1fr) !important;
+  grid-template-columns:29px minmax(0,1fr) !important;
   align-items:center !important;
-  column-gap:6px !important;
+  column-gap:5px !important;
 }
 .update-resource-name{
   min-width:0 !important;
@@ -18370,17 +18359,18 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   font-size:11px !important;
   font-weight:500 !important;
   line-height:1 !important;
+  text-align:left !important;
   white-space:nowrap !important;
 }
 .update-resource-track{
   display:block !important;
   width:100% !important;
   min-width:0 !important;
-  height:13px !important;
+  height:12px !important;
   overflow:hidden !important;
   border-radius:4px !important;
-  background:#22313e !important;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.015) !important;
+  background:rgba(34,49,62,.88) !important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.018) !important;
 }
 .update-resource-fill{
   display:block !important;
@@ -18394,87 +18384,47 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   display:none !important;
 }
 .update-resource-ram-row{outline:none !important;}
-.update-resource-tooltip{
-  position:absolute !important;
-  z-index:50 !important;
-  left:34px !important;
-  top:20px !important;
-  min-width:151px !important;
-  padding:7px 9px 8px !important;
-  display:flex !important;
-  flex-direction:column !important;
-  gap:3px !important;
-  border:1px solid #39444d !important;
-  border-radius:5px !important;
-  background:#1d2329 !important;
-  box-shadow:0 5px 14px rgba(0,0,0,.34) !important;
-  color:#e7edf2 !important;
-  font-size:10.5px !important;
-  line-height:1.2 !important;
-  white-space:nowrap !important;
-  pointer-events:none !important;
-  opacity:0 !important;
-  visibility:hidden !important;
-  transform:translateY(2px) !important;
-  transition:opacity .1s ease,transform .1s ease,visibility .1s ease !important;
-}
-.update-resource-tooltip strong{
-  color:#f0f4f7 !important;
-  font-size:11px !important;
-  font-weight:700 !important;
-}
-.update-resource-tooltip[hidden]{display:none !important;}
-.update-resource-ram-row:hover .update-resource-tooltip,
-.update-resource-ram-row:focus .update-resource-tooltip,
-.update-resource-ram-row:focus-within .update-resource-tooltip{
-  opacity:1 !important;
-  visibility:visible !important;
-  transform:translateY(0) !important;
-}
+.update-resource-tooltip{display:none !important;}
 
-/* Port / network: connector icon beside heading, reserved two-line body. */
+/* Port watermark. No separate foreground port icon; values sit on the watermark. */
 .update-card-summary > .update-card-stats > .update-card-stat-port{
   --status-band-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%224%22%20y%3D%225%22%20width%3D%2216%22%20height%3D%2214%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M8%205v5h8V5M8%2014h2m2%200h2m2%200h1%22%2F%3E%3C%2Fsvg%3E") !important;
-  display:flex !important;
-  flex-direction:column !important;
-  justify-content:flex-start !important;
-  padding:9px 7px 7px 36px !important;
-  overflow:hidden !important;
-  text-align:left !important;
-  contain:layout paint !important;
-}
-.update-card-summary > .update-card-stats > .update-card-stat-port::before{
-  left:8px !important;
-  top:10px !important;
-  width:22px !important;
-  height:22px !important;
-  transform:none !important;
-  background:#69adff !important;
+  display:grid !important;
+  grid-template-rows:22px minmax(0,1fr) !important;
+  align-items:center !important;
+  justify-items:center !important;
 }
 .update-card-stat-port .update-card-stat-label{
+  position:relative !important;
+  z-index:2 !important;
   width:100% !important;
-  margin:0 0 7px !important;
+  margin:0 !important;
   padding:0 !important;
-  text-align:left !important;
+  align-self:start !important;
+  text-align:center !important;
   white-space:nowrap !important;
 }
 .update-card-stat-port .update-card-stat-value{
+  position:relative !important;
+  z-index:2 !important;
   width:100% !important;
   min-width:0 !important;
   min-height:28px !important;
   margin:0 !important;
   padding:0 !important;
-  text-align:left !important;
+  align-self:center !important;
+  text-align:center !important;
   overflow:hidden !important;
 }
 .update-port-stat{
   display:flex !important;
   flex-direction:column !important;
-  justify-content:flex-start !important;
-  gap:1px !important;
+  align-items:center !important;
+  justify-content:center !important;
+  gap:2px !important;
   min-height:28px !important;
   max-width:100% !important;
-  line-height:1.05 !important;
+  line-height:1.08 !important;
 }
 .update-port-line{
   display:block !important;
@@ -18485,51 +18435,6 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   text-overflow:ellipsis !important;
   white-space:nowrap !important;
 }
-
-
-/* v0.3.338: the redundant CPU / RAM heading and chip are removed.
-   CPU and RAM are already labelled on their own rows. The shorter
-   tracks leave a wider, stable Port column for two-line port values. */
-.update-card-summary > .update-card-stats > .update-card-stat-resource{
-  display:flex !important;
-  flex-direction:column !important;
-  align-items:center !important;
-  justify-content:center !important;
-  padding:8px 6px !important;
-  overflow:visible !important;
-}
-.update-card-summary > .update-card-stats > .update-card-stat-resource::before{
-  display:none !important;
-  content:none !important;
-}
-.update-card-stat-resource .update-resource-title{
-  display:none !important;
-}
-.update-card-stat-resource .update-resource-bars{
-  width:103px !important;
-  max-width:103px !important;
-  min-width:103px !important;
-  margin:0 auto !important;
-  display:flex !important;
-  flex-direction:column !important;
-  gap:8px !important;
-}
-.update-card-stat-resource .update-resource-row{
-  width:103px !important;
-  max-width:103px !important;
-  min-width:103px !important;
-  display:grid !important;
-  grid-template-columns:30px 68px !important;
-  column-gap:5px !important;
-  align-items:center !important;
-  justify-content:center !important;
-}
-.update-card-stat-resource .update-resource-track{
-  width:68px !important;
-  min-width:68px !important;
-  max-width:68px !important;
-}
-
 </style>
 
 
@@ -18730,7 +18635,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.338</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.339</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -19070,7 +18975,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.338';
+const UPDATE_MONITOR_VERSION = 'v0.3.339';
 let state = {
   language: ['de','en','fr','pt','es'].includes(localStorage.getItem('updateMonitorLanguage')) ? localStorage.getItem('updateMonitorLanguage') : 'en',
   timeFormat: localStorage.getItem('updateMonitorTimeFormat') === '12' ? '12' : '24',
