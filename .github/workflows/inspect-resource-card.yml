@@ -1,0 +1,52 @@
+name: Inspect resource card
+on:
+  push:
+    branches: [chatgpt-resource-card-0331]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Inspect frontend card/runtime sections
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('static/index.html')
+          s=p.read_text()
+          needles=['update-card-stat','data-live-runtime','function render','Update</','portsLabel','live-status','action_progress','runtime_state','fetch(\'/api/','update_count']
+          for needle in needles:
+              print('\n===== NEEDLE', needle, '=====')
+              pos=0; n=0
+              while True:
+                  i=s.find(needle,pos)
+                  if i<0: break
+                  n+=1
+                  a=max(0,i-1200); b=min(len(s),i+2200)
+                  print(f'--- hit {n} @ {i} ---')
+                  print(s[a:b])
+                  pos=i+len(needle)
+                  if n>=8: break
+          PY
+      - name: Inspect backend live runtime sections
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('app/main.py').read_text()
+          needles=['def live_app_runtime_status','docker stats','/api/live','live_scan_snapshot','runtime_state','@app.get','action_progress_public_snapshot']
+          for needle in needles:
+              print('\n===== NEEDLE', needle, '=====')
+              pos=0; n=0
+              while True:
+                  i=s.find(needle,pos)
+                  if i<0: break
+                  n+=1
+                  a=max(0,i-1600); b=min(len(s),i+4200)
+                  print(f'--- hit {n} @ {i} ---')
+                  print(s[a:b])
+                  pos=i+len(needle)
+                  if n>=8: break
+          PY
