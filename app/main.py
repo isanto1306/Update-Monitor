@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.340"
+VERSION = "0.3.341"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -16175,6 +16175,8 @@ def runtime_status(request: Request):
     require_auth(request)
     runtime_apps, removed_stack_keys = live_app_runtime_status()
     return {
+        "version": VERSION,
+        "service_runtime": {"started_at": SERVICE_STARTED_AT},
         "checked_at": utc_now(),
         "apps": runtime_apps,
         "removed_stack_keys": removed_stack_keys,
