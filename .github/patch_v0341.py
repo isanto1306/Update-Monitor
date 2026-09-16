@@ -143,7 +143,6 @@ html = html.replace(old_reload, new_reload, 1)
 main_path.write_text(main, encoding="utf-8")
 html_path.write_text(html, encoding="utf-8")
 
-# Static validation of both backend and browser paths.
 subprocess.run(["python", "-m", "py_compile", "app/main.py"], check=True)
 main = main_path.read_text(encoding="utf-8")
 html = html_path.read_text(encoding="utf-8")
@@ -162,14 +161,10 @@ block = re.search(
 assert block
 assert "appUpdateVerifiedCurrent" not in block.group(0)
 
-# Syntax-check the main browser script with Node.
-match = re.search(
-    r"<script>\s*(const UPDATE_MONITOR_VERSION = 'v0\.3\.341';.*)</script>\s*</body>",
-    html,
-    re.S,
-)
-if not match:
+scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.S | re.I)
+main_script = next((script for script in scripts if "const UPDATE_MONITOR_VERSION = 'v0.3.341';" in script), None)
+if not main_script:
     raise SystemExit("Main JavaScript block not found")
-Path("/tmp/update-monitor-main.js").write_text(match.group(1), encoding="utf-8")
+Path("/tmp/update-monitor-main.js").write_text(main_script, encoding="utf-8")
 subprocess.run(["node", "--check", "/tmp/update-monitor-main.js"], check=True)
 print("v0.3.341 self update reload validation passed")
