@@ -89,3 +89,5 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 ## Version
 
 Current release: **v0.3.340**
+
+Dashboard layout restored to the state before CPU and RAM were added to the application cards.
