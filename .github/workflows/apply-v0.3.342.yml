@@ -1,0 +1,53 @@
+name: Apply Update Monitor v0.3.342 fixes
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-v0.3.342.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fixes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply and validate v0.3.342
+        run: |
+          base64 -d .github/patch-v0.3.342.py.gz.b64 | gzip -dc > /tmp/patch-v0.3.342.py
+          python /tmp/patch-v0.3.342.py
+
+      - name: Validate diff
+        run: |
+          git diff --check
+          grep -q 'VERSION = "0.3.342"' app/main.py
+          grep -q "const UPDATE_MONITOR_VERSION = 'v0.3.342';" static/index.html
+
+      - name: Commit validated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/patch-v0.3.342.py.gz.b64 .github/workflows/apply-v0.3.342.yml
+          git add app/main.py static/index.html docker-compose.zimaos.yml docker-compose.yml .env.example README.md .github/patch-v0.3.342.py.gz.b64 .github/workflows/apply-v0.3.342.yml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 1
+          fi
+          git commit -m "Fix update safety and backup handling v0.3.342"
+          git push origin HEAD:main
