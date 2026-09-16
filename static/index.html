@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.330"
+        href="favicon.ico?v=0.3.331"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.330"
+        href="favicon-16x16.png?v=0.3.331"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.330"
+        href="favicon-32x32.png?v=0.3.331"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.330"
+        href="apple-touch-icon.png?v=0.3.331"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.330"
+        href="site.webmanifest?v=0.3.331"
     >
 
     <meta
@@ -18220,7 +18220,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <style id="um-auto-backup-language-width-v0329">
-/* v0.3.330 — only the automatic-update Backup selector for the longer
+/* v0.3.331 — only the automatic-update Backup selector for the longer
    French, Portuguese and Spanish labels. German/English and all fixed
    header/summary geometry remain unchanged. */
 html[lang="fr"] .policy-auto-layout-behavior .policy-backup-preview-controls,
@@ -18252,6 +18252,18 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   }
 }
 </style>
+
+<style id="um-card-resource-port-v0331">
+/* v0.3.331 — CPU/RAM replaces Update 0; fixed card width and header geometry stay unchanged. */
+.update-card-summary > .update-card-stats .update-card-stat-resource{
+  --status-band-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%227%22%20y%3D%227%22%20width%3D%2210%22%20height%3D%2210%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M9%201v3m6-3v3M9%2020v3m6-3v3M20%209h3m-3%206h3M1%209h3m-3%206h3%22%2F%3E%3C%2Fsvg%3E") !important;
+}
+.update-card-stat-resource .update-card-stat-value{white-space:nowrap;}
+.update-resource-divider{color:#6f8290;font-weight:600;}
+.update-port-stat{display:flex !important;flex-direction:column;gap:1px;max-width:100%;white-space:normal !important;line-height:1.05;}
+.update-port-line{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+</style>
+
 </head>
 <body>
 <div id="umPageScrollbarV21" aria-hidden="true">
@@ -18369,7 +18381,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.330</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.331</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18709,7 +18721,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.330';
+const UPDATE_MONITOR_VERSION = 'v0.3.331';
 let state = {
   language: ['de','en','fr','pt','es'].includes(localStorage.getItem('updateMonitorLanguage')) ? localStorage.getItem('updateMonitorLanguage') : 'en',
   timeFormat: localStorage.getItem('updateMonitorTimeFormat') === '12' ? '12' : '24',
@@ -20656,22 +20668,51 @@ function appNetworkModeLabel(app){
   }).filter((value,index,values)=>values.indexOf(value)===index).join(', ');
 }
 
+function formatCardResourcePercent(value){
+  const number=Number(value);
+  if(!Number.isFinite(number))return '–';
+  const digits=Math.abs(number)>=10?0:1;
+  return number.toFixed(digits)+' %';
+}
+function renderAppResourceStat(app){
+  const cpuText=formatCardResourcePercent(app.cpu_percent);
+  const memoryText=formatCardResourcePercent(app.memory_percent);
+  const memoryUsage=String(app.memory_usage||'').trim();
+  const hover=[`CPU ${cpuText}`,`RAM ${memoryText}`,memoryUsage].filter(Boolean).join(' · ');
+  return `<div class="update-card-stat update-card-stat-resource" data-resource-stack="${esc(String(app.stack_key||''))}"${hover?` title="${esc(hover)}"`:''}>
+    <div class="update-card-stat-label">CPU / RAM</div>
+    <div class="update-card-stat-value update-resource-stat-value"><span data-resource-cpu>${esc(cpuText)}</span><span class="update-resource-divider"> / </span><span data-resource-ram>${esc(memoryText)}</span></div>
+  </div>`;
+}
+function syncAppResourceStat(app){
+  const key=String(app.stack_key||'');
+  const cpuText=formatCardResourcePercent(app.cpu_percent);
+  const memoryText=formatCardResourcePercent(app.memory_percent);
+  const memoryUsage=String(app.memory_usage||'').trim();
+  const hover=[`CPU ${cpuText}`,`RAM ${memoryText}`,memoryUsage].filter(Boolean).join(' · ');
+  document.querySelectorAll('[data-resource-stack]').forEach(node=>{
+    if(String(node.dataset.resourceStack||'')!==key)return;
+    const cpu=node.querySelector('[data-resource-cpu]');
+    const ram=node.querySelector('[data-resource-ram]');
+    if(cpu)cpu.textContent=cpuText;
+    if(ram)ram.textContent=memoryText;
+    if(hover)node.title=hover; else node.removeAttribute('title');
+  });
+}
 function renderAppPortStat(app){
   const ports=appPublishedPorts(app);
   const network=ports.length?'':appNetworkModeLabel(app);
   const full=ports.length?ports.join(', '):network;
-  let display=network||'–';
-
+  let displayHtml=esc(network||'–');
   if(ports.length){
-    display=full;
-    if(ports.length>3){
-      display=ports.slice(0,2).join(', ')+' +'+(ports.length-2);
-    }
+    displayHtml=ports.slice(0,2).map((value,index)=>{
+      const suffix=(index===1&&ports.length>2)?' …':'';
+      return `<span class="update-port-line">${esc(String(value)+suffix)}</span>`;
+    }).join('');
   }
-
   return `<div class="update-card-stat update-card-stat-port"${full?` title="${esc(full)}"`:''}>
     <div class="update-card-stat-label">${esc(network?t('networkLabel'):t('port'))}</div>
-    <div class="update-card-stat-value update-port-stat">${esc(display)}</div>
+    <div class="update-card-stat-value update-port-stat">${displayHtml}</div>
   </div>`;
 }
 
@@ -20947,10 +20988,7 @@ function renderAppCard(app,index){
           <div class="update-card-stat-label">${esc(t('containers'))}</div>
           <div class="update-card-stat-value">${Number.isFinite(Number(app.container_count))?Number(app.container_count):'–'}</div>
         </div>
-        <div class="update-card-stat">
-          <div class="update-card-stat-label">${esc(t('updateSingular'))}</div>
-          <div class="update-card-stat-value">${effectiveUpdateCount}</div>
-        </div>
+        ${renderAppResourceStat(app)}
         ${renderAppPortStat(app)}
       </div>
       ${primary}
@@ -24206,7 +24244,11 @@ async function refreshRuntimeStatus(force=false){
       if(Number.isFinite(Number(live.active_container_count))){
         app.active_container_count=Number(live.active_container_count);
       }
+      app.cpu_percent=(live.cpu_percent===null||live.cpu_percent===undefined)?null:Number(live.cpu_percent);
+      app.memory_percent=(live.memory_percent===null||live.memory_percent===undefined)?null:Number(live.memory_percent);
+      app.memory_usage=String(live.memory_usage||'');
       app.self_protected=!!live.self_protected;
+      syncAppResourceStat(app);
       if(Number.isFinite(Number(live.container_count))){
         app.container_count=Number(live.container_count);
       }

@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.328"
+VERSION = "0.3.331"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -11647,6 +11647,15 @@ def live_app_runtime_status():
     with scan_lock:
         apps_snapshot = list(scan_state.get("apps") or [])
 
+    # One no-stream Docker stats call feeds CPU/RAM for every running app card.
+    resource_names = [
+        str(row.get("name") or "").strip()
+        for row in snapshot
+        if str(row.get("state") or "").strip().lower() == "running"
+        and str(row.get("name") or "").strip()
+    ]
+    resource_stats = _docker_stats_snapshot(resource_names)
+
     result = []
     removed_stack_keys = []
     cached_stack_keys = set()
@@ -11695,6 +11704,30 @@ def live_app_runtime_status():
         else:
             display_count = current_count if current_count > 0 else cached_count
 
+        resource_cpu = 0.0
+        resource_memory = 0.0
+        resource_seen = False
+        resource_usage_parts = []
+        for row in rows:
+            container_name = str(row.get("name") or "").strip()
+            stat = resource_stats.get(container_name) or {}
+            if not stat:
+                continue
+            cpu_match = re.search(r"-?\d+(?:\.\d+)?", str(stat.get("cpu_percent") or ""))
+            memory_match = re.search(r"-?\d+(?:\.\d+)?", str(stat.get("memory_percent") or ""))
+            if cpu_match:
+                resource_cpu += float(cpu_match.group(0))
+                resource_seen = True
+            if memory_match:
+                resource_memory += float(memory_match.group(0))
+                resource_seen = True
+            memory_usage = str(stat.get("memory_usage") or "").strip()
+            if memory_usage:
+                resource_seen = True
+                resource_usage_parts.append(
+                    f"{container_name}: {memory_usage}" if len(rows) > 1 else memory_usage
+                )
+
         result.append({
             "stack_key": app_item.get("stack_key"),
             "runtime_state": runtime_state,
@@ -11702,6 +11735,9 @@ def live_app_runtime_status():
             "completed_count": completed_count,
             "active_container_count": active_container_count,
             "container_count": display_count,
+            "cpu_percent": round(resource_cpu, 2) if resource_seen else None,
+            "memory_percent": round(resource_memory, 2) if resource_seen else None,
+            "memory_usage": " · ".join(resource_usage_parts) if resource_usage_parts else None,
             "self_protected": is_update_monitor_self_app(app_item),
         })
 
@@ -15730,7 +15766,7 @@ def _docker_info_safe_labels(labels):
 
 
 def _docker_stats_snapshot(container_names):
-    """Read one no-stream stats snapshot only when the user opens Docker info."""
+    """Read one no-stream stats snapshot for the requested containers."""
     names = [
         str(name or "").strip()
         for name in (container_names or [])
