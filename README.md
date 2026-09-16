@@ -6,7 +6,7 @@ Update Monitor is a self-hosted web application for ZimaOS that checks Docker ap
 
 ### Dashboard
 
-Overview of monitored Docker applications, update state, runtime status and available actions. Application cards also show live CPU and RAM bars plus compact port or network information in three equal-width status columns.
+Overview of monitored Docker applications, update state, runtime status and available actions. Application cards show live CPU and RAM bars plus compact port or network information in three equal-width status columns, each using an equal-size background icon behind the foreground values.
 
 ![Update Monitor dashboard](https://isanto1306.github.io/zima-appstore/apps/io.github.isanto1306.update-monitor/assets/screenshot-1-dashboard.webp)
 
