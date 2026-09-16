@@ -106,6 +106,9 @@ x-casaos:
       per-app update policies, targeted verification, update installation, backup
       and restore workflows, and runtime information.
 
+      When Update Monitor updates itself, an open browser page detects the new
+      backend version and reloads automatically with cache busting.
+
       **Before installation:** Use **Custom install → Advanced (show more)** and
       replace all security placeholders before the first start. Set your own
       `UPDATE_MONITOR_USERNAME`, choose an `UPDATE_MONITOR_PASSWORD` with at least
@@ -119,6 +122,9 @@ x-casaos:
       Selbst gehostetes Docker Update Dashboard für ZimaOS mit Image und
       Versionsprüfung, Richtlinien pro App, gezielter Verifizierung,
       Update Installation, Backup und Wiederherstellung sowie Laufzeitinformationen.
+
+      Wenn Update Monitor sich selbst aktualisiert, erkennt eine geöffnete
+      Browser Seite die neue Backend Version und lädt sich automatisch neu.
 
       **Vor der Installation:** Über **Benutzerdefinierte Installation → Erweitert**
       alle Sicherheits Platzhalter vor dem ersten Start ändern. Einen eigenen
@@ -145,8 +151,8 @@ x-casaos:
   category: Others
   architectures:
     - amd64
-  version: "0.3.321"
-  update_at: "2026-09-15"
+  version: "0.3.341"
+  update_at: "2026-09-16"
   repo: https://github.com/isanto1306/Update-Monitor
   support: https://github.com/isanto1306/Update-Monitor/issues
   docs: https://github.com/isanto1306/Update-Monitor#readme
