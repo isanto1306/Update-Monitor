@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.334"
+        href="favicon.ico?v=0.3.335"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.334"
+        href="favicon-16x16.png?v=0.3.335"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.334"
+        href="favicon-32x32.png?v=0.3.335"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.334"
+        href="apple-touch-icon.png?v=0.3.335"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.334"
+        href="site.webmanifest?v=0.3.335"
     >
 
     <meta
@@ -18220,7 +18220,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <style id="um-auto-backup-language-width-v0329">
-/* v0.3.334 — only the automatic-update Backup selector for the longer
+/* v0.3.335 — only the automatic-update Backup selector for the longer
    French, Portuguese and Spanish labels. German/English and all fixed
    header/summary geometry remain unchanged. */
 html[lang="fr"] .policy-auto-layout-behavior .policy-backup-preview-controls,
@@ -18253,8 +18253,8 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<style id="um-card-resource-port-v0334">
-/* v0.3.334 — fixed three-column card geometry; CPU/RAM matches the supplied reference. */
+<style id="um-card-resource-port-v0335">
+/* v0.3.335 — final fixed card geometry based on the supplied reference. */
 .update-card-summary > .update-card-stats{
   height:94px !important;
   min-height:94px !important;
@@ -18263,7 +18263,6 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   grid-template-columns:minmax(86px,.92fr) minmax(144px,1.5fr) minmax(86px,.92fr) !important;
   align-items:stretch !important;
 }
-
 .update-card-summary > .update-card-stats > .update-card-stat{
   position:relative !important;
   min-width:0 !important;
@@ -18271,37 +18270,42 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   box-sizing:border-box !important;
 }
 
-/* Container: explicit semantic cube icon. Never inherit the old positional icon. */
+/* Container: icon beside the heading, value below. */
 .update-card-summary > .update-card-stats > .update-card-stat:first-child{
   --status-band-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M4%207l8-4%208%204-8%204-8-4Z%22%2F%3E%3Cpath%20d%3D%22M4%207v10l8%204%208-4V7M12%2011v10%22%2F%3E%3C%2Fsvg%3E") !important;
-  padding-left:8px !important;
-  padding-right:8px !important;
+  display:flex !important;
+  flex-direction:column !important;
+  justify-content:flex-start !important;
+  padding:9px 7px 7px 36px !important;
   overflow:hidden !important;
+  text-align:left !important;
+  contain:layout paint !important;
 }
 .update-card-summary > .update-card-stats > .update-card-stat:first-child::before{
-  left:9px !important;
-  top:43px !important;
-  width:21px !important;
-  height:21px !important;
+  left:8px !important;
+  top:10px !important;
+  width:22px !important;
+  height:22px !important;
   transform:none !important;
   background:#69adff !important;
 }
 .update-card-summary > .update-card-stats > .update-card-stat:first-child .update-card-stat-label{
   width:100% !important;
-  margin:0 0 5px !important;
-  text-align:center !important;
+  margin:0 0 7px !important;
+  padding:0 !important;
+  text-align:left !important;
   white-space:nowrap !important;
 }
 .update-card-summary > .update-card-stats > .update-card-stat:first-child .update-card-stat-value{
   width:100% !important;
   min-width:0 !important;
-  padding-left:30px !important;
-  padding-right:0 !important;
+  margin:0 !important;
+  padding:0 !important;
   text-align:left !important;
   white-space:nowrap !important;
 }
 
-/* CPU / RAM: the chip belongs only to this center column. */
+/* CPU / RAM: chip + title on top, two full-width rows below. */
 .update-card-summary > .update-card-stats > .update-card-stat-resource{
   --status-band-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%227%22%20y%3D%227%22%20width%3D%2210%22%20height%3D%2210%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M9%201v3m6-3v3M9%2020v3m6-3v3M20%209h3m-3%206h3M1%209h3m-3%206h3%22%2F%3E%3C%2Fsvg%3E") !important;
   display:grid !important;
@@ -18331,10 +18335,8 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   grid-row:1 !important;
   align-self:center !important;
   min-width:0 !important;
-  min-height:0 !important;
   margin:0 !important;
   padding:0 !important;
-  display:block !important;
   color:#69adff !important;
   font-size:12px !important;
   font-weight:500 !important;
@@ -18358,9 +18360,9 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   min-width:0 !important;
   min-height:13px !important;
   display:grid !important;
-  grid-template-columns:29px minmax(44px,1fr) 34px !important;
+  grid-template-columns:34px minmax(0,1fr) !important;
   align-items:center !important;
-  column-gap:5px !important;
+  column-gap:6px !important;
 }
 .update-resource-name{
   min-width:0 !important;
@@ -18389,16 +18391,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   transition:width .22s ease !important;
 }
 .update-resource-percent{
-  width:34px !important;
-  min-width:34px !important;
-  max-width:34px !important;
-  overflow:hidden !important;
-  color:#d5e0e8 !important;
-  font-size:10px !important;
-  font-weight:500 !important;
-  line-height:1 !important;
-  text-align:right !important;
-  white-space:nowrap !important;
+  display:none !important;
 }
 .update-resource-ram-row{outline:none !important;}
 .update-resource-tooltip{
@@ -18439,66 +18432,58 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   transform:translateY(0) !important;
 }
 
-/* Port: explicit connector icon and a reserved two-line value area. */
+/* Port / network: connector icon beside heading, reserved two-line body. */
 .update-card-summary > .update-card-stats > .update-card-stat-port{
   --status-band-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%224%22%20y%3D%225%22%20width%3D%2216%22%20height%3D%2214%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M8%205v5h8V5M8%2014h2m2%200h2m2%200h1%22%2F%3E%3C%2Fsvg%3E") !important;
   display:flex !important;
   flex-direction:column !important;
-  align-items:stretch !important;
   justify-content:flex-start !important;
-  padding:8px 8px 7px !important;
+  padding:9px 7px 7px 36px !important;
   overflow:hidden !important;
-  text-align:center !important;
+  text-align:left !important;
+  contain:layout paint !important;
 }
 .update-card-summary > .update-card-stats > .update-card-stat-port::before{
   left:8px !important;
-  top:43px !important;
-  width:21px !important;
-  height:21px !important;
+  top:10px !important;
+  width:22px !important;
+  height:22px !important;
   transform:none !important;
   background:#69adff !important;
 }
 .update-card-stat-port .update-card-stat-label{
   width:100% !important;
-  margin:0 0 5px !important;
-  text-align:center !important;
+  margin:0 0 7px !important;
+  padding:0 !important;
+  text-align:left !important;
   white-space:nowrap !important;
 }
 .update-card-stat-port .update-card-stat-value{
   width:100% !important;
   min-width:0 !important;
   min-height:28px !important;
-  padding-left:27px !important;
-  padding-right:0 !important;
-  box-sizing:border-box !important;
-  text-align:center !important;
+  margin:0 !important;
+  padding:0 !important;
+  text-align:left !important;
+  overflow:hidden !important;
 }
 .update-port-stat{
-  display:grid !important;
-  grid-template-rows:13px 13px !important;
-  align-content:start !important;
+  display:flex !important;
+  flex-direction:column !important;
+  justify-content:flex-start !important;
   gap:1px !important;
-  min-height:27px !important;
-  max-height:27px !important;
+  min-height:28px !important;
   max-width:100% !important;
-  overflow:hidden !important;
-  white-space:normal !important;
   line-height:1.05 !important;
 }
 .update-port-line{
   display:block !important;
   min-width:0 !important;
-  min-height:13px !important;
+  min-height:12px !important;
   max-width:100% !important;
   overflow:hidden !important;
   text-overflow:ellipsis !important;
   white-space:nowrap !important;
-}
-
-/* Hard isolation: values from one column can never paint into a neighbour. */
-.update-card-summary > .update-card-stats > .update-card-stat:first-child,
-.update-card-summary > .update-card-stats > .update-card-stat-port{
-  contain:layout paint !important;
 }
 </style>
 
@@ -18619,7 +18604,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.334</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.335</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18959,7 +18944,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.334';
+const UPDATE_MONITOR_VERSION = 'v0.3.335';
 let state = {
   language: ['de','en','fr','pt','es'].includes(localStorage.getItem('updateMonitorLanguage')) ? localStorage.getItem('updateMonitorLanguage') : 'en',
   timeFormat: localStorage.getItem('updateMonitorTimeFormat') === '12' ? '12' : '24',
@@ -23900,12 +23885,25 @@ async function waitForSelfUpdateRestart(stackKey,previousStartedAt,timeoutMs=6*6
   const key=String(stackKey||'');
   if(!key)return false;
   const previous=String(previousStartedAt||'');
+  const previousVersion=String(UPDATE_MONITOR_VERSION||'').replace(/^v/i,'');
   const deadline=Date.now()+Math.max(30000,Number(timeoutMs)||0);
   let sawOffline=false;
-  let restarted=false;
 
   while(Date.now()<deadline){
-    const d=await loadStatus();
+    let d=null;
+    try{
+      const separator=window.location.pathname.endsWith('/')?'':'/';
+      const response=await fetch(`${window.location.pathname}${separator}api/status?_self_reload=${Date.now()}`,{
+        method:'GET',
+        credentials:'same-origin',
+        cache:'no-store',
+        headers:{'Cache-Control':'no-cache','Pragma':'no-cache'}
+      });
+      if(response.ok)d=await response.json();
+    }catch(_error){
+      d=null;
+    }
+
     if(!d){
       sawOffline=true;
       await new Promise(resolve=>setTimeout(resolve,1000));
@@ -23913,23 +23911,17 @@ async function waitForSelfUpdateRestart(stackKey,previousStartedAt,timeoutMs=6*6
     }
 
     const startedAt=String(d&&d.service_runtime&&d.service_runtime.started_at||'');
-    if(
-      (previous&&startedAt&&startedAt!==previous)
+    const backendVersion=String(d&&d.version||'').replace(/^v/i,'');
+    const restarted=!!(
+      (backendVersion&&previousVersion&&backendVersion!==previousVersion)
+      ||(previous&&startedAt&&startedAt!==previous)
       ||(!previous&&sawOffline&&startedAt)
-    ){
-      restarted=true;
-    }
-
-    if(restarted){
-      return true;
-    }
+    );
+    if(restarted)return true;
 
     await new Promise(resolve=>setTimeout(resolve,1000));
   }
 
-  state.verifyingApps.delete(key);
-  state.verificationBaselines.delete(key);
-  render();
   return false;
 }
 
@@ -23996,7 +23988,11 @@ async function installImageUpdate(app,backupMode='none'){
     if(verified){
       // The replacement container is running. Reload immediately so the browser
       // loads the new frontend; targeted verification continues independently.
-      window.setTimeout(()=>window.location.reload(),700);
+      window.setTimeout(()=>{
+        const reloadUrl=new URL(window.location.href);
+        reloadUrl.searchParams.set('_um_reload',String(Date.now()));
+        window.location.replace(reloadUrl.toString());
+      },700);
       return;
     }
     if(!verified){
