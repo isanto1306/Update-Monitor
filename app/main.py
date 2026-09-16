@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.320"
+VERSION = "0.3.325"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -9983,7 +9983,7 @@ def _parse_utc_timestamp(value):
 def _auto_retry_ready(policy, now_utc, update_signature):
     """
     Successful identical update signatures stay suppressed.
-    Failed identical signatures are retried after a 15-minute cooldown.
+    Failed or interrupted identical signatures are retried after a 15-minute cooldown.
     """
     if str(policy.get("last_auto_signature") or "") != str(update_signature or ""):
         return True
@@ -10002,7 +10002,7 @@ def _auto_retry_ready(policy, now_utc, update_signature):
             now_utc - last_attempt
         ).total_seconds() >= AUTO_UPDATE_SUCCESS_REVERIFY_SECONDS
 
-    if result != "error":
+    if result not in {"error", "running"}:
         return True
 
     if last_attempt is None:
@@ -10264,14 +10264,18 @@ def run_due_auto_updates(now_utc=None):
         begin_action_progress(stack_key, "update", app_item, automatic=True)
 
         # Record the attempt before touching Docker/Compose so a process crash
-        # cannot immediately retry the same update on restart.
-        record_auto_update_result(
-            stack_key,
-            local_date,
-            False,
-            "Automatic update started",
-            update_signature=update_signature,
-        )
+        # cannot immediately retry the same update on restart. An active run is
+        # not a failure; success/error is recorded only when the run finishes.
+        with policies_lock:
+            current = dict(policies.get(str(stack_key)) or {})
+            current["last_auto_attempt_at"] = utc_now()
+            current["last_auto_local_date"] = str(local_date)
+            if update_signature:
+                current["last_auto_signature"] = str(update_signature)
+            current["last_auto_result"] = "running"
+            current["last_auto_error"] = None
+            policies[str(stack_key)] = current
+            save_json(POLICY_FILE, policies)
 
         update_result = None
         backup_result = None
