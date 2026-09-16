@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.336"
+        href="favicon.ico?v=0.3.337"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.336"
+        href="favicon-16x16.png?v=0.3.337"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.336"
+        href="favicon-32x32.png?v=0.3.337"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.336"
+        href="apple-touch-icon.png?v=0.3.337"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.336"
+        href="site.webmanifest?v=0.3.337"
     >
 
     <meta
@@ -18220,7 +18220,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <style id="um-auto-backup-language-width-v0329">
-/* v0.3.336 — only the automatic-update Backup selector for the longer
+/* v0.3.337 — only the automatic-update Backup selector for the longer
    French, Portuguese and Spanish labels. German/English and all fixed
    header/summary geometry remain unchanged. */
 html[lang="fr"] .policy-auto-layout-behavior .policy-backup-preview-controls,
@@ -18254,7 +18254,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 </style>
 
 <style id="um-card-resource-port-v0336">
-/* v0.3.336 — compact CPU/RAM rows; more width reserved for Port. */
+/* v0.3.337 — compact CPU/RAM rows; more width reserved for Port. */
 .update-card-summary > .update-card-stats{
   height:94px !important;
   min-height:94px !important;
@@ -18487,7 +18487,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 
 
-/* v0.3.336: the redundant CPU / RAM heading and chip are removed.
+/* v0.3.337: the redundant CPU / RAM heading and chip are removed.
    CPU and RAM are already labelled on their own rows. The shorter
    tracks leave a wider, stable Port column for two-line port values. */
 .update-card-summary > .update-card-stats > .update-card-stat-resource{
@@ -18530,6 +18530,87 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   max-width:68px !important;
 }
 
+</style>
+
+
+<style id="um-card-resource-tooltip-v0337">
+.update-card-summary > .update-card-stats > .update-card-stat-resource{
+  position:relative !important;
+  cursor:default !important;
+}
+.update-card-summary > .update-card-stats > .update-card-stat-resource::before{
+  display:block !important;
+  content:"" !important;
+  position:relative !important;
+  left:auto !important;
+  top:auto !important;
+  flex:0 0 24px !important;
+  width:24px !important;
+  height:24px !important;
+  margin:0 auto 5px !important;
+  transform:none !important;
+  background:#69adff !important;
+}
+.update-card-stat-resource .update-resource-title{
+  display:none !important;
+}
+.update-card-stat-resource .update-resource-bars{
+  width:103px !important;
+  min-width:103px !important;
+  max-width:103px !important;
+}
+.update-card-stat-resource .update-resource-row{
+  width:103px !important;
+  min-width:103px !important;
+  max-width:103px !important;
+  grid-template-columns:30px 68px !important;
+  column-gap:5px !important;
+}
+.update-card-stat-resource .update-resource-track{
+  width:68px !important;
+  min-width:68px !important;
+  max-width:68px !important;
+}
+.update-resource-hover-tooltip{
+  position:fixed !important;
+  z-index:2147483000 !important;
+  box-sizing:border-box !important;
+  min-width:176px !important;
+  width:max-content !important;
+  max-width:calc(100vw - 16px) !important;
+  padding:8px 10px !important;
+  border:1px solid #39444d !important;
+  border-radius:6px !important;
+  background:#1d2329 !important;
+  box-shadow:0 6px 18px rgba(0,0,0,.38) !important;
+  color:#e7edf2 !important;
+  font-size:11px !important;
+  line-height:1.25 !important;
+  white-space:normal !important;
+  overflow-wrap:anywhere !important;
+  pointer-events:none !important;
+}
+.update-resource-hover-tooltip[hidden]{display:none !important;}
+.update-resource-hover-section{
+  display:flex !important;
+  flex-direction:column !important;
+  gap:2px !important;
+}
+.update-resource-hover-section + .update-resource-hover-section{
+  margin-top:7px !important;
+  padding-top:7px !important;
+  border-top:1px solid rgba(255,255,255,.09) !important;
+}
+.update-resource-hover-section strong{
+  color:#f0f4f7 !important;
+  font-size:11px !important;
+  font-weight:700 !important;
+}
+.update-resource-hover-section span{
+  display:block !important;
+  max-width:240px !important;
+  color:#d5e0e8 !important;
+}
 </style>
 
 </head>
@@ -18649,7 +18730,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.336</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.337</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18989,7 +19070,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.336';
+const UPDATE_MONITOR_VERSION = 'v0.3.337';
 let state = {
   language: ['de','en','fr','pt','es'].includes(localStorage.getItem('updateMonitorLanguage')) ? localStorage.getItem('updateMonitorLanguage') : 'en',
   timeFormat: localStorage.getItem('updateMonitorTimeFormat') === '12' ? '12' : '24',
@@ -20975,13 +21056,108 @@ function cardRamTooltip(memoryUsage){
   result.detail=`${formatNumber(match[1])} ${normalizeUnit(match[2])} ${joins[language]||joins.en} ${formatNumber(match[3])} ${normalizeUnit(match[4])}`;
   return result;
 }
+function cardResourceHoverData(app){
+  const language=String(state.language||'de');
+  const labels={
+    de:{cpu:'CPU Verbrauch',ram:'Arbeitsspeicherverbrauch'},
+    en:{cpu:'CPU usage',ram:'Memory usage'},
+    fr:{cpu:'Utilisation CPU',ram:'Utilisation mémoire'},
+    pt:{cpu:'Uso de CPU',ram:'Uso de memória'},
+    es:{cpu:'Uso de CPU',ram:'Uso de memoria'}
+  };
+  const text=labels[language]||labels.en;
+  const cpuText=formatCardResourcePercent(app.cpu_percent);
+  const memoryText=formatCardResourcePercent(app.memory_percent);
+  const ramTip=cardRamTooltip(app.memory_usage);
+  const ramDetail=ramTip.detail?`${ramTip.detail} · ${memoryText}`:memoryText;
+  return {cpuTitle:text.cpu,cpuDetail:cpuText,ramTitle:text.ram,ramDetail};
+}
+function ensureResourceHoverTooltip(){
+  let tip=document.getElementById('updateResourceHoverTooltip');
+  if(tip)return tip;
+  tip=document.createElement('div');
+  tip.id='updateResourceHoverTooltip';
+  tip.className='update-resource-hover-tooltip';
+  tip.hidden=true;
+  tip.innerHTML=`<div class="update-resource-hover-section"><strong data-hover-cpu-title></strong><span data-hover-cpu-detail></span></div><div class="update-resource-hover-section"><strong data-hover-ram-title></strong><span data-hover-ram-detail></span></div>`;
+  document.body.appendChild(tip);
+  return tip;
+}
+let activeResourceHoverNode=null;
+function positionResourceHoverTooltip(node){
+  const tip=ensureResourceHoverTooltip();
+  if(!node||tip.hidden)return;
+  const anchor=node.getBoundingClientRect();
+  const margin=8;
+  const gap=8;
+  const box=tip.getBoundingClientRect();
+  let left=anchor.left+(anchor.width-box.width)/2;
+  let top=anchor.bottom+gap;
+  if(top+box.height>window.innerHeight-margin){
+    top=anchor.top-box.height-gap;
+  }
+  left=Math.max(margin,Math.min(left,window.innerWidth-box.width-margin));
+  top=Math.max(margin,Math.min(top,window.innerHeight-box.height-margin));
+  tip.style.left=`${Math.round(left)}px`;
+  tip.style.top=`${Math.round(top)}px`;
+}
+function showResourceHoverTooltip(node){
+  if(!node)return;
+  const tip=ensureResourceHoverTooltip();
+  const cpuTitle=tip.querySelector('[data-hover-cpu-title]');
+  const cpuDetail=tip.querySelector('[data-hover-cpu-detail]');
+  const ramTitle=tip.querySelector('[data-hover-ram-title]');
+  const ramDetail=tip.querySelector('[data-hover-ram-detail]');
+  if(cpuTitle)cpuTitle.textContent=node.dataset.resourceCpuTitle||'CPU';
+  if(cpuDetail)cpuDetail.textContent=node.dataset.resourceCpuDetail||'–';
+  if(ramTitle)ramTitle.textContent=node.dataset.resourceRamTitle||'RAM';
+  if(ramDetail)ramDetail.textContent=node.dataset.resourceRamDetail||'–';
+  activeResourceHoverNode=node;
+  tip.hidden=false;
+  requestAnimationFrame(()=>positionResourceHoverTooltip(node));
+}
+function hideResourceHoverTooltip(node){
+  if(node&&activeResourceHoverNode&&node!==activeResourceHoverNode)return;
+  const tip=document.getElementById('updateResourceHoverTooltip');
+  if(tip)tip.hidden=true;
+  activeResourceHoverNode=null;
+}
+function bindResourceHoverTooltip(){
+  if(document.documentElement.dataset.resourceHoverBound==='1')return;
+  document.documentElement.dataset.resourceHoverBound='1';
+  document.addEventListener('pointerover',event=>{
+    const node=event.target.closest?.('.update-card-stat-resource[data-resource-stack]');
+    if(!node)return;
+    if(event.relatedTarget&&node.contains(event.relatedTarget))return;
+    showResourceHoverTooltip(node);
+  });
+  document.addEventListener('pointerout',event=>{
+    const node=event.target.closest?.('.update-card-stat-resource[data-resource-stack]');
+    if(!node)return;
+    if(event.relatedTarget&&node.contains(event.relatedTarget))return;
+    hideResourceHoverTooltip(node);
+  });
+  document.addEventListener('focusin',event=>{
+    const node=event.target.closest?.('.update-card-stat-resource[data-resource-stack]');
+    if(node)showResourceHoverTooltip(node);
+  });
+  document.addEventListener('focusout',event=>{
+    const node=event.target.closest?.('.update-card-stat-resource[data-resource-stack]');
+    if(node)hideResourceHoverTooltip(node);
+  });
+  window.addEventListener('resize',()=>{
+    if(activeResourceHoverNode)positionResourceHoverTooltip(activeResourceHoverNode);
+  });
+  window.addEventListener('scroll',()=>hideResourceHoverTooltip(),true);
+}
+bindResourceHoverTooltip();
 function renderAppResourceStat(app){
   const cpuText=formatCardResourcePercent(app.cpu_percent);
   const memoryText=formatCardResourcePercent(app.memory_percent);
   const cpuBar=cardResourceBarPercent(app.cpu_percent);
   const memoryBar=cardResourceBarPercent(app.memory_percent);
-  const ramTip=cardRamTooltip(app.memory_usage);
-  return `<div class="update-card-stat update-card-stat-resource" data-resource-stack="${esc(String(app.stack_key||''))}">
+  const hover=cardResourceHoverData(app);
+  return `<div class="update-card-stat update-card-stat-resource" tabindex="0" data-resource-stack="${esc(String(app.stack_key||''))}" data-resource-cpu-title="${esc(hover.cpuTitle)}" data-resource-cpu-detail="${esc(hover.cpuDetail)}" data-resource-ram-title="${esc(hover.ramTitle)}" data-resource-ram-detail="${esc(hover.ramDetail)}">
     <div class="update-card-stat-label update-resource-title">CPU / RAM</div>
     <div class="update-resource-bars">
       <div class="update-resource-row update-resource-cpu-row">
@@ -20989,14 +21165,10 @@ function renderAppResourceStat(app){
         <span class="update-resource-track"><span class="update-resource-fill" data-resource-cpu-bar style="width:${cpuBar}%"></span></span>
         <span class="update-resource-percent" data-resource-cpu>${esc(cpuText)}</span>
       </div>
-      <div class="update-resource-row update-resource-ram-row" tabindex="0">
+      <div class="update-resource-row update-resource-ram-row">
         <span class="update-resource-name">RAM</span>
         <span class="update-resource-track"><span class="update-resource-fill" data-resource-ram-bar style="width:${memoryBar}%"></span></span>
         <span class="update-resource-percent" data-resource-ram>${esc(memoryText)}</span>
-        <span class="update-resource-tooltip" data-resource-ram-tooltip${ramTip.detail?'':' hidden'}>
-          <strong data-resource-ram-tip-title>${esc(ramTip.title)}</strong>
-          <span data-resource-ram-tip-detail>${esc(ramTip.detail||'–')}</span>
-        </span>
       </div>
     </div>
   </div>`;
@@ -21007,23 +21179,22 @@ function syncAppResourceStat(app){
   const memoryText=formatCardResourcePercent(app.memory_percent);
   const cpuBarValue=cardResourceBarPercent(app.cpu_percent);
   const ramBarValue=cardResourceBarPercent(app.memory_percent);
-  const ramTip=cardRamTooltip(app.memory_usage);
+  const hover=cardResourceHoverData(app);
   document.querySelectorAll('[data-resource-stack]').forEach(node=>{
     if(String(node.dataset.resourceStack||'')!==key)return;
     const cpu=node.querySelector('[data-resource-cpu]');
     const ram=node.querySelector('[data-resource-ram]');
     const cpuBar=node.querySelector('[data-resource-cpu-bar]');
     const ramBar=node.querySelector('[data-resource-ram-bar]');
-    const tip=node.querySelector('[data-resource-ram-tooltip]');
-    const tipTitle=node.querySelector('[data-resource-ram-tip-title]');
-    const tipDetail=node.querySelector('[data-resource-ram-tip-detail]');
     if(cpu)cpu.textContent=cpuText;
     if(ram)ram.textContent=memoryText;
     if(cpuBar)cpuBar.style.width=`${cpuBarValue}%`;
     if(ramBar)ramBar.style.width=`${ramBarValue}%`;
-    if(tipTitle)tipTitle.textContent=ramTip.title;
-    if(tipDetail)tipDetail.textContent=ramTip.detail||'–';
-    if(tip)tip.hidden=!ramTip.detail;
+    node.dataset.resourceCpuTitle=hover.cpuTitle;
+    node.dataset.resourceCpuDetail=hover.cpuDetail;
+    node.dataset.resourceRamTitle=hover.ramTitle;
+    node.dataset.resourceRamDetail=hover.ramDetail;
+    if(activeResourceHoverNode===node)showResourceHoverTooltip(node);
   });
 }
 function renderAppPortStat(app){
