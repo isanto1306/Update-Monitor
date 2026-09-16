@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.337"
+        href="favicon.ico?v=0.3.338"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.337"
+        href="favicon-16x16.png?v=0.3.338"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.337"
+        href="favicon-32x32.png?v=0.3.338"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.337"
+        href="apple-touch-icon.png?v=0.3.338"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.337"
+        href="site.webmanifest?v=0.3.338"
     >
 
     <meta
@@ -18220,7 +18220,7 @@ body.scan-ui-locked .um-card-toolbar { pointer-events:none; opacity:.46; }
 
 
 <style id="um-auto-backup-language-width-v0329">
-/* v0.3.337 — only the automatic-update Backup selector for the longer
+/* v0.3.338 — only the automatic-update Backup selector for the longer
    French, Portuguese and Spanish labels. German/English and all fixed
    header/summary geometry remain unchanged. */
 html[lang="fr"] .policy-auto-layout-behavior .policy-backup-preview-controls,
@@ -18254,13 +18254,13 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 </style>
 
 <style id="um-card-resource-port-v0336">
-/* v0.3.337 — compact CPU/RAM rows; more width reserved for Port. */
+/* v0.3.338 — compact CPU/RAM rows; more width reserved for Port. */
 .update-card-summary > .update-card-stats{
   height:94px !important;
   min-height:94px !important;
   max-height:94px !important;
   display:grid !important;
-  grid-template-columns:minmax(86px,.92fr) minmax(118px,1.15fr) minmax(112px,1.08fr) !important;
+  grid-template-columns:repeat(3,minmax(0,1fr)) !important;
   align-items:stretch !important;
 }
 .update-card-summary > .update-card-stats > .update-card-stat{
@@ -18487,7 +18487,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 
 
-/* v0.3.337: the redundant CPU / RAM heading and chip are removed.
+/* v0.3.338: the redundant CPU / RAM heading and chip are removed.
    CPU and RAM are already labelled on their own rows. The shorter
    tracks leave a wider, stable Port column for two-line port values. */
 .update-card-summary > .update-card-stats > .update-card-stat-resource{
@@ -18730,7 +18730,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.337</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.338</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -19070,7 +19070,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.337';
+const UPDATE_MONITOR_VERSION = 'v0.3.338';
 let state = {
   language: ['de','en','fr','pt','es'].includes(localStorage.getItem('updateMonitorLanguage')) ? localStorage.getItem('updateMonitorLanguage') : 'en',
   timeFormat: localStorage.getItem('updateMonitorTimeFormat') === '12' ? '12' : '24',
