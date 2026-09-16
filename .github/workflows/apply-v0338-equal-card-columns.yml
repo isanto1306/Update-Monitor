@@ -1,0 +1,89 @@
+name: Apply v0.3.338 equal card columns
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/apply-v0338-equal-card-columns.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply equal card columns
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          OLD_VERSION = '0.3.337'
+          NEW_VERSION = '0.3.338'
+
+          index_path = Path('static/index.html')
+          main_path = Path('app/main.py')
+          readme_path = Path('README.md')
+
+          index = index_path.read_text(encoding='utf-8')
+          main = main_path.read_text(encoding='utf-8')
+          readme = readme_path.read_text(encoding='utf-8')
+
+          old_cols = 'grid-template-columns:minmax(86px,.92fr) minmax(118px,1.15fr) minmax(112px,1.08fr) !important;'
+          new_cols = 'grid-template-columns:repeat(3,minmax(0,1fr)) !important;'
+          if old_cols not in index:
+              raise SystemExit('expected three-column geometry not found')
+          index = index.replace(old_cols, new_cols, 1)
+
+          if OLD_VERSION not in index:
+              raise SystemExit(f'{OLD_VERSION} not found in static/index.html')
+          index = index.replace(OLD_VERSION, NEW_VERSION)
+
+          old_main = f'VERSION = "{OLD_VERSION}"'
+          new_main = f'VERSION = "{NEW_VERSION}"'
+          if old_main not in main:
+              raise SystemExit(f'{old_main} not found in app/main.py')
+          main = main.replace(old_main, new_main, 1)
+
+          readme = readme.replace(f'Current release: **v{OLD_VERSION}**', f'Current release: **v{NEW_VERSION}**')
+          readme = readme.replace(f'Docker image source: **v{OLD_VERSION}**', f'Docker image source: **v{NEW_VERSION}**')
+
+          index_path.write_text(index, encoding='utf-8')
+          main_path.write_text(main, encoding='utf-8')
+          readme_path.write_text(readme, encoding='utf-8')
+          PY
+
+      - name: Validate sources
+        shell: bash
+        run: |
+          python -m py_compile app/main.py
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, re.S | re.I)
+          Path('/tmp/update-monitor.js').write_text('\n;\n'.join(scripts), encoding='utf-8')
+          assert '0.3.338' in html
+          assert 'grid-template-columns:repeat(3,minmax(0,1fr)) !important;' in html
+          PY
+          node --check /tmp/update-monitor.js
+          git diff --check
+
+      - name: Commit final sources
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-v0338-equal-card-columns.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Equalize card columns v0.3.338"
+          git push origin HEAD:main
