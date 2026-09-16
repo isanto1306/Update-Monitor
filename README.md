@@ -88,6 +88,6 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.336**
+Current release: **v0.3.337**
 
-Docker image source: **v0.3.336**
+Docker image source: **v0.3.337**
