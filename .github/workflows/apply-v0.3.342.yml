@@ -28,10 +28,19 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Decode patch script
+        run: |
+          base64 -d .github/patch-v0.3.342.py.gz.b64 | gzip -dc > /tmp/patch-v0.3.342.py
+
+      - name: Upload decoded patch script
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch-v0.3.342-script
+          path: /tmp/patch-v0.3.342.py
+
       - name: Apply and validate v0.3.342
         id: patch
         run: |
-          base64 -d .github/patch-v0.3.342.py.gz.b64 | gzip -dc > /tmp/patch-v0.3.342.py
           set -o pipefail
           python /tmp/patch-v0.3.342.py 2>&1 | tee /tmp/patch-v0.3.342.log
 
