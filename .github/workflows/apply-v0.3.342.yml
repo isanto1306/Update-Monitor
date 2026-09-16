@@ -29,9 +29,18 @@ jobs:
           node-version: '22'
 
       - name: Apply and validate v0.3.342
+        id: patch
         run: |
           base64 -d .github/patch-v0.3.342.py.gz.b64 | gzip -dc > /tmp/patch-v0.3.342.py
-          python /tmp/patch-v0.3.342.py
+          set -o pipefail
+          python /tmp/patch-v0.3.342.py 2>&1 | tee /tmp/patch-v0.3.342.log
+
+      - name: Upload patch diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch-v0.3.342-diagnostics
+          path: /tmp/patch-v0.3.342.log
 
       - name: Validate diff
         run: |
