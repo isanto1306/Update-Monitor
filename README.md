@@ -88,6 +88,6 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.340**
+Current release: **v0.3.341**
 
-Dashboard layout restored to the state before CPU and RAM were added to the application cards.
+Self updates now trigger a browser reload as soon as the replacement Update Monitor backend is detected. The browser also compares its loaded frontend version with the backend version during runtime polling and reloads with cache busting when they differ.
