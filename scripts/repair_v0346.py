@@ -1,42 +1,24 @@
 #!/usr/bin/env python3
-import ast
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-MAIN = ROOT / "app" / "main.py"
-REPORT = ROOT / "repair-v0346-report.txt"
-
-
-def function_source(source: str, name: str) -> str:
-    tree = ast.parse(source)
-    lines = source.splitlines()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            start = max(1, node.lineno - 3)
-            end = min(len(lines), (node.end_lineno or node.lineno) + 3)
-            return "\n".join(f"{i:06d}: {lines[i-1]}" for i in range(start, end + 1)) + "\n"
-    return f"[MISSING FUNCTION {name}]\n"
+ROOT=Path(__file__).resolve().parents[1]
+INDEX=ROOT/'static'/'index.html'
+REPORT=ROOT/'repair-v0346-report.txt'
 
 
 def main():
-    backend = MAIN.read_text(encoding="utf-8")
-    parts = ["UPDATE MONITOR v0.3.346 COMPOSE REPAIR HELPERS\n"]
-    for name in [
-        "casaos_compose_project_exists",
-        "casaos_compose_yaml",
-        "casaos_apply_compose",
-        "casaos_recreate_container",
-        "wait_for_version_group_compose_update",
-        "find_scanned_app",
-        "status_payload",
-        "status",
-        "automation_status",
-        "scan_all",
-    ]:
-        parts.append("\n" + "="*78 + f"\n{name}\n" + "="*78 + "\n")
-        parts.append(function_source(backend, name))
-    REPORT.write_text("".join(parts), encoding="utf-8")
+    lines=INDEX.read_text(encoding='utf-8',errors='replace').splitlines()
+    out=['UPDATE MONITOR v0.3.346 UI ERROR DETAIL LOCATIONS\n']
+    needles=['detail','dockerInfo','docker-info','error_count','errorStatus','headerWarning','matchingVerificationScan','verificationBaselines','policyVersionSelect','fixedNotice']
+    hits=[]
+    for i,line in enumerate(lines,1):
+        if i<18500: continue
+        low=line.lower()
+        if any(n.lower() in low for n in needles):
+            lo=max(1,i-3); hi=min(len(lines),i+3)
+            block='\n'.join(f'{n:06d}: {lines[n-1]}' for n in range(lo,hi+1))
+            if block not in hits: hits.append(block)
+    out.append('\n\n'.join(hits[:220]))
+    REPORT.write_text(''.join(out),encoding='utf-8')
 
-
-if __name__ == "__main__":
-    main()
+if __name__=='__main__': main()
