@@ -1,0 +1,40 @@
+name: Apply Update Monitor v0.3.345 port status colors
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v0.3.345-port-status-colors.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply and validate v0.3.345
+        run: python .github/patch-v0.3.345-port-status-colors.py
+
+      - name: Validate diff
+        run: |
+          git diff --check
+          grep -q 'VERSION = "0.3.345"' app/main.py
+          grep -q "const UPDATE_MONITOR_VERSION = 'v0.3.345';" static/index.html
+          grep -q 'port-conflict-runtime.is-running' static/index.html
+          grep -q 'port-conflict-runtime.is-stopped' static/index.html
+          grep -q 'version: "0.3.345"' docker-compose.zimaos.yml
+
+      - name: Commit v0.3.345
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/patch-v0.3.345-port-status-colors.py .github/workflows/apply-v0.3.345-port-status-colors.yml
+          git add static/index.html app/main.py docker-compose.zimaos.yml README.md .github/patch-v0.3.345-port-status-colors.py .github/workflows/apply-v0.3.345-port-status-colors.yml
+          git commit -m "Color port conflict runtime states v0.3.345"
+          git push origin main
