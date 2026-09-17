@@ -88,7 +88,7 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.349**
+Current release: **v0.3.350**
 
 The Port Conflict view now keeps configured conflicts visible and colors runtime status clearly: running is green and stopped is red.
 
