@@ -23,19 +23,27 @@ jobs:
           p=Path('app/main.py')
           lines=p.read_text(encoding='utf-8').splitlines()
           needles=[
-            'def zimaos_managed_latest_digest_ref',
-            'def build_version_groups',
-            'def list_registry_tags',
-            'def available_versions',
-            'sha-',
-            'No selectable version group is available',
+            'available_version_tags',
+            'newer_tags',
+            'def _version_alias',
+            'def _version_item_current_tag',
+            'def registry_tag',
+            'def fetch_registry',
+            'github_latest_version',
+            'resolved_installed_tag',
           ]
+          seen=set()
           for needle in needles:
             print('\n===', needle, '===')
+            count=0
             for i,line in enumerate(lines,1):
               if needle in line:
-                a=max(1,i-20); b=min(len(lines),i+80)
+                a=max(1,i-18); b=min(len(lines),i+55)
+                key=(a,b)
+                if key in seen: continue
+                seen.add(key)
                 print(f'--- {a}:{b} ---')
                 for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
-                break
+                count+=1
+                if count>=4: break
           PY
