@@ -16,32 +16,41 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix-v0.3.348
-      - name: Show target code
+      - name: Show backend and frontend version display paths
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('app/main.py')
-          lines=p.read_text(encoding='utf-8').splitlines()
-          needles=[
-            'def registry_selectable_version_tags',
-            'store_info = entry.get',
-            'def zimaos_app',
-            'def casaos_app',
-            'def scan_docker',
-            'compose_project',
-          ]
-          seen=set()
-          for needle in needles:
-            print('\n===', needle, '===')
-            count=0
-            for i,line in enumerate(lines,1):
-              if needle in line:
-                a=max(1,i-25); b=min(len(lines),i+100)
-                key=(a,b)
-                if key in seen: continue
-                seen.add(key)
-                print(f'--- {a}:{b} ---')
-                for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
-                count+=1
-                if count>=5: break
+          for filename, needles in {
+            'app/main.py': [
+              'zima_title_catalog = casaos_title_catalog()',
+              'entry = deployments.setdefault(key, {',
+              'def build_apps',
+              '"installed_version"',
+              'display_installed_version',
+            ],
+            'static/index.html': [
+              'display_installed_version',
+              'resolved_installed_tag',
+              'installed_version',
+              'versionPicker',
+              'versionLoad',
+              'Version konnte',
+            ],
+          }.items():
+            lines=Path(filename).read_text(encoding='utf-8').splitlines()
+            print('\n########', filename, '########')
+            seen=set()
+            for needle in needles:
+              print('\n===', needle, '===')
+              count=0
+              for i,line in enumerate(lines,1):
+                if needle in line:
+                  a=max(1,i-22); b=min(len(lines),i+70)
+                  key=(a,b)
+                  if key in seen: continue
+                  seen.add(key)
+                  print(f'--- {a}:{b} ---')
+                  for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
+                  count+=1
+                  if count>=3: break
           PY
