@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.348"
+VERSION = "0.3.349"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -9174,6 +9174,21 @@ def scan_all(stack_key=None):
                     tracking_image_ref = zimaos_latest_tracking_ref
                     parsed = parse_image_ref(tracking_image_ref)
 
+                    # ZimaOS may persist a rolling :latest source as
+                    # repo:latest@sha256:<resolved>. That digest is authoritative
+                    # local evidence for the currently active image and must take
+                    # part in the remote comparison; otherwise a perfectly current
+                    # image can be reported as IMAGE_UPDATE merely because Docker
+                    # omitted RepoDigests for the local tag.
+                    managed_digest = str(explicit_pinned_digest or "").strip().lower()
+                    if managed_digest:
+                        local.add(managed_digest)
+                        local_all_digests.add(managed_digest)
+                        if len(local_digest_groups) == 1:
+                            local_digest_groups[0] = sorted(
+                                set(local_digest_groups[0]).union({managed_digest})
+                            )
+
                 # Immediate post-source verification may legitimately see the
                 # target digest only under the old registry alias. The digest
                 # hash identifies the image content independently of that alias.
@@ -15847,7 +15862,7 @@ def perform_image_update(app_item):
 
     target_containers = []
     seen_names = set()
-    restore_pin_targets = []
+    tracking_pin_targets = []
 
     for item in targets:
         image_ref = str(
@@ -15867,8 +15882,8 @@ def perform_image_update(app_item):
             for container in (item.get("containers") or [])
             if str(container.get("compose_service") or "").strip()
         ]
-        if item.get("restore_generated_digest_pin"):
-            restore_pin_targets.append({
+        if item.get("restore_generated_digest_pin") or item.get("zimaos_managed_latest_digest"):
+            tracking_pin_targets.append({
                 "image_ref": image_ref,
                 "services": sorted(set(item_services)),
             })
@@ -15898,31 +15913,32 @@ def perform_image_update(app_item):
     verified_runtime = {}
     restored_states = {}
 
-    restore_pin_applied = False
-    if restore_pin_targets:
+    tracking_pin_applied = False
+    if tracking_pin_targets:
         yaml_text = casaos_compose_yaml(project)
         updated_yaml = yaml_text
         changed = 0
 
-        for restore_target in restore_pin_targets:
+        for tracking_target in tracking_pin_targets:
             updated_yaml, count, _ = replace_compose_service_images(
                 updated_yaml,
-                restore_target.get("services") or [],
-                restore_target.get("image_ref"),
+                tracking_target.get("services") or [],
+                tracking_target.get("image_ref"),
             )
             changed += int(count or 0)
 
         if changed < 1 or updated_yaml == yaml_text:
             raise RuntimeError(
-                "Backup restore source could not be returned to its original "
-                "tracking tag before the update"
+                "The rolling image source could not be normalized to its tracking "
+                "tag before the update"
             )
 
-        # This mutation happens only because the user explicitly requested the
-        # available update. The target image was pulled and digest-verified above.
+        # ZimaOS-managed latest@digest references and restore-generated digest
+        # locks must first be returned to the real rolling tag. The target image
+        # was already pulled and digest-verified above.
         casaos_apply_compose(project, updated_yaml, dry_run=True)
         casaos_apply_compose(project, updated_yaml, dry_run=False)
-        restore_pin_applied = True
+        tracking_pin_applied = True
 
     for target in target_containers:
         name = target["name"]
@@ -15940,11 +15956,11 @@ def perform_image_update(app_item):
 
         update_action_progress(stack_key, phase="verifying")
 
-        if restore_pin_applied:
-            # ZimaOS already recreated the stack when the Compose source was
-            # returned from our internal backup digest to the user's tracking
-            # tag. Verify the running container directly against the pulled
-            # target digest instead of forcing a second recreation.
+        if tracking_pin_applied:
+            # Applying the normalized tracking tag already lets ZimaOS recreate
+            # the stack. Verify that result directly against the pulled target
+            # digest instead of forcing a second recreation that could reapply
+            # the old resolved digest.
             deadline = time.time() + 180
             verified = None
             while time.time() < deadline:
