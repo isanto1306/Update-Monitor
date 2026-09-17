@@ -1,0 +1,37 @@
+name: Repair v0.3.346 diagnostics
+
+on:
+  push:
+    branches:
+      - repair-v0.3.346
+    paths:
+      - scripts/repair_v0346.py
+      - .github/workflows/repair-v0346.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: repair-v0.3.346
+          fetch-depth: 0
+
+      - name: Generate repair diagnostics
+        run: python3 scripts/repair_v0346.py
+
+      - name: Commit diagnostics report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repair-v0346-report.txt
+          if git diff --cached --quiet; then
+            echo "No report changes"
+          else
+            git commit -m "Record v0.3.346 repair diagnostics"
+            git push origin repair-v0.3.346
+          fi
