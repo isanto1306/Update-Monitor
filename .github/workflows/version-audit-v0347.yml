@@ -1,0 +1,25 @@
+name: Version audit v0.3.347
+
+on:
+  push:
+    branches:
+      - version-v0.3.347
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: version-v0.3.347
+      - name: Show all Update Monitor version markers
+        run: |
+          echo '=== VERSION MARKERS ==='
+          grep -RInE '0\.3\.[0-9]+' . \
+            --exclude-dir=.git \
+            --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' --exclude='*.webp' --exclude='*.ico' \
+            || true
