@@ -16,41 +16,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix-v0.3.348
-      - name: Show backend and frontend version display paths
+      - name: Show digest and version helper code
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          for filename, needles in {
-            'app/main.py': [
-              'zima_title_catalog = casaos_title_catalog()',
-              'entry = deployments.setdefault(key, {',
-              'def build_apps',
-              '"installed_version"',
-              'display_installed_version',
-            ],
-            'static/index.html': [
-              'display_installed_version',
-              'resolved_installed_tag',
-              'installed_version',
-              'versionPicker',
-              'versionLoad',
-              'Version konnte',
-            ],
-          }.items():
-            lines=Path(filename).read_text(encoding='utf-8').splitlines()
-            print('\n########', filename, '########')
-            seen=set()
-            for needle in needles:
-              print('\n===', needle, '===')
-              count=0
-              for i,line in enumerate(lines,1):
-                if needle in line:
-                  a=max(1,i-22); b=min(len(lines),i+70)
-                  key=(a,b)
-                  if key in seen: continue
-                  seen.add(key)
-                  print(f'--- {a}:{b} ---')
-                  for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
-                  count+=1
-                  if count>=3: break
+          p=Path('app/main.py')
+          lines=p.read_text(encoding='utf-8').splitlines()
+          needles=[
+            'def zimaos_managed_latest_digest_ref',
+            'def compose_literal_image_ref',
+            'def app_versions',
+            '@app.get("/api/app-versions")',
+            'def build_version_groups',
+            'user_digest_pin = bool(',
+          ]
+          seen=set()
+          for needle in needles:
+            print('\n===',needle,'===')
+            for i,line in enumerate(lines,1):
+              if needle in line:
+                a=max(1,i-20); b=min(len(lines),i+120)
+                if (a,b) in seen: continue
+                seen.add((a,b))
+                print(f'--- {a}:{b} ---')
+                for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
+                break
           PY
