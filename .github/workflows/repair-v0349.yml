@@ -18,6 +18,9 @@ jobs:
           ref: repair-v0.3.349
           fetch-depth: 0
 
+      - name: Install test dependencies
+        run: python3 -m pip install -r requirements.txt
+
       - name: Apply v0.3.349 repair
         run: |
           python3 - <<'PY'
@@ -81,8 +84,6 @@ jobs:
           s = s[:start] + fn + s[end:]
           p.write_text(s, encoding='utf-8')
 
-          # Synchronize active release/cache markers. Historical v0.3.xxx comments
-          # are not touched because only the exact current marker is replaced.
           for name in [
               'README.md',
               'docker-compose.zimaos.yml',
@@ -106,7 +107,7 @@ jobs:
           UPDATE_MONITOR_SESSION_SECRET=12345678901234567890123456789012 \
           UPDATE_MONITOR_CACHE_DIR=/tmp/update-monitor-v0349 \
           python3 - <<'PY'
-          import os, sys
+          import sys
           sys.path.insert(0, 'app')
           import main
 
