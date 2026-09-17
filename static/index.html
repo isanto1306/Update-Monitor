@@ -20362,6 +20362,9 @@ function renderImageDetail(item){
       <div class="update-details-label">${esc(t('policy'))}</div><div class="update-details-value">${esc(policyText(item))}</div>
       <div class="update-details-label">${esc(t('localDigest'))}</div><div class="update-details-value">${esc(localDigest)}</div>
       <div class="update-details-label">${esc(t('remoteDigest'))}</div><div class="update-details-value update-remote-digest-value"><span>${esc(remoteDigest)}</span><button class="docker-info-button" type="button" data-docker-info-stack="${esc(item.stack_key||'')}" data-docker-info-image="${esc(item.image_ref||'')}" title="${esc(t('dockerInformation'))}" aria-label="${esc(t('dockerInformation'))}"><span aria-hidden="true">i</span></button></div>
+      ${String(item.status||'')==='ERROR'&&String(item.detail||'').trim()
+        ? `<div class="update-details-label">${esc(t('errorStatus'))}</div><div class="update-details-value">${esc(String(item.detail).trim())}</div>`
+        : ''}
     </div>
   </div>`;
 }
@@ -23508,11 +23511,10 @@ function setPendingPostScans(automation){
 }
 function matchingVerificationScan(scan,stackKey){
   const key=String(stackKey||'');
-  return !!(
-    scan
-    &&String(scan.scan_scope||'')==='app'
-    &&String(scan.scan_stack_key||'')===key
-  );
+  if(!scan)return false;
+  const scope=String(scan.scan_scope||'');
+  if(scope==='all')return true;
+  return scope==='app'&&String(scan.scan_stack_key||'')===key;
 }
 function completeFinishedVerifications(scan){
   let changed=false;
@@ -24658,6 +24660,21 @@ function currentHeaderWarnings(){
     });
   }
 
+  const apps=(state.data&&Array.isArray(state.data.apps))?state.data.apps:[];
+  for(const app of apps){
+    const items=Array.isArray(app&&app.items)?app.items:[];
+    for(const item of items){
+      if(String(item&&item.status||'')!=='ERROR')continue;
+      const detail=String(item&&item.detail||'').replace(/\s+/g,' ').trim();
+      if(!detail)continue;
+      warnings.push({
+        kind:'check-error',
+        title:`${String(app&&app.name||'Docker')} · ${t('errorStatus')}`,
+        text:detail
+      });
+    }
+  }
+
   warnings.push(...dockerVersionWarnings());
   return warnings;
 }
@@ -24695,7 +24712,7 @@ function renderHeaderWarningPopover(){
 
   const labels=warningFilterLabels();
   const warnings=currentHeaderWarnings();
-  const important=warnings.filter(warning=>warning.kind==='scan-lock');
+  const important=warnings.filter(warning=>warning.kind==='scan-lock'||warning.kind==='check-error');
   const versions=warnings.filter(warning=>warning.kind==='docker-version');
   const showImportant=headerWarningFilter==='all'||headerWarningFilter==='important';
   const showInfo=headerWarningFilter==='all'||headerWarningFilter==='info';
