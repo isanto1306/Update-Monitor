@@ -91,7 +91,7 @@ required = [
     "function portConflictRuntimeStateClass(value)",
     "return 'is-running'",
     "return 'is-stopped'",
-    'class=\"port-conflict-runtime ",
+    'class=\"port-conflict-runtime ',
     '.port-conflict-runtime.is-running',
     'color: var(--green);',
     '.port-conflict-runtime.is-stopped',
