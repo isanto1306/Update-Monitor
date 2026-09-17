@@ -1,0 +1,858 @@
+===== 'def wait_for_image_source_runtime_stable(' (1) =====
+--- match 1 line 12234 ---
+012164:     entrypoint = snapshot.get("entrypoint")
+012165:     cmd = snapshot.get("cmd")
+012166: 
+012167:     def normalize(value):
+012168:         if isinstance(value, list):
+012169:             return " ".join(
+012170:                 str(item or "").strip()
+012171:                 for item in value
+012172:                 if str(item or "").strip()
+012173:             )
+012174:         return str(value or "").strip()
+012175: 
+012176:     combined = " ".join(
+012177:         value
+012178:         for value in [normalize(entrypoint), normalize(cmd)]
+012179:         if value
+012180:     )
+012181:     return combined[:360] or "-"
+012182: 
+012183: 
+012184: def _image_source_watchtower_chain(snapshot):
+012185:     labels = (snapshot or {}).get("labels") or {}
+012186:     return str(
+012187:         labels.get("com.centurylinklabs.watchtower.container-chain")
+012188:         or ""
+012189:     ).strip()
+012190: 
+012191: 
+012192: def _image_source_exit_failure_message(
+012193:     container_name,
+012194:     expected_runtime_snapshot,
+012195:     new_snapshot,
+012196: ):
+012197:     expected_runtime_snapshot = expected_runtime_snapshot or {}
+012198:     new_snapshot = new_snapshot or {}
+012199:     logs = docker_container_recent_logs(container_name, tail=40)
+012200:     log_text = str(logs.get("output") or "-").replace("\n", " | ")
+012201: 
+012202:     # Watchtower intentionally exits predecessor/parent instances during its
+012203:     # own self-update lineage handling. Detect the exact upstream log wording
+012204:     # so the next error explains the real reason instead of only "exited".
+012205:     lowered = log_text.lower()
+012206:     watchtower_self_update_guard = (
+012207:         "detected invalid restart of old watchtower container" in lowered
+012208:         or "recovered orphaned watchtower container" in lowered
+012209:         or "watchtower-old-" in str(new_snapshot.get("container_name") or "").lower()
+012210:     )
+012211: 
+012212:     chain = _image_source_watchtower_chain(new_snapshot)
+012213:     old_chain = _image_source_watchtower_chain(expected_runtime_snapshot)
+012214: 
+012215:     if len(log_text) > 900:
+012216:         log_text = log_text[-900:]
+012217: 
+012218:     return (
+012219:         f"New image source is not stable: {container_name} entered exited state "
+012220:         f"(original_state=running, "
+012221:         f"exit_code={new_snapshot.get('exit_code')}, "
+012222:         f"docker_error={new_snapshot.get('error') or '-'}, "
+012223:         f"restart_policy={new_snapshot.get('restart_policy') or '-'}, "
+012224:         f"command={_image_source_compact_command(new_snapshot)}, "
+012225:         f"watchtower_self_update_guard="
+012226:         f"{'true' if watchtower_self_update_guard else 'false'}, "
+012227:         f"container_chain={chain or '-'}, "
+012228:         f"original_container_chain={old_chain or '-'}, "
+012229:         f"logs={log_text or '-'})"
+012230:     )
+012231: 
+012232: 
+012233: 
+012234: def wait_for_image_source_runtime_stable(
+012235:     container_name,
+012236:     timeout=120,
+012237:     stable_seconds=20,
+012238:     baseline_restart_count=0,
+012239:     expected_state="running",
+012240:     expected_exit_code=None,
+012241:     expected_runtime_snapshot=None,
+012242:     unhealthy_grace_seconds=30,
+012243: ):
+012244:     """Verify post-switch runtime relative to the container's original state.
+012245: 
+012246:     Long-running services that were running before the switch must remain
+012247:     running. Containers that were intentionally stopped/exited before the
+012248:     switch are allowed to return to the same non-running state. This avoids
+012249:     falsely rejecting one-shot/job containers while still detecting a real
+012250:     crash of a previously running service.
+012251:     """
+012252:     deadline = time.time() + max(5, int(timeout))
+012253:     stable_since = None
+012254:     unhealthy_since = None
+012255:     last_health_probe_at = None
+012256:     last_health_probe = None
+012257:     last = None
+012258: 
+012259:     expected_runtime_snapshot = dict(expected_runtime_snapshot or {})
+012260:     original_health = str(
+012261:         expected_runtime_snapshot.get("health") or ""
+012262:     ).strip().lower() or None
+012263:     unhealthy_grace_seconds = max(5, int(unhealthy_grace_seconds or 30))
+012264: 
+012265:     expected_state = str(expected_state or "running").strip().lower()
+012266:     baseline_restart_count = max(0, int(baseline_restart_count or 0))
+012267: 
+012268:     try:
+012269:         expected_exit_code_normalized = (
+012270:             None
+012271:             if expected_exit_code is None
+012272:             else int(expected_exit_code)
+012273:         )
+012274:     except Exception:
+012275:         expected_exit_code_normalized = None
+012276: 
+012277:     while time.time() < deadline:
+012278:         last = docker_container_runtime_snapshot(container_name)
+012279: 
+012280:         if not last:
+012281:             stable_since = None
+012282:             time.sleep(2)
+012283:             continue
+012284: 
+012285:         status = str(last.get("status") or "").strip().lower()
+012286:         restart_count = int(last.get("restart_count") or 0)
+012287:         health = last.get("health")
+012288: 
+012289:         if bool(last.get("restarting")) or status == "restarting":
+012290:             raise RuntimeError(
+012291:                 f"New image source is restarting: {container_name} "
+012292:                 f"(expected_state={expected_state})"
+012293:             )
+012294: 
+012295:         # Reject only NEW restarts caused by the source switch. Historical
+012296:         # RestartCount values that already existed before the switch are fine.
+012297:         if restart_count > baseline_restart_count:
+012298:             raise RuntimeError(
+012299:                 f"New image source is restarting: {container_name} has "
+012300:                 f"RestartCount={restart_count} "
+012301:                 f"(baseline={baseline_restart_count}, "
+012302:                 f"expected_state={expected_state})"
+012303:             )
+012304: 
+===== '"compose_literal_refs": {},' (1) =====
+--- match 1 line 8924 ---
+008854:             #
+008855:             # v0.3.155: ZimaOS Compose is the canonical source for Compose apps.
+008856:             # Docker Config.Image may legally keep an old registry alias after a
+008857:             # cross-registry source switch where both refs resolve to the same
+008858:             # image digest.
+008859:             deployments = {}
+008860:             compose_image_map_cache = {}
+008861:             compose_literal_image_map_cache = {}
+008862:             compose_image_catalog = casaos_compose_service_image_catalog()
+008863:             for c in containers_raw:
+008864:                 name = c.get("Name", "").lstrip("/")
+008865:                 runtime_ref = (c.get("Config", {}) or {}).get("Image", "")
+008866:                 image_id = c.get("Image", "")
+008867:                 state_name = (c.get("State", {}) or {}).get("Status", "unknown")
+008868:                 if not runtime_ref:
+008869:                     continue
+008870:                 meta = container_stack_metadata(c)
+008871: 
+008872:                 literal_compose_ref = compose_literal_image_ref(
+008873:                     meta.get("compose_project"),
+008874:                     meta.get("compose_service"),
+008875:                     compose_literal_image_map_cache,
+008876:                 )
+008877: 
+008878:                 ref = compose_configured_image_ref(
+008879:                     meta.get("compose_project"),
+008880:                     meta.get("compose_service"),
+008881:                     runtime_ref,
+008882:                     compose_image_map_cache,
+008883:                     compose_image_catalog,
+008884:                     stack_key=meta.get("stack_key"),
+008885:                 )
+008886: 
+008887:                 # The literal Compose YAML is the source of truth whenever it
+008888:                 # contains a concrete image value. Structured ZimaOS/Docker
+008889:                 # metadata may append an internally resolved @sha256 digest.
+008890:                 if literal_compose_ref:
+008891:                     ref = literal_compose_ref
+008892: 
+008893:                 if not ref:
+008894:                     continue
+008895: 
+008896:                 display_title = None
+008897:                 for alias in (
+008898:                     meta.get("compose_project"),
+008899:                     meta.get("stack_name"),
+008900:                     meta.get("compose_service"),
+008901:                     name,
+008902:                 ):
+008903:                     alias_key = str(alias or "").strip().casefold()
+008904:                     if alias_key and zima_title_catalog.get(alias_key):
+008905:                         display_title = zima_title_catalog[alias_key]
+008906:                         break
+008907: 
+008908:                 key = (ref, meta["stack_key"])
+008909:                 entry = deployments.setdefault(key, {
+008910:                     "image_ref": ref,
+008911:                     "stack_key": meta["stack_key"],
+008912:                     "stack_name": meta["stack_name"],
+008913:                     "compose_project": meta["compose_project"],
+008914:                     "compose_working_dir": meta["compose_working_dir"],
+008915:                     "compose_config_files": meta["compose_config_files"],
+008916:                     "icon_url": meta.get("icon_url"),
+008917:                     "project_url": meta.get("project_url"),
+008918:                     "project_provider": meta.get("project_provider"),
+008919:                     "project_url_source": meta.get("project_url_source"),
+008920:                     "display_title": display_title,
+008921:                     "containers": [],
+008922:                     "image_ids": set(),
+008923:                     "runtime_image_refs": set(),
+008924:                     "compose_literal_refs": {},
+008925:                 })
+008926:                 if not entry.get("icon_url") and meta.get("icon_url"):
+008927:                     entry["icon_url"] = meta.get("icon_url")
+008928:                 if not entry.get("project_url") and meta.get("project_url"):
+008929:                     entry["project_url"] = meta.get("project_url")
+008930:                     entry["project_provider"] = meta.get("project_provider")
+008931:                     entry["project_url_source"] = meta.get("project_url_source")
+008932:                 if not entry.get("display_title") and display_title:
+008933:                     entry["display_title"] = display_title
+008934:                 state_payload = c.get("State") or {}
+008935:                 restart_payload = ((c.get("HostConfig") or {}).get("RestartPolicy") or {})
+008936:                 restart_policy = str(restart_payload.get("Name") or "").strip().lower()
+008937:                 try:
+008938:                     exit_code = int(state_payload.get("ExitCode"))
+008939:                 except Exception:
+008940:                     exit_code = None
+008941:                 one_shot_completed = bool(
+008942:                     state_name == "exited"
+008943:                     and exit_code == 0
+008944:                     and restart_policy == "on-failure"
+008945:                 )
+008946:                 entry["containers"].append({
+008947:                     "name": name,
+008948:                     "state": state_name,
+008949:                     "exit_code": exit_code,
+008950:                     "restart_policy": restart_policy or None,
+008951:                     "one_shot_completed": one_shot_completed,
+008952:                     "compose_service": meta["compose_service"],
+008953:                     "compose_container_number": meta.get("compose_container_number"),
+008954:                     "created_at": c.get("Created"),
+008955:                     "ports": container_published_ports(c),
+008956:                     "port_bindings": container_published_port_bindings(c),
+008957:                     "network_mode": str((c.get("HostConfig") or {}).get("NetworkMode") or ""),
+008958:                     "runtime_image_ref": runtime_ref,
+008959:                 })
+008960:                 entry["image_ids"].add(image_id)
+008961:                 if runtime_ref:
+008962:                     entry["runtime_image_refs"].add(str(runtime_ref))
+008963:                 if literal_compose_ref and meta.get("compose_service"):
+008964:                     entry["compose_literal_refs"][
+008965:                         str(meta.get("compose_service"))
+008966:                     ] = str(literal_compose_ref)
+008967: 
+008968:             image_cache = {}
+008969:             remote_cache = {}
+008970:             tags_cache = {}
+008971:             github_scan_cache = {}
+008972:             results = []
+008973: 
+008974:             ordered_deployments = sorted(
+008975:                 deployments.items(),
+008976:                 key=lambda kv: (
+008977:                     str(kv[1]["stack_name"]).lower(),
+008978:                     str(kv[1]["image_ref"]).lower(),
+008979:                 ),
+008980:             )
+008981:             deployment_total = len(ordered_deployments)
+008982:             update_scan_progress("images", 22, 0, deployment_total)
+008983: 
+008984:             for deployment_index, (_, group) in enumerate(ordered_deployments, start=1):
+008985:                 before_percent = 22 + int(((deployment_index - 1) / max(1, deployment_total)) * 68)
+008986:                 update_scan_progress(
+008987:                     "images",
+008988:                     before_percent,
+008989:                     deployment_index - 1,
+008990:                     deployment_total,
+008991:                 )
+008992:                 image_ref = group["image_ref"]
+008993: 
+008994:                 item_services = {
+===== 'item = {' (1) =====
+--- match 1 line 9146 ---
+009076:                     # be hidden by another container that happens to match remote.
+009077:                     local_digest_groups.append(sorted(image_repo_digests))
+009078: 
+009079:                     for repo_tag in image_meta.get("repo_tags") or []:
+009080:                         repo_tag = str(repo_tag or "").strip()
+009081:                         if repo_tag:
+009082:                             local_repo_tags.add(repo_tag)
+009083: 
+009084:                     labels = image_meta.get("labels") or {}
+009085:                     if isinstance(labels, dict):
+009086:                         for key, value in labels.items():
+009087:                             if key not in local_image_labels and value is not None:
+009088:                                 local_image_labels[str(key)] = value
+009089: 
+009090:                     created = str(image_meta.get("created") or "").strip()
+009091:                     if created and (not local_image_created or created > local_image_created):
+009092:                         local_image_created = created
+009093: 
+009094:                 # Supplement local evidence from the canonical tag itself.
+009095:                 canonical_local_digests = docker_image_repo_digests(
+009096:                     image_ref,
+009097:                     parsed["normalized_repo"],
+009098:                 )
+009099:                 if canonical_local_digests:
+009100:                     local.update(canonical_local_digests)
+009101:                     local_all_digests.update(canonical_local_digests)
+009102:                     if len(local_digest_groups) == 1:
+009103:                         local_digest_groups[0] = sorted(
+009104:                             set(local_digest_groups[0]).union(canonical_local_digests)
+009105:                         )
+009106: 
+009107:                 zimaos_latest_tracking_ref = None
+009108:                 if explicit_digest_pin and not restore_pin_info:
+009109:                     zimaos_latest_tracking_ref = zimaos_managed_latest_digest_ref(
+009110:                         image_ref,
+009111:                         runtime_refs=group.get("runtime_image_refs") or [],
+009112:                         local_repo_tags=local_repo_tags,
+009113:                     )
+009114: 
+009115:                 if zimaos_latest_tracking_ref:
+009116:                     tracking_image_ref = zimaos_latest_tracking_ref
+009117:                     parsed = parse_image_ref(tracking_image_ref)
+009118: 
+009119:                 # Immediate post-source verification may legitimately see the
+009120:                 # target digest only under the old registry alias. The digest
+009121:                 # hash identifies the image content independently of that alias.
+009122:                 post_target_seed = _post_update_target_for_image(
+009123:                     post_update_verified_targets,
+009124:                     image_ref,
+009125:                 )
+009126:                 post_expected_seed = {
+009127:                     str(value or "").strip().lower()
+009128:                     for value in ((post_target_seed or {}).get("digests") or [])
+009129:                     if str(value or "").strip()
+009130:                 }
+009131:                 if (
+009132:                     post_target_seed
+009133:                     and not local
+009134:                     and local_all_digests.intersection(post_expected_seed)
+009135:                 ):
+009136:                     local.update(
+009137:                         local_all_digests.intersection(post_expected_seed)
+009138:                     )
+009139: 
+009140:                 resolved_project_link = resolve_project_link(
+009141:                     tracking_image_ref,
+009142:                     metadata_url=group.get("project_url"),
+009143:                     metadata_source=group.get("project_url_source"),
+009144:                 )
+009145: 
+009146:                 item = {
+009147:                     "image_ref": image_ref,
+009148:                     "tracking_image_ref": (
+009149:                         tracking_image_ref
+009150:                         if tracking_image_ref != image_ref
+009151:                         else None
+009152:                     ),
+009153:                     "restore_generated_digest_pin": bool(restore_pin_info),
+009154:                     "zimaos_managed_latest_digest": bool(
+009155:                         zimaos_latest_tracking_ref
+009156:                     ),
+009157:                     "zimaos_managed_latest_tracking_ref": (
+009158:                         zimaos_latest_tracking_ref or None
+009159:                     ),
+009160:                     "restore_pin_source": (
+009161:                         (restore_pin_info or {}).get("source")
+009162:                         if restore_pin_info
+009163:                         else None
+009164:                     ),
+009165:                     "restore_backup_id": (
+009166:                         (restore_pin_info or {}).get("backup_id")
+009167:                         if restore_pin_info
+009168:                         else None
+009169:                     ),
+009170:                     "display_name": display_name(tracking_image_ref, group["containers"]),
+009171:                     "stack_key": group["stack_key"],
+009172:                     "stack_name": group["stack_name"],
+009173:                     "compose_project": group.get("compose_project"),
+009174:                     "compose_working_dir": group.get("compose_working_dir"),
+009175:                     "compose_config_files": group.get("compose_config_files"),
+009176:                     "icon_url": group.get("icon_url"),
+009177:                     "project_url": (resolved_project_link or {}).get("url"),
+009178:                     "project_provider": (resolved_project_link or {}).get("provider"),
+009179:                     "project_url_source": (resolved_project_link or {}).get("source"),
+009180:                     "display_title": group.get("display_title"),
+009181:                     "containers": group["containers"],
+009182:                     "tag": parsed["tag"],
+009183:                     "resolved_installed_tag": None,
+009184:                     "display_installed_version": None,
+009185:                     "installed_version_resolution": None,
+009186:                     "local_digests": sorted(local),
+009187:                     "local_all_digests": sorted(local_all_digests),
+009188:                     "local_digest_groups": [list(values) for values in local_digest_groups],
+009189:                     "local_image_ids": sorted(
+009190:                         str(value or "").strip()
+009191:                         for value in group.get("image_ids") or []
+009192:                         if str(value or "").strip()
+009193:                     ),
+009194:                     "local_repo_tags": sorted(local_repo_tags),
+009195:                     "runtime_image_refs": sorted(
+009196:                         str(value or "").strip()
+009197:                         for value in group.get("runtime_image_refs") or []
+009198:                         if str(value or "").strip()
+009199:                     ),
+009200:                     "compose_literal_refs": dict(
+009201:                         group.get("compose_literal_refs") or {}
+009202:                     ),
+009203:                     "compose_digest_pin_proven": False,
+009204:                     "compose_pinned_digest": None,
+009205:                     "pin_classification_schema": PIN_CLASSIFICATION_SCHEMA,
+009206:                     "local_image_labels": local_image_labels,
+009207:                     "local_image_created": local_image_created,
+009208:                     "remote_digest": None,
+009209:                     "remote_digest_short": None,
+009210:                     "remote_platform_digest": None,
+009211:                     "resolved_available_tag": None,
+009212:                     "available_version_resolution": None,
+009213:                     "newer_tag": None,
+009214:                     "newer_tags": [],
+009215:                     "available_version_tags": [],
+009216:                     "status": None,
+===== 'def schedule_app_scan(' (1) =====
+--- match 1 line 10026 ---
+009956:         return scope == "all" or (scope == "app" and scanned_key == stack_key)
+009957: 
+009958: 
+009959: def _post_update_verified_targets(update_result):
+009960:     """Return a small immutable digest snapshot for the post-update app scan."""
+009961:     result = update_result if isinstance(update_result, dict) else {}
+009962:     raw = result.get("target_verification") or {}
+009963:     verified = {}
+009964: 
+009965:     if not isinstance(raw, dict):
+009966:         return verified
+009967: 
+009968:     # Image source switching stores docker_pull_verified() directly, while
+009969:     # ordinary app updates may store a mapping keyed by image ref. Normalize
+009970:     # both shapes so the targeted post-action scan gets the exact verified
+009971:     # digest and never falls back to the stale pre-switch registry source.
+009972:     if (
+009973:         str(raw.get("image_ref") or "").strip()
+009974:         and (
+009975:             raw.get("expected_digests")
+009976:             or raw.get("local_digests")
+009977:         )
+009978:     ):
+009979:         raw = {
+009980:             str(raw.get("image_ref") or "").strip(): dict(raw)
+009981:         }
+009982: 
+009983:     for image_ref, info in raw.items():
+009984:         image_ref = str(image_ref or "").strip()
+009985:         if not image_ref or not isinstance(info, dict):
+009986:             continue
+009987: 
+009988:         digests = {
+009989:             str(value or "").strip().lower()
+009990:             for value in (info.get("expected_digests") or info.get("local_digests") or [])
+009991:             if str(value or "").strip()
+009992:         }
+009993:         if not digests:
+009994:             continue
+009995: 
+009996:         parsed = parse_image_ref(image_ref)
+009997:         repo = str(parsed.get("normalized_repo") or info.get("repo") or "").strip()
+009998:         tag = str(parsed.get("tag") or "").strip()
+009999:         key = f"{repo}:{tag}" if repo and tag else image_ref
+010000:         version_hint = str(info.get("resolved_version_hint") or "").strip()
+010001:         verified[key] = {
+010002:             "image_ref": image_ref,
+010003:             "repo": repo,
+010004:             "tag": tag,
+010005:             "digests": sorted(digests),
+010006:             "method": str(info.get("method") or "verified-update"),
+010007:             "resolved_version_hint": (
+010008:                 version_hint if version_hint and parse_version(version_hint) else None
+010009:             ),
+010010:         }
+010011: 
+010012:     return verified
+010013: 
+010014: 
+010015: def _post_update_target_for_image(verified_targets, image_ref):
+010016:     if not isinstance(verified_targets, dict):
+010017:         return None
+010018:     parsed = parse_image_ref(str(image_ref or "").strip())
+010019:     repo = str(parsed.get("normalized_repo") or "").strip()
+010020:     tag = str(parsed.get("tag") or "").strip()
+010021:     key = f"{repo}:{tag}" if repo and tag else str(image_ref or "").strip()
+010022:     value = verified_targets.get(key)
+010023:     return value if isinstance(value, dict) else None
+010024: 
+010025: 
+010026: def schedule_app_scan(
+010027:     stack_key,
+010028:     delay=8.0,
+010029:     max_wait_seconds=900,
+010030:     verification_result=None,
+010031: ):
+010032:     """
+010033:     Queue exactly one authoritative post-action scan for an app.
+010034: 
+010035:     v0.3.117 could create multiple waiter threads for the same app. After the
+010036:     operation lock became free those waiters ran the same targeted scan one
+010037:     after another, which looked like an endless update check and could starve
+010038:     automatic installation.
+010039:     """
+010040:     stack_key = str(stack_key or "").strip()
+010041:     if not stack_key:
+010042:         return False
+010043:     if self_update_handoff_owned_by_current_process(stack_key):
+010044:         return False
+010045: 
+010046:     requested_at = utc_now()
+010047:     verified_targets = _post_update_verified_targets(verification_result)
+010048: 
+010049:     with post_scan_lock:
+010050:         if stack_key in post_scan_pending:
+010051:             # One pending authoritative scan is sufficient. If a successful
+010052:             # update supplied stronger verification evidence, preserve it.
+010053:             if verified_targets:
+010054:                 current = post_scan_pending.get(stack_key) or {}
+010055:                 merged = dict(current.get("verified_targets") or {})
+010056:                 merged.update(verified_targets)
+010057:                 current["verified_targets"] = merged
+010058:                 post_scan_pending[stack_key] = current
+010059:             return False
+010060:         post_scan_pending[stack_key] = {
+010061:             "requested_at": requested_at,
+010062:             "created_at": requested_at,
+010063:             "verified_targets": verified_targets,
+010064:         }
+010065: 
+010066:     def waiter():
+010067:         try:
+010068:             time.sleep(max(0.0, float(delay)))
+010069:             deadline = time.time() + max(5.0, float(max_wait_seconds))
+010070: 
+010071:             while time.time() < deadline:
+010072:                 # A newer full/targeted scan may already have refreshed this app
+010073:                 # (for example because the user explicitly started a full scan).
+010074:                 if _scan_result_is_newer_than_request(stack_key, requested_at):
+010075:                     return
+010076: 
+010077:                 if start_app_scan(stack_key):
+010078:                     # Keep the pending marker until the scan thread really ends.
+010079:                     # This blocks stale-state automation decisions in between.
+010080:                     while True:
+010081:                         with scan_lock:
+010082:                             thread = scan_thread
+010083:                             scanning = scan_state.get("state") == "scanning"
+010084:                         if not scanning and (not thread or not thread.is_alive()):
+010085:                             break
+010086:                         time.sleep(0.25)
+010087:                     return
+010088: 
+010089:                 # If the app disappeared and no scan/update is active, there is
+010090:                 # nothing left to verify.
+010091:                 if not app_update_lock.locked():
+010092:                     with scan_lock:
+010093:                         exists = any(
+010094:                             app_item.get("stack_key") == stack_key
+010095:                             for app_item in (scan_state.get("apps") or [])
+010096:                         )
+===== 'def _verify_restore_runtime(' (1) =====
+--- match 1 line 14944 ---
+014874: 
+014875: 
+014876: def _wait_for_restore_image_activation(meta, container_names, timeout=180):
+014877:     """Wait for ZimaOS to recreate every container with the backed-up image.
+014878: 
+014879:     Merely seeing the old container name is not sufficient because compose apply
+014880:     may still be running asynchronously.
+014881:     """
+014882:     snapshots = _backup_container_runtime_map(meta)
+014883:     names = [str(name or "").strip() for name in container_names or [] if str(name or "").strip()]
+014884:     if not names:
+014885:         return
+014886:     deadline = time.time() + max(10, int(timeout))
+014887:     last_wrong = []
+014888:     while time.time() < deadline:
+014889:         missing = []
+014890:         wrong = []
+014891:         for name in names:
+014892:             if docker_container_state(name) is None:
+014893:                 missing.append(name)
+014894:                 continue
+014895:             expected = snapshots.get(name) or {}
+014896:             if not _restore_container_uses_backup_image(name, expected):
+014897:                 wrong.append(name)
+014898:         if not missing and not wrong:
+014899:             return
+014900:         last_wrong = wrong
+014901:         time.sleep(2)
+014902:     if last_wrong:
+014903:         raise RuntimeError(
+014904:             "Restore image activation timed out: these containers still do not use the backed-up image: "
+014905:             + ", ".join(last_wrong)
+014906:         )
+014907:     missing = [name for name in names if docker_container_state(name) is None]
+014908:     raise RuntimeError(
+014909:         "Restore applied the Compose file, but containers did not reappear: "
+014910:         + ", ".join(missing)
+014911:     )
+014912: 
+014913: 
+014914: def _verify_restored_images(meta):
+014915:     verified = 0
+014916:     for name, expected in _backup_container_runtime_map(meta).items():
+014917:         current_id = str(docker_container_image_id(name) or "").strip()
+014918:         if not current_id:
+014919:             raise RuntimeError(f"Restored container is missing: {name}")
+014920:         expected_id = str(expected.get("image_id") or "").strip()
+014921:         if expected_id and current_id == expected_id:
+014922:             verified += 1
+014923:             continue
+014924: 
+014925:         expected_digests = {
+014926:             str(parse_repo_digest(value)[1] or "").strip().lower()
+014927:             for value in expected.get("repo_digests") or []
+014928:             if str(parse_repo_digest(value)[1] or "").strip()
+014929:         }
+014930:         current_digests = {
+014931:             str(value or "").strip().lower()
+014932:             for value in docker_image_repo_digests(current_id)
+014933:             if str(value or "").strip()
+014934:         }
+014935:         if expected_digests and current_digests.intersection(expected_digests):
+014936:             verified += 1
+014937:             continue
+014938:         raise RuntimeError(
+014939:             f"Restore image verification failed for {name}: the running container does not use the backed-up image"
+014940:         )
+014941:     return verified
+014942: 
+014943: 
+014944: def _verify_restore_runtime(meta, container_names):
+014945:     snapshots = _backup_container_runtime_map(meta)
+014946:     verified = 0
+014947:     for name in container_names:
+014948:         expected = snapshots.get(name) or {}
+014949:         expected_state = str(expected.get("state") or "").strip().lower()
+014950:         if not expected_state:
+014951:             expected_state = (
+014952:                 "running"
+014953:                 if name in set(meta.get("running_containers_before_backup") or [])
+014954:                 else "exited"
+014955:             )
+014956:         try:
+014957:             baseline_restarts = int(expected.get("restart_count") or 0)
+014958:         except Exception:
+014959:             baseline_restarts = 0
+014960:         try:
+014961:             expected_exit = expected.get("exit_code")
+014962:             expected_exit = None if expected_exit is None else int(expected_exit)
+014963:         except Exception:
+014964:             expected_exit = None
+014965: 
+014966:         try:
+014967:             wait_for_image_source_runtime_stable(
+014968:                 name,
+014969:                 timeout=120,
+014970:                 stable_seconds=12,
+014971:                 baseline_restart_count=baseline_restarts,
+014972:                 expected_state=expected_state,
+014973:                 expected_exit_code=expected_exit,
+014974:                 expected_runtime_snapshot={
+014975:                     "health": expected.get("health"),
+014976:                     "restart_count": baseline_restarts,
+014977:                     "restart_policy": expected.get("restart_policy"),
+014978:                 },
+014979:             )
+014980:         except RuntimeError as exc:
+014981:             message = str(exc).replace("New image source", "Restored app").replace(
+014982:                 "source switch", "restore"
+014983:             )
+014984:             raise RuntimeError(message) from exc
+014985:         verified += 1
+014986:     return verified
+014987: 
+014988: 
+014989: def _preferred_backup_digest(image):
+014990:     for container in (image or {}).get("containers") or []:
+014991:         for digest in container.get("repo_digests") or []:
+014992:             digest = str(digest or "").strip()
+014993:             if "@sha256:" in digest:
+014994:                 return digest
+014995:     return None
+014996: 
+014997: 
+014998: def _restore_compose_yaml(payload_root, meta):
+014999:     compose_path = Path(payload_root) / "compose.yaml"
+015000:     if not compose_path.is_file():
+015001:         raise RuntimeError("Backup Compose file is missing")
+015002:     yaml_text = compose_path.read_text(encoding="utf-8")
+015003: 
+015004:     pinned = 0
+015005:     restore_pin_mappings = []
+015006:     for image in meta.get("images") or []:
+015007:         if not isinstance(image, dict):
+015008:             continue
+015009:         target = _preferred_backup_digest(image)
+015010:         if not target:
+015011:             continue
+015012: 
+015013:         services = []
+015014:         configured_refs = []
+===== 'def docker_information(' (1) =====
+--- match 1 line 16252 ---
+016182:             "devices": devices,
+016183:         },
+016184:         "process": {
+016185:             "entrypoint": config.get("Entrypoint"),
+016186:             "cmd": config.get("Cmd"),
+016187:             "working_dir": config.get("WorkingDir"),
+016188:             "hostname": config.get("Hostname"),
+016189:             "tty": config.get("Tty"),
+016190:         },
+016191:         "network": {
+016192:             "mode": host.get("NetworkMode"),
+016193:             "ports": container_published_ports(container),
+016194:             "networks": networks,
+016195:         },
+016196:         "storage": {
+016197:             "mounts": mounts,
+016198:             "mounted_data_size_bytes": (
+016199:                 mounted_data_size_bytes if mounted_data_size_count > 0 else None
+016200:             ),
+016201:             "mounted_data_size_count": mounted_data_size_count,
+016202:         },
+016203:         "logging": {
+016204:             "driver": (host.get("LogConfig") or {}).get("Type"),
+016205:         },
+016206:         "compose": {
+016207:             "project": (config.get("Labels") or {}).get("com.docker.compose.project"),
+016208:             "service": (config.get("Labels") or {}).get("com.docker.compose.service"),
+016209:             "container_number": (config.get("Labels") or {}).get("com.docker.compose.container-number"),
+016210:             "working_dir": (config.get("Labels") or {}).get("com.docker.compose.project.working_dir"),
+016211:             "config_files": (config.get("Labels") or {}).get("com.docker.compose.project.config_files"),
+016212:         },
+016213:         "labels": _docker_info_safe_labels(config.get("Labels") or {}),
+016214:         # Never expose environment variable values in this UI. They can contain
+016215:         # passwords, API keys and tokens.
+016216:         "environment_variable_count": len(config.get("Env") or []),
+016217:         "stats": stats,
+016218:     }
+016219: 
+016220: 
+016221: def _docker_info_image(image):
+016222:     config = image.get("Config") or {}
+016223:     healthcheck = config.get("Healthcheck") or {}
+016224:     return {
+016225:         "id": image.get("Id"),
+016226:         "created_at": image.get("Created"),
+016227:         "architecture": image.get("Architecture"),
+016228:         "os": image.get("Os"),
+016229:         "variant": image.get("Variant"),
+016230:         "size_bytes": image.get("Size"),
+016231:         "virtual_size_bytes": image.get("VirtualSize"),
+016232:         "repo_tags": image.get("RepoTags") or [],
+016233:         "repo_digests": image.get("RepoDigests") or [],
+016234:         "user": config.get("User"),
+016235:         "working_dir": config.get("WorkingDir"),
+016236:         "entrypoint": config.get("Entrypoint"),
+016237:         "cmd": config.get("Cmd"),
+016238:         "exposed_ports": sorted((config.get("ExposedPorts") or {}).keys()),
+016239:         "volumes": sorted((config.get("Volumes") or {}).keys()),
+016240:         "healthcheck": {
+016241:             "test": healthcheck.get("Test"),
+016242:             "interval": healthcheck.get("Interval"),
+016243:             "timeout": healthcheck.get("Timeout"),
+016244:             "start_period": healthcheck.get("StartPeriod"),
+016245:             "retries": healthcheck.get("Retries"),
+016246:         } if healthcheck else None,
+016247:         "labels": _docker_info_safe_labels(config.get("Labels") or {}),
+016248:         "environment_variable_count": len(config.get("Env") or []),
+016249:     }
+016250: 
+016251: 
+016252: def docker_information(stack_key, image_ref):
+016253:     app_item = find_scanned_app(stack_key)
+016254:     if not app_item:
+016255:         raise RuntimeError("App not found in current scan")
+016256: 
+016257:     wanted_ref = str(image_ref or "").strip()
+016258:     item = None
+016259:     for candidate in app_item.get("items") or []:
+016260:         if str(candidate.get("image_ref") or "").strip() == wanted_ref:
+016261:             item = candidate
+016262:             break
+016263:     if item is None:
+016264:         raise RuntimeError("Docker image not found in current scan")
+016265: 
+016266:     names = [
+016267:         str(container.get("name") or "").strip()
+016268:         for container in item.get("containers") or []
+016269:         if str(container.get("name") or "").strip()
+016270:     ]
+016271: 
+016272:     inspected = []
+016273:     if names:
+016274:         rc, out, err = run(["docker", "inspect", *names], 30)
+016275:         if rc != 0:
+016276:             raise RuntimeError(err or out or "docker inspect failed")
+016277:         try:
+016278:             payload = json.loads(out or "[]")
+016279:             if isinstance(payload, list):
+016280:                 inspected = payload
+016281:         except Exception as exc:
+016282:             raise RuntimeError("Could not parse docker inspect output") from exc
+016283: 
+016284:     stats = _docker_stats_snapshot(names)
+016285:     mount_sizes = _docker_mount_size_snapshot(inspected)
+016286:     containers = [
+016287:         _docker_info_container(
+016288:             container,
+016289:             stats.get(str(container.get("Name") or "").lstrip("/")),
+016290:             mount_sizes,
+016291:         )
+016292:         for container in inspected
+016293:         if isinstance(container, dict)
+016294:     ]
+016295: 
+016296:     image = None
+016297:     image_id = None
+016298:     if inspected:
+016299:         image_id = str((inspected[0] or {}).get("Image") or "").strip()
+016300:     if not image_id:
+016301:         image_id = wanted_ref
+016302: 
+016303:     if image_id:
+016304:         rc, out, _ = run(["docker", "image", "inspect", image_id], 25)
+016305:         if rc == 0:
+016306:             try:
+016307:                 payload = json.loads(out or "[]")
+016308:                 if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+016309:                     image = _docker_info_image(payload[0])
+016310:             except Exception:
+016311:                 image = None
+016312: 
+016313:     return {
+016314:         "checked_at": utc_now(),
+016315:         "docker_engine_version": docker_version(),
+016316:         "stack_key": stack_key,
+016317:         "app_name": app_item.get("name"),
+016318:         "image_ref": wanted_ref,
+016319:         "update_status": item.get("status"),
+016320:         "installed_tag": item.get("tag"),
+016321:         "resolved_installed_tag": item.get("resolved_installed_tag"),
+016322:         "available_tag": item.get("newer_tag") or item.get("resolved_available_tag"),
