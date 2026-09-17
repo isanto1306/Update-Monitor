@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.347"
+VERSION = "0.3.348"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -2741,6 +2741,14 @@ _DYNAMIC_REGISTRY_TAGS = {
     "latest", "stable", "main", "master", "develop", "development",
     "nightly", "edge", "testing", "test", "dev",
 }
+
+
+def _is_build_identity_tag(tag):
+    """Return True for CI commit-identity tags, not user release versions."""
+    value = str(tag or "").strip()
+    return bool(re.fullmatch(r"sha-[0-9a-f]{7,64}", value, re.I))
+
+
 _ARCH_TAG_PREFIXES = (
     "amd64-", "x86_64-", "arm64-", "arm64v8-", "aarch64-",
     "arm32v7-", "arm32v6-", "armhf-", "i386-",
@@ -2896,6 +2904,10 @@ def registry_selectable_version_tags(registry_tags_value, repo_key=None, limit=1
         lower = tag.lower()
         if lower in _DYNAMIC_REGISTRY_TAGS:
             continue
+        if _is_build_identity_tag(tag):
+            # GitHub Actions publishes sha-<commit> aliases for traceability.
+            # They identify a build, but they are not human release versions.
+            continue
         if _is_arch_specific_tag(tag):
             # Prefer multi-arch manifest tags to duplicate architecture tags.
             continue
@@ -2955,6 +2967,8 @@ def github_selectable_version_tags(github_tags_value, registry_tags_value=None, 
     for raw in github_tags_value or []:
         github_tag = str(raw or "").strip()
         if not github_tag:
+            continue
+        if _is_build_identity_tag(github_tag):
             continue
 
         # Prefer the actual Docker tag when an exact/v-prefix-equivalent tag
@@ -4533,7 +4547,7 @@ def _local_repo_tag_versions(item):
         tag = _clean_local_version_value(p.get("tag"))
         if wanted_repo and repo != wanted_repo:
             continue
-        if tag:
+        if tag and not _is_build_identity_tag(tag):
             candidates.append(tag)
 
     if not candidates:
@@ -5665,11 +5679,26 @@ def zimaos_managed_latest_digest_ref(image_ref, runtime_refs=None, local_repo_ta
     normalized_target = tag_ref.lower()
 
     evidence = set()
+    target_repo = str(parsed.get("normalized_repo") or "").strip().lower()
     for source in (runtime_refs or [], local_repo_tags or []):
         for candidate in source if isinstance(source, (list, tuple, set)) else []:
             candidate = str(candidate or "").strip()
-            if candidate:
-                evidence.add(candidate.lower())
+            if not candidate:
+                continue
+            evidence.add(candidate.lower())
+
+            # ZimaOS can expose the already-resolved latest reference through
+            # Docker as repo:latest@sha256:<digest> instead of repo:latest.
+            # Canonicalize only same-repository latest refs. Numbered tags and
+            # digest-only refs remain immutable pins.
+            candidate_parsed = parse_image_ref(candidate)
+            if (
+                str(candidate_parsed.get("tag") or "").strip().lower() == "latest"
+                and str(candidate_parsed.get("normalized_repo") or "").strip().lower() == target_repo
+            ):
+                candidate_base = str(candidate_parsed.get("base") or "").strip().lower()
+                if candidate_base:
+                    evidence.add(candidate_base)
 
     if normalized_target in evidence:
         return tag_ref
@@ -9273,6 +9302,7 @@ def scan_all(stack_key=None):
                     previous_resolved
                     and previous_local == current_local
                     and not previous_is_untrusted_label
+                    and not _is_build_identity_tag(previous_resolved)
                 ):
                     item["resolved_installed_tag"] = previous_resolved
                 elif not _needs_installed_version_resolution(parsed["tag"]):
