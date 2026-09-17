@@ -1,5 +1,6 @@
 name: Apply Update Monitor v0.3.345 port status colors
 
+# Retry after fixing the patch validation string.
 on:
   push:
     branches: [main]
