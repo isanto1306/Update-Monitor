@@ -1,0 +1,21 @@
+name: v0.3.346 focused UI diagnostics
+on:
+  push:
+    branches: [fix-v0.3.346]
+    paths: ['.github/workflows/diag-v0346-ui2.yml']
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-v0.3.346
+      - run: python .github/scripts/diag_v0346_ui2.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add diagnostics-v0346-ui2.txt
+          git commit -m "Add focused v0.3.346 UI diagnostics"
+          git push origin HEAD:fix-v0.3.346
