@@ -23,14 +23,12 @@ jobs:
           p=Path('app/main.py')
           lines=p.read_text(encoding='utf-8').splitlines()
           needles=[
-            'available_version_tags',
-            'newer_tags',
-            'def _version_alias',
-            'def _version_item_current_tag',
-            'def registry_tag',
-            'def fetch_registry',
-            'github_latest_version',
-            'resolved_installed_tag',
+            'def registry_selectable_version_tags',
+            'store_info = entry.get',
+            'def zimaos_app',
+            'def casaos_app',
+            'def scan_docker',
+            'compose_project',
           ]
           seen=set()
           for needle in needles:
@@ -38,12 +36,12 @@ jobs:
             count=0
             for i,line in enumerate(lines,1):
               if needle in line:
-                a=max(1,i-18); b=min(len(lines),i+55)
+                a=max(1,i-25); b=min(len(lines),i+100)
                 key=(a,b)
                 if key in seen: continue
                 seen.add(key)
                 print(f'--- {a}:{b} ---')
                 for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
                 count+=1
-                if count>=4: break
+                if count>=5: break
           PY
