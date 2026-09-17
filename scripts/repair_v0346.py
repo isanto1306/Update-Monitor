@@ -25,12 +25,14 @@ def function_source(source: str, name: str) -> str:
     return "\n".join(numbered) + "\n"
 
 
-def keyword_context(source: str, patterns, context=3, max_hits=60):
+def keyword_context(source: str, patterns, context=3, max_hits=60, start_at=1):
     lines = source.splitlines()
     compiled = [(label, re.compile(pattern, re.I)) for label, pattern in patterns]
     hits = []
     seen = set()
     for idx, line in enumerate(lines, start=1):
+        if idx < start_at:
+            continue
         for label, rx in compiled:
             if rx.search(line):
                 key = (idx, label)
@@ -78,18 +80,17 @@ def main():
         parts.append(function_source(main_source, name))
 
     ui_patterns = [
-        ("INSTALL_LITERAL", r"\bINSTALL\b"),
-        ("UNINSTALL", r"Uninstall|Deinstall"),
-        ("CHECK_ERROR", r"Check error|Prüffehler|check_error|checkError"),
-        ("SELECT_VERSION", r"Select version|Version auswählen|selectVersion"),
-        ("NEW_VERSION", r"New version|Neue Version|newVersion"),
-        ("NOTICES", r"Notices|Hinweise|notice"),
-        ("PENDING_SCAN", r"pending_app|pendingApp|post.scan|postScan"),
-        ("VERIFY_TEXT", r"being checked|wird überprüft|verifying|verification"),
-        ("ERROR_DETAIL", r"error_details|errorDetails|\.detail\b|detail:"),
+        ("INSTALL_KEY_USAGE", r"installUpdate|data-update-index|update-install-button"),
+        ("UNINSTALL_KEY_USAGE", r"uninstallButton|data-uninstall-index|uninstall-button"),
+        ("ERROR_RENDER", r"errorStatus|error_count|status.?===?.?['\"]ERROR|status.?==?.?['\"]ERROR|item\.detail|\.detail\s*\?"),
+        ("WARNING_RENDER", r"headerWarningList|headerWarningButton|warningTitle|warningButton|renderWarning|warningItems|warningList"),
+        ("POLICY_RENDER", r"policyVersionSelect|policyAvailable|fixedNotice|effective_status|can_version_update|can_image_update|monitor_policy"),
+        ("POST_SCAN_UI", r"pendingPostScans|checkingApps|verifyingApps|verificationBaselines|checkBaselines|verificationPhase|restoreVerificationApps"),
+        ("SCAN_API_USAGE", r"pending_app|pendingApp|post_scan|postScan|action_progress|actionProgress"),
+        ("DOCKER_INFO", r"dockerInfo|docker-info|Docker information|Docker Information|Docker Informationen"),
     ]
-    parts.append("\n" + "="*90 + "\nUI KEYWORD CONTEXT\n" + "="*90 + "\n")
-    hits = keyword_context(index_source, ui_patterns, context=4, max_hits=140)
+    parts.append("\n" + "="*90 + "\nUI JS/RENDER CONTEXT\n" + "="*90 + "\n")
+    hits = keyword_context(index_source, ui_patterns, context=8, max_hits=260, start_at=18000)
     parts.extend(hit + "\n\n" for hit in hits)
     parts.append(f"UI hits written: {len(hits)}\n")
 
