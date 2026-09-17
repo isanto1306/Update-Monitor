@@ -1,0 +1,67 @@
+name: Diagnose v0.3.346 reliability fixes
+
+on:
+  push:
+    branches:
+      - fix/v0.3.346-reliability
+    paths:
+      - .github/workflows/diagnose-v0346.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect relevant code paths
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def show(path, patterns, radius=10, max_hits=8):
+              text = Path(path).read_text(encoding="utf-8")
+              lines = text.splitlines()
+              print(f"\n===== {path} | {len(lines)} lines =====")
+              for pattern in patterns:
+                  print(f"\n--- PATTERN: {pattern!r} ---")
+                  hits = [i for i, line in enumerate(lines) if pattern.lower() in line.lower()]
+                  print(f"hits={len(hits)}")
+                  for i in hits[:max_hits]:
+                      lo = max(0, i-radius)
+                      hi = min(len(lines), i+radius+1)
+                      print(f"\n### {path}:{i+1} ###")
+                      for n in range(lo, hi):
+                          print(f"{n+1:6d}: {lines[n]}")
+
+          show("app/main.py", [
+              "def schedule_app_scan",
+              "post_scan_pending",
+              "def _start_scan_with_operation_lock",
+              "RepoDigests",
+              "RepoDigest",
+              "app-management",
+              "compose_project",
+              "def restore",
+              "restore_app",
+              "health",
+              "target_tag",
+              "mode == \"fixed\"",
+              "HTTP 404",
+          ], radius=14)
+
+          show("static/index.html", [
+              "Uninstall",
+              ">INSTALL<",
+              "INSTALL",
+              "Select version",
+              "New version",
+              "check error",
+              "Prüffehler",
+              "RepoDigest",
+              "Update wird überprüft",
+          ], radius=8, max_hits=12)
+
+      - name: Compile backend
+        run: python -m py_compile app/main.py
