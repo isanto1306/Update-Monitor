@@ -1,22 +1,1711 @@
-UPDATE MONITOR v0.3.346 UI TOKEN LOCATIONS
-pendingPostScans: [18789, 23507, 23523, 23830, 24320]
-verifyingApps: [18786, 20955, 20992, 23501, 23522, 23536, 23562, 23568, 23744, 23836, 24146, 24148, 24319, 24439]
-verificationBaselines: [18787, 23495, 23496, 23526, 23537, 23569, 23837, 24219, 24220, 24237]
-checkingApps: [18784, 20955, 20991, 23455, 23459, 23482, 23744, 24146, 24148, 24317, 24439, 25555]
-checkBaselines: [18785, 23460, 23483, 24318]
-restoreVerificationApps: [18788, 20993, 21823, 21826, 23541, 23542]
-installUpdate: [18836, 18880, 18893, 18894, 18895, 21001]
-uninstallButton: [18840, 18884, 18893, 18894, 18895]
-data-update-index: [21005, 22377, 25513]
-data-uninstall-index: [20028, 22409, 25516]
-policyVersionSelect: [18817, 18861, 18893, 18894, 18895, 19838, 20061, 20116, 23196]
-fixedNotice: [18812, 18856, 18893, 18894, 18895]
-effective_status: [19382]
-can_version_update: [19336, 19339, 19344, 19407, 20856, 20995, 23744]
-can_image_update: [19406, 20995, 23744]
-headerWarningList: [18326, 24692]
-headerWarningButton: [18322, 24666, 24753, 24775, 25025, 25041]
-errorStatus: [18808, 18852, 18893, 18894, 18895, 19307]
-error_count: [19321, 19377, 19440, 19578, 22564]
-item.detail: []
-actionProgress: [18793, 19963, 19964, 19974, 20014, 20017, 20996, 21000, 21833, 23302, 23306, 23309, 23315, 23338, 23348, 23362, 23371, 23382, 23421, 23797, 24213, 24232, 24262]
+UPDATE MONITOR v0.3.346 UI REPAIR HANDLERS
+
+========================================================================
+APP_NORMALIZATION 19290-19470
+========================================================================
+019290:   app.style.display='';
+019291:   app.classList.add('visible');
+019292:   startRuntimeRefresh();
+019293:   requestAnimationFrame(()=>{
+019294:     ensureUpdateMonitorHeaderHeightSync();
+019295:     requestAnimationFrame(()=>{
+019296:       syncUpdateMonitorHeaderHeight();
+019297:       if(typeof umSchedulePageScrollbarV21==='function')umSchedulePageScrollbarV21();
+019298:     });
+019299:   });
+019300: }
+019301: function badgeClass(s){return 'update-badge update-badge-'+String(s||'CURRENT').toLowerCase();}
+019302: function statusTextValue(status){
+019303:   if(status==='IMAGE_UPDATE')return t('imageUpdate');
+019304:   if(status==='VERSION_UPDATE')return t('versionUpdate');
+019305:   if(status==='PINNED')return t('pinnedStatus');
+019306:   if(status==='LOCAL')return t('localStatus');
+019307:   if(status==='ERROR')return t('errorStatus');
+019308:   return t('current');
+019309: }
+019310: function policyText(item){
+019311:   if(item.update_policy==='fixed_version')return t('fixedVersion');
+019312:   if(item.update_policy==='digest_pinned')return t('digestPinned');
+019313:   if(item.update_policy==='local')return t('localImage');
+019314:   return t('follow');
+019315: }
+019316: function legacyAppsFromResults(results){
+019317:   return (results||[]).map((item,index)=>({
+019318:     stack_key:'legacy:'+index+':'+(item.image_ref||''), name:item.display_name||item.image_ref, status:item.status,
+019319:     update_count:['IMAGE_UPDATE','VERSION_UPDATE'].includes(item.status)?1:0,
+019320:     image_update_count:item.status==='IMAGE_UPDATE'?1:0, version_update_count:item.status==='VERSION_UPDATE'?1:0,
+019321:     error_count:item.status==='ERROR'?1:0, pinned_count:item.status==='PINNED'?1:0, local_count:item.status==='LOCAL'?1:0,
+019322:     fixed_count:item.update_policy==='fixed_version'?1:0, held_update_count:(item.update_policy==='fixed_version'&&item.newer_tag)?1:0,
+019323:     image_count:1,
+019324:     container_count:(item.containers||[]).length,
+019325:     ports:Array.from(new Set((item.containers||[]).flatMap(c=>Array.isArray(c.ports)?c.ports:[]))),
+019326:     containers:item.containers||[],
+019327:     items:[item]
+019328:   }));
+019329: }
+019330: 
+019331: function appHasManualTargetUpdate(app){
+019332:   if(!app)return false;
+019333:   const policy=appPolicy(app);
+019334:   if(policy.mode!=='upgrade'||!policy.target_tag)return false;
+019335: 
+019336:   // The backend exposes can_version_update once the selected target is
+019337:   // installable. During the short interval between saving the policy and
+019338:   // the following status refresh, keep the card classified consistently.
+019339:   return !!(app.can_version_update||app._frontend_manual_target_pending);
+019340: }
+019341: function appHasFollowTagSwitch(app){
+019342:   if(!app)return false;
+019343:   const policy=appPolicy(app);
+019344:   return policy.mode==='follow'&&!!app.can_version_update;
+019345: }
+019346: function appHasEffectiveVersionUpdate(app){
+019347:   return appHasManualTargetUpdate(app)||appHasFollowTagSwitch(app);
+019348: }
+019349: function appEffectiveUpdateCount(app){
+019350:   const backend=Number(app&&app.effective_update_count);
+019351:   if(Number.isFinite(backend)&&backend>=0)return backend;
+019352: 
+019353:   const policy=appPolicy(app);
+019354:   const rawImage=Number(app&&app.image_update_count);
+019355:   const imageCount=Number.isFinite(rawImage)&&rawImage>0?rawImage:0;
+019356:   const rawVersion=Number(app&&app.version_update_count);
+019357:   let versionCount=Number.isFinite(rawVersion)&&rawVersion>0?rawVersion:0;
+019358: 
+019359:   // A newer VERSION is only informational while "Version fixiert" is active.
+019360:   // Same-tag image refreshes remain updates because the configured version does
+019361:   // not change.
+019362:   if(policy.mode==='fixed')versionCount=0;
+019363:   else if(appHasEffectiveVersionUpdate(app))versionCount=Math.max(1,versionCount);
+019364: 
+019365:   return imageCount+versionCount;
+019366: }
+019367: function appEffectiveVersionUpdateCount(app){
+019368:   const backend=Number(app&&app.effective_version_update_count);
+019369:   if(Number.isFinite(backend)&&backend>=0)return backend;
+019370:   if(appPolicy(app).mode==='fixed')return 0;
+019371:   const raw=Number(app&&app.version_update_count);
+019372:   const base=Number.isFinite(raw)&&raw>0?raw:0;
+019373:   return appHasEffectiveVersionUpdate(app)?Math.max(1,base):base;
+019374: }
+019375: function appIsEffectivelyCurrent(app){
+019376:   return appEffectiveUpdateCount(app)===0
+019377:     &&Number(app&&app.error_count||0)===0
+019378:     &&Number(app&&app.pinned_count||0)===0
+019379:     &&Number(app&&app.local_count||0)===0;
+019380: }
+019381: function appEffectiveStatus(app){
+019382:   const backend=String(app&&app.effective_status||'').trim();
+019383:   if(backend)return backend;
+019384: 
+019385:   const rawStatus=String(app&&app.status||'CURRENT');
+019386:   const policy=appPolicy(app);
+019387:   if(policy.mode==='fixed'&&rawStatus==='VERSION_UPDATE')return 'CURRENT';
+019388:   if(
+019389:     appHasEffectiveVersionUpdate(app)
+019390:     &&!['ERROR','PINNED','LOCAL'].includes(rawStatus)
+019391:   ){
+019392:     return 'VERSION_UPDATE';
+019393:   }
+019394:   return rawStatus;
+019395: }
+019396: 
+019397: /* A completed targeted scan is authoritative for the update action itself.
+019398:    If the app is CURRENT and no update remains, an earlier browser/network
+019399:    failure must not stay visible as "Update fehlgeschlagen". Other scan errors
+019400:    can still be shown by their own status/details. */
+019401: function appUpdateVerifiedCurrent(app){
+019402:   if(!app)return false;
+019403:   return (
+019404:     appEffectiveUpdateCount(app)===0
+019405:     &&String(appEffectiveStatus(app)||'')==='CURRENT'
+019406:     &&!app.can_image_update
+019407:     &&!app.can_version_update
+019408:   );
+019409: }
+019410: 
+019411: function isUpdateTransportFailure(err){
+019412:   const message=String(err&&err.message?err.message:'').trim().toLowerCase();
+019413:   // ZimaOS/reverse proxies can return a gateway error while the backend update
+019414:   // request continues and finishes successfully. Treat these responses like a
+019415:   // transport interruption and let the existing targeted verification decide
+019416:   // whether the update really succeeded before showing an error.
+019417:   const gatewayHttpFailure=/(?:^|\s)http\s+(502|503|504)(?:\b|$)/.test(message);
+019418:   return (
+019419:     message==='failed to fetch'
+019420:     ||message.includes('networkerror')
+019421:     ||message.includes('network error')
+019422:     ||message.includes('network request failed')
+019423:     ||message.includes('load failed')
+019424:     ||gatewayHttpFailure
+019425:     ||message.includes('bad gateway')
+019426:     ||message.includes('gateway timeout')
+019427:     ||message.includes('service unavailable')
+019428:   );
+019429: }
+019430: 
+019431: function appSummaryFromApps(apps){
+019432:   return {
+019433:     UPDATES:apps.filter(a=>appEffectiveUpdateCount(a)>0).length,
+019434:     CURRENT:apps.filter(appIsEffectivelyCurrent).length,
+019435:     RUNNING:apps.filter(a=>String(a.runtime_state||'')==='running').length,
+019436:     STOPPED:apps.filter(a=>String(a.runtime_state||'')==='stopped').length,
+019437:     FIXED:apps.filter(a=>a.fixed_count>0).length,
+019438:     PINNED:apps.filter(a=>a.pinned_count>0).length,
+019439:     LOCAL:apps.filter(a=>a.local_count>0).length,
+019440:     ERROR:apps.filter(a=>a.error_count>0).length,
+019441:     AUTO_UPDATE:apps.filter(a=>appPolicy(a).auto_enabled).length
+019442:   };
+019443: }
+019444: function summaryCountForKey(summary,key){
+019445:   const value=Number((summary||{})[key]);
+019446:   return Number.isFinite(value)&&value>0?value:0;
+019447: }
+019448: const alwaysVisibleSummaryKeys=new Set(['CURRENT','RUNNING','STOPPED']);
+019449: const optionalSummaryKeys=new Set(['UPDATES','FIXED','PINNED','LOCAL','ERROR','AUTO_UPDATE','PORT_CONFLICT']);
+019450: 
+019451: function updateDynamicSummaryGeometry(){
+019452:   const summary=document.querySelector('.update-monitor-summary');
+019453:   if(!summary)return;
+019454: 
+019455:   const allCards=Array.from(
+019456:     summary.querySelectorAll('[data-summary-filter]')
+019457:   );
+019458:   const visibleCards=allCards.filter(card=>!card.hidden);
+019459: 
+019460:   const visibleCount=Math.max(1,visibleCards.length);
+019461:   const requestedColumns=Number(
+019462:     document.documentElement.dataset.umSummaryCols||9
+019463:   );
+019464:   const maxColumns=Number.isFinite(requestedColumns)&&requestedColumns>0
+019465:     ?requestedColumns
+019466:     :9;
+019467:   /* Wide summary mode is a single dynamic row. Optional fields such as
+019468:      Fehler / Port Konflikt / Auto Updates must append to that row instead of
+019469:      pushing the last field onto a second line. Compact/tablet/phone modes keep
+019470:      their existing 5/2-column responsive wrapping. */
+
+========================================================================
+POLICY_DIALOG 19920-20095
+========================================================================
+019920:       });
+019921:       const detected=appInstalledVersionLabel(app);
+019922:       if(detected&&detected!=='-')app.installed_version=detected;
+019923:     }
+019924: 
+019925:     state.policyVersionCache.set(key,{at:Date.now(),versions,result});
+019926:     applyPolicyVersions(app,card,versions,result);
+019927:     return versions;
+019928:   }catch(err){
+019929:     if(err.message!=='auth'){
+019930:       const rawDetail=String(err&&err.message?err.message:'').replace(/\s+/g,' ').trim();
+019931:       const detail=localizeVersionDetail(rawDetail);
+019932:       const shortDetail=detail.length>110?detail.slice(0,107)+'…':detail;
+019933:       const label=shortDetail?`${t('policyVersionsFailed')} · ${shortDetail}`:t('policyVersionsFailed');
+019934:       select.innerHTML=`<option value="">${esc(label)}</option>`;
+019935:       select.title=detail;
+019936:       select.disabled=true;
+019937:       syncPolicyVersionMenu(card);
+019938:     }
+019939:     return [];
+019940:   }finally{
+019941:     if(state.policyVersionLoads.get(key)===request)state.policyVersionLoads.delete(key);
+019942:     setPolicyVersionLoading(card,false);
+019943:     syncPolicyVersionMenu(card);
+019944:   }
+019945: }
+019946: function uiLockIcon(open=false){
+019947:   return `<span class="ui-lock-icon${open?' is-open':''}" aria-hidden="true"></span>`;
+019948: }
+019949: function uiBellIcon(){
+019950:   return `<span class="ui-bell-icon" aria-hidden="true"></span>`;
+019951: }
+019952: function uiAutoUpdateIcon(){
+019953:   return `<span class="ui-auto-icon" aria-hidden="true"></span>`;
+019954: }
+019955: /* Canonical policy symbol mapping used everywhere in the program. */
+019956: function uiPolicyIcon(mode){
+019957:   if(mode==='upgrade')return uiLockIcon(true);
+019958:   if(mode==='follow')return uiAutoUpdateIcon();
+019959:   if(mode==='notify')return uiBellIcon();
+019960:   return uiLockIcon(false);
+019961: }
+019962: /* Legacy alias kept only so older call sites cannot render a different follow symbol. */
+019963: function actionProgressView(stackKey,kind){
+019964:   const info=state.actionProgress.get(String(stackKey||''));
+019965:   if(!info||info.kind!==kind){
+019966:     return {hasPercent:false,progress:null,phase:null};
+019967:   }
+019968:   const value=Number(info.progress);
+019969:   const hasPercent=!!info.determinate&&Number.isFinite(value);
+019970:   const progress=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
+019971:   return {hasPercent,progress,phase:String(info.phase||'')};
+019972: }
+019973: 
+019974: function actionProgressLabel(kind,progress,phase=''){
+019975:   const p=String(phase||'');
+019976:   if(kind==='update'){
+019977:     if(p.startsWith('backup')){
+019978:       return progress===null
+019979:         ?t('backupPhase')
+019980:         :t('backupPhaseProgress').replace('{progress}',progress);
+019981:     }
+019982:     return progress===null
+019983:       ?t('installPhase')
+019984:       :t('installPhaseProgress').replace('{progress}',progress);
+019985:   }
+019986:   if(kind==='restore'){
+019987:     return progress===null
+019988:       ?t('backupRestoring')
+019989:       :t('backupRestoreProgress').replace('{progress}',progress);
+019990:   }
+019991:   return progress===null?t('uninstalling'):t('uninstallProgress').replace('{progress}',progress);
+019992: }
+019993: 
+019994: function safeUninstallButtonLabel(){
+019995:   return ({
+019996:     de:'DEINSTALLIEREN',
+019997:     en:'UNINSTALL',
+019998:     fr:'DÉSINSTALLER',
+019999:     pt:'DESINSTALAR',
+020000:     es:'DESINSTALAR'
+020001:   }[state.language]||'UNINSTALL');
+020002: }
+020003: 
+020004: 
+020005: function renderUninstallPanel(app,index){
+020006:   // Folder-preservation semantics are provided by the official ZimaOS
+020007:   // delete_config_folder parameter. Local/non-ZimaOS containers do not expose
+020008:   // that app-folder concept, so the control is shown only for ZimaOS apps.
+020009:   if(!app.compose_project)return '';
+020010: 
+020011:   const busy=state.uninstallingApps.has(app.stack_key);
+020012:   const selfProtected=appSelfProtected(app);
+020013:   const blocked=busy||selfProtected;
+020014:   const progressView=actionProgressView(app.stack_key,'uninstall');
+020015:   const progressClass=busy&&progressView.hasPercent?' has-percent':'';
+020016:   const progressStyle=busy&&progressView.hasPercent?` style="--action-progress:${progressView.progress}%"`:'';
+020017:   const buttonLabel=busy?actionProgressLabel('uninstall',progressView.progress,progressView.phase):safeUninstallButtonLabel();
+020018:   const helpText=selfProtected?t('selfProtectionUninstall'):t('uninstallFolderHelp');
+020019:   const protectionTitle=selfProtected?` title="${esc(selfProtectionTitle())}"`:'';
+020020: 
+020021:   return `<section class="uninstall-panel">
+020022:     <div class="uninstall-panel-title">${esc(t('uninstallTitle'))}</div>
+020023:     <label class="uninstall-folder-option">
+020024:       <input type="checkbox" data-uninstall-folder-index="${index}" ${blocked?'disabled':''}>
+020025:       <span>${esc(t('uninstallDeleteFolder'))}</span>
+020026:     </label>
+020027:     <div class="uninstall-folder-help">${esc(helpText)}</div>
+020028:     <button class="uninstall-button ${busy?'action-progress':''}${progressClass}"${progressStyle}${protectionTitle} type="button" data-uninstall-index="${index}" data-progress-stack="${esc(app.stack_key)}" data-progress-kind="uninstall" ${blocked?'disabled':''}>${esc(buttonLabel)}</button>
+020029:   </section>`;
+020030: }
+020031: 
+020032: function renderPolicyPanel(app,index){
+020033:   return '';
+020034: }
+020035: 
+020036: function policyVisualMode(policy){
+020037:   return policy.mode;
+020038: }
+020039: 
+020040: function policyQuickButton(mode,icon,title,visualMode){
+020041:   return `<button class="policy-modal-quick ${visualMode===mode?'selected':''}" type="button" data-policy-choice-quick="${mode}" title="${esc(title)}" aria-label="${esc(title)}">${icon}</button>`;
+020042: }
+020043: 
+020044: function backupModeLabel(mode){
+020045:   const value=['quick','full','none'].includes(String(mode||''))?String(mode):'none';
+020046:   if(value==='quick')return t('backupQuick');
+020047:   if(value==='full')return t('backupFull');
+020048:   return t('backupNone');
+020049: }
+020050: 
+020051: function renderPolicyWorkbench(app,index){
+020052:   if(!app)return '';
+020053: 
+020054:   const policy=appPolicy(app);
+020055:   const visualMode=policyVisualMode(policy);
+020056:   const versions=appPolicyVersions(app);
+020057:   const selectedTarget=policy.target_tag&&versions.includes(policy.target_tag)?policy.target_tag:'';
+020058:   const timezone=policy.auto_timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
+020059:   const dayLabels=policyDayLabels();
+020060:   const dayButtons=dayLabels.map((label,day)=>`<button class="policy-day ${policy.auto_days.includes(day)?'selected':''}" type="button" data-auto-day="${day}" ${policy.auto_immediate?'disabled':''}>${label}</button>`).join('');
+020061:   const versionOptions=`<option value="" ${selectedTarget?'':'selected'} disabled>${esc(t('policyVersionSelect'))}</option>`+versions.map(tag=>`<option value="${esc(tag)}" ${tag===selectedTarget?'selected':''}>${esc(tag)}</option>`).join('');
+020062:   const versionMenuOptions=versions.map(tag=>`<button class="policy-version-menu-option ${tag===selectedTarget?'active':''}" type="button" data-policy-version-option="${esc(tag)}">${esc(tag)}</button>`).join('');
+020063:   const autoAllowed=visualMode==='follow';
+020064:   const autoEnabled=autoAllowed&&!!policy.auto_enabled;
+020065:   const autoBackupMode=['quick','full','none'].includes(policy.auto_backup_mode)?policy.auto_backup_mode:'none';
+020066: 
+020067:   const option=(mode,icon,title,help,extra='')=>`<button class="policy-modal-option ${visualMode===mode?'selected':''}" type="button" data-policy-choice="${mode}">
+020068:     <span class="policy-modal-option-icon">${icon}</span>
+020069:     <span class="policy-modal-option-copy"><strong>${esc(title)}</strong><small>${esc(help)}</small>${extra}</span>
+020070:   </button>`;
+020071: 
+020072:   const ports=appPublishedPorts(app);
+020073:   const portText=ports.length?ports.slice(0,3).join(', '):'–';
+020074:   const imageCount=Array.isArray(app.items)?app.items.length:0;
+020075: 
+020076:   return `<div class="policy-modal-backdrop visible" data-policy-modal-backdrop>
+020077:     <section class="policy-modal-shell policy-modal-shell-v108"
+020078:       role="dialog"
+020079:       aria-modal="true"
+020080:       data-auto-enabled="${autoEnabled?'true':'false'}">
+020081: 
+020082:       <button class="policy-modal-close" type="button" data-policy-modal-close aria-label="×">×</button>
+020083: 
+020084:       <div class="policy-modal-main">
+020085:         <div class="policy-modal-app-head">
+020086:           <div class="policy-modal-app-title">
+020087:             ${renderAppIcon(app)}
+020088:             <div class="policy-modal-title-copy">
+020089:               <div class="policy-modal-name">${esc(app.name||'-')}</div>
+020090:               <div class="policy-modal-subtitle">${esc((app.containers||[])[0]?.name||'')}</div>
+020091:             </div>
+020092:           </div>
+020093: 
+020094:           <div class="policy-modal-head-actions">
+020095:             ${policyQuickButton('fixed',uiPolicyIcon('fixed'),t('policyFixedShort'),visualMode)}
+
+========================================================================
+CARD_RENDER 20830-21035
+========================================================================
+020830:     Array.isArray(app.version_group&&app.version_group.image_refs)
+020831:       ? app.version_group.image_refs.map(value=>String(value||'').trim()).filter(Boolean)
+020832:       : []
+020833:   );
+020834:   if(!refs.size)return '';
+020835: 
+020836:   const groupItems=items.filter(item=>refs.has(String(item&&item.image_ref||'').trim()));
+020837:   if(!groupItems.length)return '';
+020838: 
+020839:   const values=groupItems
+020840:     .map(item=>String(item.resolved_installed_tag||item.display_installed_version||'').trim())
+020841:     .filter(Boolean);
+020842: 
+020843:   if(!values.length)return '';
+020844:   const aliases=new Set(values.map(value=>value.replace(/^v/i,'').toLowerCase()));
+020845:   return aliases.size===1 ? values[0] : '';
+020846: }
+020847: 
+020848: function appAvailableVersionLabel(app){
+020849:   if(!app)return '';
+020850: 
+020851:   const policy=appPolicy(app);
+020852:   if(policy.mode==='upgrade'&&policy.target_tag){
+020853:     const available=Array.isArray(app.policy_available_tags)?app.policy_available_tags:[];
+020854:     if(available.includes(policy.target_tag))return String(policy.target_tag);
+020855:   }
+020856:   if(policy.mode==='follow'&&app.can_version_update){
+020857:     return String(app.policy_follow_tag||'latest');
+020858:   }
+020859: 
+020860:   const groupNewer=Array.isArray(app.version_group&&app.version_group.newer_tags)
+020861:     ? app.version_group.newer_tags.filter(Boolean)
+020862:     : [];
+020863:   if(groupNewer.length)return String(groupNewer[0]);
+020864: 
+020865:   const items=Array.isArray(app.items)?app.items:[];
+020866:   if(items.length===1){
+020867:     const available=String(itemAvailable(items[0])||'').trim();
+020868:     return available&&available!=='-' ? available : '';
+020869:   }
+020870: 
+020871:   if(appEffectiveUpdateCount(app)>0){
+020872:     for(const item of items){
+020873:       const available=String(itemAvailable(item)||'').trim();
+020874:       if(available&&available!=='-')return available;
+020875:     }
+020876:   }
+020877: 
+020878:   return '';
+020879: }
+020880: 
+020881: function appInstalledVersionLabel(app){
+020882:   if(!app)return '-';
+020883: 
+020884:   const explicit=String(
+020885:     app.installed_version
+020886:     ||(app.version_group&&app.version_group.installed_version)
+020887:     ||''
+020888:   ).trim();
+020889:   if(explicit)return explicit;
+020890: 
+020891:   const items=Array.isArray(app.items)?app.items:[];
+020892:   if(items.length===1){
+020893:     return String(items[0].resolved_installed_tag||items[0].tag||'-').trim()||'-';
+020894:   }
+020895: 
+020896:   // Multi-image apps: only derive a single displayed version from the primary
+020897:   // version family selected by the backend. Never mix unrelated sidecars.
+020898:   const refs=new Set(
+020899:     Array.isArray(app.version_group&&app.version_group.image_refs)
+020900:       ? app.version_group.image_refs.map(value=>String(value||'').trim()).filter(Boolean)
+020901:       : []
+020902:   );
+020903:   if(!refs.size)return '-';
+020904: 
+020905:   const groupItems=items.filter(item=>refs.has(String(item&&item.image_ref||'').trim()));
+020906:   if(!groupItems.length)return '-';
+020907: 
+020908:   const values=groupItems.map(item=>String(item.resolved_installed_tag||item.tag||'').trim());
+020909:   if(values.some(value=>!value))return '-';
+020910:   const aliases=new Set(values.map(value=>value.replace(/^v/i,'').toLowerCase()));
+020911:   if(aliases.size!==1)return '-';
+020912: 
+020913:   const resolved=groupItems
+020914:     .map(item=>String(item.resolved_installed_tag||'').trim())
+020915:     .find(Boolean);
+020916:   return resolved||values[0]||'-';
+020917: }
+020918: 
+020919: function cardRuntimeButtonContent(app,restart=false){
+020920:   const pending=runtimePendingAction(app);
+020921:   const action=restart?'restart':runtimeControlAction(app);
+020922:   const label=pending==='restart'?t('runtimeRestarting')
+020923:     :pending?runtimeControlTitle(app)
+020924:     :restart?t('restart'):runtimeControlLabel(app);
+020925:   const path=restart?'<path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/>'
+020926:     :action==='start'?'<path d="m8 4 12 8-12 8z"/>'
+020927:     :'<rect x="5" y="5" width="14" height="14" rx="2"/>';
+020928:   const statusClass=pending?'restarting':runtimeStatusClass(app);
+020929:   let text;
+020930:   const completed=Number(app&&app.completed_count||0);
+020931:   const stackCompleted=(
+020932:     !restart
+020933:     && !pending
+020934:     && completed>0
+020935:     && ['running','mixed'].includes(String(app&&app.runtime_state||''))
+020936:   );
+020937:   if(restart){
+020938:     text=`<span>${esc(label)}</span>`;
+020939:   }else if(stackCompleted){
+020940:     const parts=String(label||'').split(' · ').map(value=>value.trim()).filter(Boolean);
+020941:     const firstLine=parts[0]||String(label||'').trim();
+020942:     const secondLine=parts.length>1?parts.slice(1).join(' · '):'';
+020943:     text=`<span class="runtime-status runtime-${statusClass} runtime-status-completed"><span>${esc(firstLine)}</span>${secondLine?`<span>${esc(secondLine)}</span>`:''}</span>`;
+020944:   }else{
+020945:     text=`<span class="runtime-status runtime-${statusClass}">${esc(label)}</span>`;
+020946:   }
+020947:   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>${text}`;
+020948: }
+020949: function renderCardToolbar(app,index){
+020950:   const policy=appPolicy(app);
+020951:   const label=policy.auto_enabled?t('automaticShort')
+020952:     :policy.mode==='follow'?t('follow')
+020953:     :policy.mode==='notify'?t('policyNotify')
+020954:     :policy.mode==='upgrade'?t('policyUpgrade'):t('policyFixedShort');
+020955:   const busy=state.runtimeChangingApps.has(app.stack_key)||state.updatingApps.has(app.stack_key)||state.checkingApps.has(app.stack_key)||state.verifyingApps.has(app.stack_key)||scanMutationIsLocked();
+020956:   const action=runtimeControlAction(app);
+020957:   const restartEnabled=['running','mixed'].includes(String(app.runtime_state));
+020958:   const selfProtected=appSelfProtected(app);
+020959:   const stopBlocked=selfProtected&&action==='stop';
+020960:   const restartBlocked=selfProtected;
+020961:   const toggleTitle=stopBlocked?selfProtectionTitle():runtimeControlTitle(app);
+020962:   const restartTitle=restartBlocked?selfProtectionTitle():t('restart');
+020963:   return `<div class="um-card-toolbar"><button class="um-card-tool" type="button" data-policy-toggle-index="${index}" title="${esc(label)}" ${busy?'disabled':''}>${policy.auto_enabled?uiAutoUpdateIcon():uiPolicyIcon(policy.mode)}<span>${esc(label)}</span></button><button class="um-card-tool" type="button" data-runtime-stack="${esc(app.stack_key)}" data-card-runtime="toggle" title="${esc(toggleTitle)}" aria-label="${esc(toggleTitle)}" data-runtime-action="${action||''}" ${busy||!action||stopBlocked?'disabled':''}>${cardRuntimeButtonContent(app)}</button><button class="um-card-tool" type="button" data-runtime-stack="${esc(app.stack_key)}" data-card-runtime="restart" data-runtime-action="restart" title="${esc(restartTitle)}" aria-label="${esc(restartTitle)}" ${busy||!restartEnabled||restartBlocked?'disabled':''}>${cardRuntimeButtonContent(app,true)}</button></div>`;
+020964: }
+020965: 
+020966: function renderAppCard(app,index){
+020967:   const isOpen=state.openApps.has(app.stack_key);
+020968:   const effectiveUpdateCount=appEffectiveUpdateCount(app);
+020969:   const effectiveStatus=appEffectiveStatus(app);
+020970:   const policyOpen=state.policyOpenApps.has(app.stack_key);
+020971:   const first=(app.items||[])[0]||{};
+020972:   const single=(app.items||[]).length===1;
+020973:   const policy=appPolicy(app);
+020974: 
+020975:   const installedPrimary=appConfiguredTagLabel(app);
+020976:   const installedVersionPrimary=appResolvedInstalledVersionLabel(app);
+020977:   const availablePrimary=appAvailableVersionLabel(app);
+020978:   const primaryCells=[
+020979:     `<div class="update-primary-cell"><div class="update-primary-label">${esc(t('installed'))}</div><div class="update-primary-value" title="${esc(installedPrimary)}">${esc(installedPrimary)}</div></div>`,
+020980:     installedVersionPrimary
+020981:       ? `<div class="update-primary-cell"><div class="update-primary-label">${esc(t('installedVersion'))}</div><div class="update-primary-value" title="${esc(installedVersionPrimary)}">${esc(installedVersionPrimary)}</div></div>`
+020982:       : '',
+020983:     availablePrimary
+020984:       ? `<div class="update-primary-cell"><div class="update-primary-label">${esc(t('available'))}</div><div class="update-primary-value" title="${esc(availablePrimary)}">${esc(availablePrimary)}</div></div>`
+020985:       : ''
+020986:   ].filter(Boolean);
+020987:   const primary=`<div class="update-primary-info" style="--primary-columns:${primaryCells.length}">${primaryCells.join('')}</div>`;
+020988: 
+020989:   const details=(app.items||[]).map(renderImageDetail).join('');
+020990:   const isUpdating=state.updatingApps.has(app.stack_key);
+020991:   const isChecking=state.checkingApps.has(app.stack_key);
+020992:   const isVerifying=state.verifyingApps.has(app.stack_key);
+020993:   const isRestoreVerifying=isVerifying&&state.restoreVerificationApps.has(app.stack_key);
+020994:   const isUpdateBusy=isUpdating||isVerifying;
+020995:   const canInstall=!!(app.can_image_update||app.can_version_update);
+020996:   const updateProgressView=actionProgressView(app.stack_key,'update');
+020997:   const updateProgressClass=isUpdating&&updateProgressView.hasPercent?' has-percent':'';
+020998:   const updateProgressStyle=isUpdating&&updateProgressView.hasPercent?` style="--action-progress:${updateProgressView.progress}%"`:'';
+020999:   const updateButtonLabel=isUpdating
+021000:     ? actionProgressLabel('update',updateProgressView.progress,updateProgressView.phase)
+021001:     : (isVerifying?(isRestoreVerifying?t('restoreVerificationPhase'):t('verificationPhase')):t('installUpdate'));
+021002:   const cardActionButton=isChecking
+021003:     ? `<button class="update-install-button" type="button" data-check-index="${index}" disabled>${esc(t('checkingDocker'))}</button>`
+021004:     : ((canInstall||isUpdateBusy)
+021005:       ? `<button class="update-install-button ${isUpdating?'action-progress':''}${updateProgressClass}"${updateProgressStyle} type="button" data-update-index="${index}" data-progress-stack="${esc(app.stack_key)}" data-progress-kind="update" ${isUpdateBusy?'disabled':''}>${esc(updateButtonLabel)}</button>`
+021006:       : `<button class="update-install-button" type="button" data-check-index="${index}">${esc(t('checkDocker'))}</button>`);
+021007:   const storedAutoError=(
+021008:     policy.auto_enabled
+021009:     &&policy.last_auto_result==='error'
+021010:     &&String(policy.last_auto_error||'').trim()
+021011:     // A later authoritative scan that says CURRENT / Update 0 supersedes an old
+021012:     // automatic-attempt error. Keep the policy history, but do not paint a stale
+021013:     // red error on an app that is now verified current.
+021014:     &&!appUpdateVerifiedCurrent(app)
+021015:   )?{
+021016:     ok:false,
+021017:     kind:'update',
+021018:     text:t('updateFailed').replace(
+021019:       '{error}',
+021020:       localizeVersionDetail(String(policy.last_auto_error||'').trim())
+021021:     )
+021022:   }:null;
+021023:   const actionMessage=state.updateMessages.get(app.stack_key)||storedAutoError;
+021024:   const messageHtml=actionMessage
+021025:     ? `<div class="update-action-message ${actionMessage.ok?'success':'error'}">${esc(actionMessage.text)}</div>`
+021026:     : '';
+021027: 
+021028:   const runtimeCardClass=`runtime-card-${runtimeStatusClass(app)}`;
+021029:   return `<article class="update-card ${runtimeCardClass} ${effectiveUpdateCount>0?'has-update':''} ${isOpen?'expanded':''} ${policyOpen?'policy-open':''}" data-app-index="${index}" data-runtime-card-stack="${esc(app.stack_key)}">
+021030:     <div class="update-card-summary">
+021031:       <div class="update-card-head">
+021032:         <div class="update-card-title-row">${renderAppIcon(app)}<div class="update-card-title-text"><div class="update-card-title">${esc(app.name||'-')}</div></div></div>
+021033:         <div class="card-head-actions"><span class="${badgeClass(effectiveStatus)}">${esc(statusTextValue(effectiveStatus))}</span></div>
+021034:       </div>
+021035:       ${renderCardToolbar(app,index)}
+
+========================================================================
+RESTORE_UI 21795-21870
+========================================================================
+021795: function showTransientRestoreSuccess(stackKey){
+021796:   const key=String(stackKey||'');
+021797:   if(!key)return;
+021798:   const message={ok:true,kind:'restore_done',text:t('backupRestoreSuccess')};
+021799:   state.updateMessages.set(key,message);
+021800:   setTimeout(()=>{
+021801:     if(state.updateMessages.get(key)===message){
+021802:       state.updateMessages.delete(key);
+021803:       render();
+021804:     }
+021805:   },5000);
+021806: }
+021807: 
+021808: async function executeBackupRestore(app,backupId){
+021809:   if(!app||!backupId||state.restoringApps.has(app.stack_key))return;
+021810:   const stackKey=String(app.stack_key||'');
+021811:   const baselineFinishedAt=verificationBaseline();
+021812:   closeBackupRestore();
+021813:   state.restoringApps.add(stackKey);
+021814:   state.updateMessages.delete(stackKey);
+021815:   render();
+021816:   startActionProgressPolling(stackKey,'restore','restore_prepare');
+021817: 
+021818:   try{
+021819:     await api('/api/app-restore',{
+021820:       method:'POST',
+021821:       body:JSON.stringify({stack_key:stackKey,backup_id:backupId})
+021822:     });
+021823:     state.restoreVerificationApps.add(stackKey);
+021824:     beginVerificationState(stackKey,baselineFinishedAt);
+021825:   }catch(err){
+021826:     state.restoreVerificationApps.delete(stackKey);
+021827:     if(err.message!=='auth'){
+021828:       state.updateMessages.set(stackKey,{ok:false,kind:'restore',text:t('backupRestoreFailed').replace('{error}',err.message||'-')});
+021829:     }
+021830:   }finally{
+021831:     await finishActionProgressPolling(stackKey);
+021832:     state.restoringApps.delete(stackKey);
+021833:     state.actionProgress.delete(stackKey);
+021834:     await loadStatus();
+021835:     render();
+021836:   }
+021837: }
+021838: 
+021839: function render(){
+021840:   renderFilters();
+021841:   const d=state.data;
+021842:   const grid=document.getElementById('updateGrid');
+021843:   if(!d||(!d.results&&!d.apps)){
+021844:     updateSummaryAvailability({
+021845:       UPDATES:0,
+021846:       CURRENT:0,
+021847:       RUNNING:0,
+021848:       STOPPED:0,
+021849:       FIXED:0,
+021850:       PINNED:0,
+021851:       LOCAL:0,
+021852:       ERROR:0,
+021853:       AUTO_UPDATE:0,
+021854:       PORT_CONFLICT:0
+021855:     });
+021856:     grid.innerHTML=`<div class="update-empty">${esc(t('noData'))}</div>`;
+021857:     return;
+021858:   }
+021859:   const apps=getApps();
+021860:   state.portConflicts=detectPortConflicts(apps);
+021861:   renderPortConflictBanner();
+021862:   const scanSummary=(d.app_summary&&Object.keys(d.app_summary).length)?d.app_summary:appSummaryFromApps(apps);
+021863:   const runtimeSummary=appSummaryFromApps(apps);
+021864:   const s={
+021865:     ...scanSummary,
+021866:     UPDATES:runtimeSummary.UPDATES,
+021867:     CURRENT:runtimeSummary.CURRENT,
+021868:     RUNNING:runtimeSummary.RUNNING,
+021869:     STOPPED:runtimeSummary.STOPPED
+021870:   };
+
+========================================================================
+ACTION_BUTTONS 22340-22440
+========================================================================
+022340: 
+022341:   document.querySelectorAll('[data-policy-modal-backdrop]').forEach(backdrop=>{
+022342:     backdrop.onclick=event=>{
+022343:       if(event.target!==backdrop)return;
+022344:       const shell=backdrop.querySelector('.policy-modal-shell');
+022345:       const apply=shell&&shell.querySelector('[data-policy-apply-index]');
+022346:       const app=apply?visible[Number(apply.dataset.policyApplyIndex)]:null;
+022347:       if(app)state.policyOpenApps.delete(app.stack_key);
+022348:       render();
+022349:     };
+022350:   });
+022351: 
+022352:   document.querySelectorAll('[data-policy-cancel]').forEach(button=>{
+022353:     button.onclick=()=>{
+022354:       const card=button.closest('.policy-modal-shell');
+022355:       const apply=card&&card.querySelector('[data-policy-apply-index]');
+022356:       const app=apply?visible[Number(apply.dataset.policyApplyIndex)]:null;
+022357:       if(app)state.policyOpenApps.delete(app.stack_key);
+022358:       render();
+022359:     };
+022360:   });
+022361: 
+022362:   document.querySelectorAll('[data-policy-apply-index]').forEach(button=>{
+022363:     button.onclick=()=>{
+022364:       const app=visible[Number(button.dataset.policyApplyIndex)];
+022365:       const card=button.closest('.policy-modal-shell');
+022366:       if(app&&card)saveAppPolicy(app,card);
+022367:     };
+022368:   });
+022369: 
+022370:   document.querySelectorAll('[data-check-index]').forEach(button=>{
+022371:     button.onclick=()=>{
+022372:       const app=visible[Number(button.dataset.checkIndex)];
+022373:       if(app)checkSingleApp(app);
+022374:     };
+022375:   });
+022376: 
+022377:   document.querySelectorAll('[data-update-index]').forEach(button=>{
+022378:     button.onclick=()=>{
+022379:       const app=visible[Number(button.dataset.updateIndex)];
+022380:       if(!app)return;
+022381:       const savedMode=savedAutoBackupMode(app);
+022382:       if(savedMode!==null){
+022383:         installImageUpdate(app,savedMode);
+022384:       }else{
+022385:         openBackupPreview(app);
+022386:       }
+022387:     };
+022388:   });
+022389: 
+022390:   document.querySelectorAll('[data-backup-restore-stack]').forEach(button=>{
+022391:     button.onclick=()=>{
+022392:       const key=String(button.dataset.backupRestoreStack||'');
+022393:       const app=visible.find(item=>String(item.stack_key||'')===key);
+022394:       if(app)openBackupRestore(app);
+022395:     };
+022396:   });
+022397: 
+022398:   document.querySelectorAll('[data-runtime-stack]').forEach(button=>{
+022399:     button.onclick=()=>{
+022400:       const stackKey=String(button.dataset.runtimeStack||'');
+022401:       const app=(state.data&&state.data.apps||[]).find(item=>String(item.stack_key||'')===stackKey);
+022402:       const action=button.dataset.runtimeAction||runtimeControlAction(app||{});
+022403:       if(!app||!action)return;
+022404:       if(appSelfProtected(app)&&(action==='stop'||action==='restart'))return;
+022405:       changeAppRuntime(app,action);
+022406:     };
+022407:   });
+022408: 
+022409:   document.querySelectorAll('[data-uninstall-index]').forEach(button=>{
+022410:     button.onclick=()=>{
+022411:       const appIndex=Number(button.dataset.uninstallIndex);
+022412:       const app=visible[appIndex];
+022413:       if(app)uninstallApp(app,appIndex);
+022414:     };
+022415:   });
+022416: 
+022417:   updateRuntimeDom();
+022418: }
+022419: 
+022420: 
+022421: 
+022422: let imageSourceState={
+022423:   stackKey:'',
+022424:   data:null,
+022425:   imageKey:'',
+022426:   choice:'',
+022427:   busy:false,
+022428:   error:''
+022429: };
+022430: 
+022431: let imageSourceProgressTimer=null;
+022432: let imageSourceProgressInfo=null;
+022433: 
+022434: function stopImageSourceProgressPolling(){
+022435:   if(imageSourceProgressTimer){
+022436:     clearInterval(imageSourceProgressTimer);
+022437:     imageSourceProgressTimer=null;
+022438:   }
+022439: }
+022440: 
+
+========================================================================
+DOCKER_DETAILS 22530-22630
+========================================================================
+022530:   }
+022531: 
+022532:   // Backward compatibility for the previous single image API schema.
+022533:   // Without this, an older still-running backend produced a successful
+022534:   // response but the UI silently rendered zero images.
+022535:   if(Array.isArray(data.options)){
+022536:     const options=data.options;
+022537:     const current=
+022538:       options.find(option=>option&&option.current)||
+022539:       options[0]||
+022540:       null;
+022541: 
+022542:     const preview=(current&&current.compose_preview)||{};
+022543:     const imageRef=String(
+022544:       preview.current_image||
+022545:       (current&&current.image_ref)||
+022546:       '-'
+022547:     );
+022548:     const sourceId=String(
+022549:       data.current_source_id||
+022550:       (current&&current.source_id)||
+022551:       ''
+022552:     );
+022553:     const syntheticKey=`legacy:${String(stackKey||data.stack_key||'stack')}`;
+022554: 
+022555:     return {
+022556:       schema_version:1,
+022557:       backend_version:'',
+022558:       legacy_single_image:true,
+022559:       stack_key:String(data.stack_key||stackKey||''),
+022560:       app:String(data.app||''),
+022561:       image_count:1,
+022562:       alternative_count:Number(data.alternative_count||options.filter(option=>option&&!option.current).length||0),
+022563:       warning_count:0,
+022564:       error_count:0,
+022565:       backup:data.backup||{required:true,default_mode:'full'},
+022566:       images:[{
+022567:         image_key:String((current&&current.image_key)||syntheticKey),
+022568:         image_ref:imageRef,
+022569:         services:Array.isArray(preview.services)?preview.services:[],
+022570:         containers:[],
+022571:         service_label:String(
+022572:           (Array.isArray(preview.services)&&preview.services.length)
+022573:             ?preview.services.join(', ')
+022574:             :imageSourceText('Docker Image','Docker image')
+022575:         ),
+022576:         current_version:String((current&&current.version)||'-'),
+022577:         current_source_id:sourceId,
+022578:         options,
+022579:         alternative_count:options.filter(option=>option&&!option.current).length,
+022580:         discovery_message_de:String(data.discovery_message_de||''),
+022581:         discovery_message_en:String(data.discovery_message_en||''),
+022582:         warning_de:null,
+022583:         warning_en:null,
+022584:         error_de:null,
+022585:         error_en:null
+022586:       }]
+022587:     };
+022588:   }
+022589: 
+022590:   throw new Error(
+022591:     imageSourceText(
+022592:       'Ungültige Antwort der Image Quellen API.',
+022593:       'Invalid response from the image source API.'
+022594:     )
+022595:   );
+022596: }
+022597: 
+022598: function imageSourceImages(){
+022599:   return Array.isArray(imageSourceState.data&&imageSourceState.data.images)
+022600:     ?imageSourceState.data.images
+022601:     :[];
+022602: }
+022603: 
+022604: function imageSourceSelectedImage(){
+022605:   const images=imageSourceImages();
+022606:   return images.find(image=>String(image.image_key||'')===String(imageSourceState.imageKey||''))
+022607:     ||images[0]
+022608:     ||null;
+022609: }
+022610: 
+022611: function imageSourceOptionById(sourceId){
+022612:   const image=imageSourceSelectedImage();
+022613:   const options=Array.isArray(image&&image.options)?image.options:[];
+022614:   return options.find(option=>String(option.source_id||'')===String(sourceId||''))||null;
+022615: }
+022616: 
+022617: function imageSourceStatusText(level){
+022618:   if(level==='error')return imageSourceText('✕ Nicht kompatibel','✕ Not compatible');
+022619:   if(level==='warn')return imageSourceText('! Wechsel mit Warnung','! Switch with warning');
+022620:   return imageSourceText('✓ Kompatibel','✓ Compatible');
+022621: }
+022622: 
+022623: function imageSourceCheckText(check,field){
+022624:   return localizedBackendPair(check,field,'-');
+022625: }
+022626: 
+022627: function closeImageSourceDialog(force=false){
+022628:   if(imageSourceState.busy&&!force)return;
+022629:   stopImageSourceProgressPolling();
+022630:   imageSourceProgressInfo=null;
+
+========================================================================
+CHECK_VERIFY_START 23430-23595
+========================================================================
+023430: function appCheckBaseline(){
+023431:   return String((state.data&&state.data.finished_at)||'');
+023432: }
+023433: async function waitForSingleAppCheck(stackKey,baselineFinishedAt,timeoutMs=15*60*1000){
+023434:   const key=String(stackKey||'');
+023435:   const baseline=String(baselineFinishedAt||'');
+023436:   const deadline=Date.now()+Math.max(5000,Number(timeoutMs)||0);
+023437: 
+023438:   while(Date.now()<deadline){
+023439:     const d=await loadStatus();
+023440:     const scan=d&&d.scan;
+023441:     const matching=matchingVerificationScan(scan,key);
+023442:     const scanning=matching&&String(scan&&scan.state||'idle')==='scanning';
+023443:     const finished=!!(
+023444:       matching
+023445:       &&!scanning
+023446:       &&String(scan&&scan.finished_at||'')
+023447:       &&String(scan.finished_at||'')!==baseline
+023448:     );
+023449:     if(finished)return true;
+023450:     await new Promise(resolve=>setTimeout(resolve,1000));
+023451:   }
+023452:   return false;
+023453: }
+023454: async function checkSingleApp(app){
+023455:   if(!app||state.checkingApps.has(app.stack_key)||scanMutationIsLocked())return;
+023456: 
+023457:   const stackKey=String(app.stack_key||'');
+023458:   const baseline=appCheckBaseline();
+023459:   state.checkingApps.add(stackKey);
+023460:   state.checkBaselines.set(stackKey,baseline);
+023461:   state.updateMessages.delete(stackKey);
+023462:   render();
+023463: 
+023464:   try{
+023465:     await api('/api/app-scan',{
+023466:       method:'POST',
+023467:       body:JSON.stringify({stack_key:stackKey})
+023468:     });
+023469: 
+023470:     const finished=await waitForSingleAppCheck(stackKey,baseline);
+023471:     if(!finished){
+023472:       throw new Error(state.language==='en'?'The individual check timed out.':'Die Einzelprüfung hat das Zeitlimit überschritten.');
+023473:     }
+023474:   }catch(err){
+023475:     if(err.message!=='auth'){
+023476:       state.updateMessages.set(
+023477:         stackKey,
+023478:         {ok:false,kind:'check',text:t('checkDockerFailed').replace('{error}',err.message||'-')}
+023479:       );
+023480:     }
+023481:   }finally{
+023482:     state.checkingApps.delete(stackKey);
+023483:     state.checkBaselines.delete(stackKey);
+023484:     await loadStatus();
+023485:     render();
+023486:   }
+023487: }
+023488: 
+023489: function verificationBaseline(){
+023490:   return String((state.data&&state.data.finished_at)||'');
+023491: }
+023492: function beginVerificationState(stackKey,baselineFinishedAt=null){
+023493:   const key=String(stackKey||'');
+023494:   if(!key)return;
+023495:   if(!state.verificationBaselines.has(key)){
+023496:     state.verificationBaselines.set(
+023497:       key,
+023498:       baselineFinishedAt===null?verificationBaseline():String(baselineFinishedAt||'')
+023499:     );
+023500:   }
+023501:   state.verifyingApps.add(key);
+023502: }
+023503: function setPendingPostScans(automation){
+023504:   const values=(automation&&Array.isArray(automation.pending_post_scans))
+023505:     ? automation.pending_post_scans
+023506:     : [];
+023507:   state.pendingPostScans=new Set(values.map(value=>String(value||'')).filter(Boolean));
+023508: }
+023509: function matchingVerificationScan(scan,stackKey){
+023510:   const key=String(stackKey||'');
+023511:   return !!(
+023512:     scan
+023513:     &&String(scan.scan_scope||'')==='app'
+023514:     &&String(scan.scan_stack_key||'')===key
+023515:   );
+023516: }
+023517: function completeFinishedVerifications(scan){
+023518:   let changed=false;
+023519:   const apps=(state.data&&Array.isArray(state.data.apps))?state.data.apps:[];
+023520:   const byKey=new Map(apps.map(app=>[String(app.stack_key||''),app]));
+023521: 
+023522:   for(const key of Array.from(state.verifyingApps)){
+023523:     const pending=state.pendingPostScans.has(key)||state.pendingPostScans.has('*');
+023524:     const matching=matchingVerificationScan(scan,key);
+023525:     const active=matching&&String(scan&&scan.state||'idle')==='scanning';
+023526:     const baseline=String(state.verificationBaselines.get(key)||'');
+023527:     const finished=!!(
+023528:       matching
+023529:       &&String(scan&&scan.state||'idle')!=='scanning'
+023530:       &&String(scan&&scan.finished_at||'')
+023531:       &&String(scan.finished_at||'')!==baseline
+023532:     );
+023533: 
+023534:     if(pending||active||!finished)continue;
+023535: 
+023536:     state.verifyingApps.delete(key);
+023537:     state.verificationBaselines.delete(key);
+023538: 
+023539:     const message=state.updateMessages.get(key);
+023540:     const app=byKey.get(key);
+023541:     if(state.restoreVerificationApps.has(key)){
+023542:       state.restoreVerificationApps.delete(key);
+023543:       // No green intermediate notice while verification is running.
+023544:       // Only after the targeted post-restore scan finishes, show a short success message.
+023545:       showTransientRestoreSuccess(key);
+023546:     }else if(message&&message.kind==='update'){
+023547:       if(message.ok||appUpdateVerifiedCurrent(app)){
+023548:         state.updateMessages.delete(key);
+023549:       }
+023550:     }
+023551:     changed=true;
+023552:   }
+023553:   return changed;
+023554: }
+023555: async function waitForPostUpdateVerification(stackKey,timeoutMs=15*60*1000){
+023556:   const key=String(stackKey||'');
+023557:   if(!key)return false;
+023558:   const deadline=Date.now()+Math.max(5000,Number(timeoutMs)||0);
+023559: 
+023560:   while(Date.now()<deadline){
+023561:     await loadStatus();
+023562:     if(!state.verifyingApps.has(key))return true;
+023563:     await new Promise(resolve=>setTimeout(resolve,1000));
+023564:   }
+023565: 
+023566:   // Do not leave the button permanently locked if the backend never completes
+023567:   // the pending verification. Keep any diagnostic message for the user.
+023568:   state.verifyingApps.delete(key);
+023569:   state.verificationBaselines.delete(key);
+023570:   render();
+023571:   return false;
+023572: }
+023573: 
+023574: 
+023575: 
+023576: let backupPreviewApp=null;
+023577: let backupPreviewChoice='full';
+023578: 
+023579: function closeBackupPreview(){
+023580:   const backdrop=document.getElementById('backupPreviewBackdrop');
+023581:   if(backdrop){
+023582:     backdrop.classList.remove('visible');
+023583:     backdrop.setAttribute('aria-hidden','true');
+023584:   }
+023585:   backupPreviewApp=null;
+023586: }
+023587: 
+023588: function setBackupPreviewChoice(choice){
+023589:   backupPreviewChoice=['quick','full','none'].includes(choice)?choice:'full';
+023590:   document.querySelectorAll('[data-backup-preview-choice]').forEach(button=>{
+023591:     button.classList.toggle('selected',button.dataset.backupPreviewChoice===backupPreviewChoice);
+023592:   });
+023593:   const continueButton=document.getElementById('backupPreviewContinue');
+023594:   if(continueButton){
+023595:     // v0.3.162: keep one neutral action label; the selected backup option already states what will happen.
+
+========================================================================
+POLL_STATE 23715-23870
+========================================================================
+023715:   const previous=String(previousStartedAt||'');
+023716:   const deadline=Date.now()+Math.max(30000,Number(timeoutMs)||0);
+023717:   let sawOffline=false;
+023718: 
+023719:   while(Date.now()<deadline){
+023720:     const d=await loadStatus();
+023721:     if(!d){
+023722:       sawOffline=true;
+023723:       await new Promise(resolve=>setTimeout(resolve,1000));
+023724:       continue;
+023725:     }
+023726: 
+023727:     if(reloadForBackendVersion(d.version))return true;
+023728: 
+023729:     const startedAt=String(d&&d.service_runtime&&d.service_runtime.started_at||'');
+023730:     if(
+023731:       (previous&&startedAt&&startedAt!==previous)
+023732:       ||(!previous&&sawOffline&&startedAt)
+023733:     ){
+023734:       return true;
+023735:     }
+023736: 
+023737:     await new Promise(resolve=>setTimeout(resolve,1000));
+023738:   }
+023739: 
+023740:   return false;
+023741: }
+023742: 
+023743: async function installImageUpdate(app,backupMode='none'){
+023744:   if(!app||!(app.can_image_update||app.can_version_update)||state.updatingApps.has(app.stack_key)||state.checkingApps.has(app.stack_key)||state.verifyingApps.has(app.stack_key))return;
+023745:   const stackKey=String(app.stack_key||'');
+023746:   const baselineFinishedAt=verificationBaseline();
+023747:   const selfUpdateStartedAt=String(state.serviceRuntime&&state.serviceRuntime.started_at||'');
+023748:   let verificationExpected=false;
+023749:   let verificationNeedsConfirmation=false;
+023750:   let deferredTransportError=null;
+023751:   let selfUpdateHandoff=false;
+023752: 
+023753:   state.updatingApps.add(stackKey);
+023754:   state.updateMessages.delete(stackKey);
+023755:   render();
+023756:   const normalizedBackupMode=['quick','full','none'].includes(String(backupMode||''))?String(backupMode):'none';
+023757:   startActionProgressPolling(stackKey,'update',normalizedBackupMode==='none'?'starting':'backup');
+023758: 
+023759:   try{
+023760:     const updateResult=await api('/api/app-update',{
+023761:       method:'POST',
+023762:       body:JSON.stringify({stack_key:stackKey,backup_mode:normalizedBackupMode})
+023763:     });
+023764:     if(updateResult&&updateResult.self_update_handoff){
+023765:       selfUpdateHandoff=true;
+023766:       beginVerificationState(stackKey,baselineFinishedAt);
+023767:       state.updateMessages.delete(stackKey);
+023768:     }else{
+023769:       beginVerificationState(stackKey,baselineFinishedAt);
+023770:       verificationExpected=true;
+023771:       state.updateMessages.delete(stackKey);
+023772:     }
+023773:   }catch(err){
+023774:     if(err.message!=='auth'){
+023775:       const transportFailure=isUpdateTransportFailure(err);
+023776:       if(transportFailure&&app.self_protected){
+023777:         selfUpdateHandoff=true;
+023778:         beginVerificationState(stackKey,baselineFinishedAt);
+023779:         state.updateMessages.delete(stackKey);
+023780:       }else if(transportFailure){
+023781:         deferredTransportError=String(err.message||'Failed to fetch');
+023782:         state.updateMessages.delete(stackKey);
+023783:         beginVerificationState(stackKey,baselineFinishedAt);
+023784:         verificationNeedsConfirmation=true;
+023785:       }else{
+023786:         state.updateMessages.set(
+023787:           stackKey,
+023788:           {ok:false,kind:'update',text:t('updateFailed').replace('{error}',err.message||'-')}
+023789:         );
+023790:         beginVerificationState(stackKey,baselineFinishedAt);
+023791:         verificationNeedsConfirmation=true;
+023792:       }
+023793:     }
+023794:   }finally{
+023795:     await finishActionProgressPolling(stackKey);
+023796:     state.updatingApps.delete(stackKey);
+023797:     state.actionProgress.delete(stackKey);
+023798:     render();
+023799:   }
+023800: 
+023801:   if(selfUpdateHandoff){
+023802:     const verified=await waitForSelfUpdateRestart(stackKey,selfUpdateStartedAt);
+023803:     if(verified){
+023804:       // Reload as soon as the replacement backend is reachable. Targeted
+023805:       // post-update verification continues independently in the new process.
+023806:       window.setTimeout(()=>reloadUpdateMonitorPage(),350);
+023807:       return;
+023808:     }
+023809:     if(!verified){
+023810:       state.updateMessages.set(
+023811:         stackKey,
+023812:         {
+023813:           ok:false,
+023814:           kind:'update',
+023815:           text:t('updateFailed').replace(
+023816:             '{error}',
+023817:             state.language==='en'
+023818:               ?'The self update could not be verified after the restart.'
+023819:               :'Das Selbst Update konnte nach dem Neustart nicht bestätigt werden.'
+023820:           )
+023821:         }
+023822:       );
+023823:       render();
+023824:     }
+023825:     return;
+023826:   }
+023827: 
+023828:   if(verificationNeedsConfirmation){
+023829:     const d=await loadStatus();
+023830:     const pending=state.pendingPostScans.has(stackKey)||state.pendingPostScans.has('*');
+023831:     const active=matchingVerificationScan(d&&d.scan,stackKey)
+023832:       &&String(d&&d.scan&&d.scan.state||'idle')==='scanning';
+023833:     if(pending||active){
+023834:       verificationExpected=true;
+023835:     }else{
+023836:       state.verifyingApps.delete(stackKey);
+023837:       state.verificationBaselines.delete(stackKey);
+023838: 
+023839:       const refreshedApps=(state.data&&Array.isArray(state.data.apps))
+023840:         ?state.data.apps
+023841:         :[];
+023842:       const refreshedApp=refreshedApps.find(
+023843:         candidate=>String(candidate&&candidate.stack_key||'')===stackKey
+023844:       );
+023845: 
+023846:       if(deferredTransportError&&appUpdateVerifiedCurrent(refreshedApp)){
+023847:         state.updateMessages.delete(stackKey);
+023848:       }else if(deferredTransportError){
+023849:         state.updateMessages.set(
+023850:           stackKey,
+023851:           {
+023852:             ok:false,
+023853:             kind:'update',
+023854:             text:t('updateFailed').replace('{error}',deferredTransportError)
+023855:           }
+023856:         );
+023857:       }
+023858: 
+023859:       render();
+023860:     }
+023861:   }
+023862: 
+023863:   if(verificationExpected){
+023864:     await waitForPostUpdateVerification(stackKey);
+023865:   }
+023866: }
+023867: function formatMemory(bytes){
+023868:   const value=Number(bytes);
+023869:   if(!Number.isFinite(value)||value<0)return '-';
+023870:   if(value>=1024**3)return (value/(1024**3)).toFixed(value>=10*1024**3?1:2)+' GB';
+
+========================================================================
+VERIFY_CLEANUP 24115-24355
+========================================================================
+024115:       if(settingsIntervalLockedScrollTop!==null){
+024116:         settingsScrollArea.scrollTop=settingsIntervalLockedScrollTop;
+024117:       }
+024118:       repositionOpenSettingsIntervalSelect();
+024119:     },
+024120:     {passive:true}
+024121:   );
+024122: }
+024123: 
+024124: 
+024125: let runtimeRefreshTimer=null;
+024126: let runtimeRefreshBusy=false;
+024127: 
+024128: function updateRuntimeDom(){
+024129:   if(!state.data)return;
+024130:   const apps=Array.isArray(state.data.apps)?state.data.apps:[];
+024131:   const byKey=new Map(apps.map(app=>[String(app.stack_key||''),app]));
+024132: 
+024133:   document.querySelectorAll('[data-runtime-stack]').forEach(node=>{
+024134:     const app=byKey.get(String(node.dataset.runtimeStack||''));
+024135:     if(!app)return;
+024136: 
+024137:     const action=runtimeControlAction(app);
+024138:     const pending=runtimePendingAction(app);
+024139:     const changing=state.runtimeChangingApps.has(app.stack_key);
+024140:     if(node.dataset.cardRuntime){
+024141:       const restart=node.dataset.cardRuntime==='restart';
+024142:       const enabled=restart?['running','mixed'].includes(String(app.runtime_state)):Boolean(action);
+024143:       const selfProtected=appSelfProtected(app);
+024144:       const protectedAction=selfProtected&&(restart||action==='stop');
+024145:       node.dataset.runtimeAction=restart?'restart':action||'';
+024146:       node.disabled=!enabled||changing||protectedAction||scanMutationIsLocked()||state.updatingApps.has(app.stack_key)||state.checkingApps.has(app.stack_key)||state.verifyingApps.has(app.stack_key);
+024147:       const policyButton=node.closest('.um-card-toolbar')?.querySelector('[data-policy-toggle-index]');
+024148:       if(policyButton)policyButton.disabled=changing||scanMutationIsLocked()||state.updatingApps.has(app.stack_key)||state.checkingApps.has(app.stack_key)||state.verifyingApps.has(app.stack_key);
+024149:       node.innerHTML=cardRuntimeButtonContent(app,restart);
+024150:       const normalTitle=restart?node.textContent.trim():runtimeControlTitle(app);
+024151:       const controlTitle=protectedAction?selfProtectionTitle():normalTitle;
+024152:       node.title=controlTitle;
+024153:       node.setAttribute('aria-label',controlTitle);
+024154:       return;
+024155:     }
+024156: 
+024157: 
+024158:     // While ZimaOS performs an asynchronous action, keep one stable visual
+024159:     // transition state. Live polling may still update the data underneath,
+024160:     // but it must not make the button oscillate.
+024161:     const visualClass=pending?'restarting':runtimeStatusClass(app);
+024162:     // Keep the compact title-runtime class during live polling. previous revision
+024163:     // replaced className wholesale, so after the first runtime refresh the
+024164:     // small state text fell back to the large generic runtime-control style.
+024165:     const titleRuntime=
+024166:       node.classList.contains('update-card-title-runtime')
+024167:       ||!!node.closest('.update-card-title-text');
+024168:     node.className=`runtime-status runtime-control-button${titleRuntime?' update-card-title-runtime':''} runtime-${visualClass}`;
+024169:     node.dataset.runtimeAction=pending||action||'';
+024170:     node.title=runtimeControlTitle(app);
+024171:     node.disabled=!action||changing;
+024172:     node.innerHTML=`<span class="runtime-dot"></span>${esc(runtimeControlLabel(app))}`;
+024173:   });
+024174: 
+024175:   document.querySelectorAll('[data-runtime-card-stack]').forEach(card=>{
+024176:     const app=byKey.get(String(card.dataset.runtimeCardStack||''));
+024177:     if(!app)return;
+024178:     card.classList.remove(
+024179:       'runtime-card-running',
+024180:       'runtime-card-stopped',
+024181:       'runtime-card-mixed',
+024182:       'runtime-card-restarting',
+024183:       'runtime-card-error',
+024184:       'runtime-card-unknown'
+024185:     );
+024186:     card.classList.add(`runtime-card-${runtimeStatusClass(app)}`);
+024187:   });
+024188: 
+024189:   updateBackupCountdownDom();
+024190: }
+024191: 
+024192: function setAutomaticUpdateButtonBusy(stackKey,busy){
+024193:   const key=String(stackKey||'');
+024194:   document.querySelectorAll('[data-progress-stack][data-progress-kind="update"]').forEach(button=>{
+024195:     if(String(button.dataset.progressStack||'')!==key)return;
+024196:     button.classList.toggle('action-progress',!!busy);
+024197:     button.disabled=!!busy;
+024198:     if(!busy){
+024199:       button.classList.remove('has-percent');
+024200:       button.style.removeProperty('--action-progress');
+024201:     }
+024202:   });
+024203: }
+024204: 
+024205: function syncAutomaticLiveActionsNoRender(actions){
+024206:   const records=(actions&&typeof actions==='object')?actions:{};
+024207: 
+024208:   Object.entries(records).forEach(([rawKey,rawInfo])=>{
+024209:     const key=String(rawKey||'');
+024210:     const info=rawInfo&&typeof rawInfo==='object'?rawInfo:null;
+024211:     if(!key||!info||info.kind!=='update'||!info.automatic)return;
+024212: 
+024213:     state.actionProgress.set(key,info);
+024214: 
+024215:     if(!info.finished){
+024216:       if(!state.autoLiveActions.has(key)){
+024217:         state.autoLiveActions.add(key);
+024218:         state.updatingApps.add(key);
+024219:         if(!state.verificationBaselines.has(key)){
+024220:           state.verificationBaselines.set(key,verificationBaseline());
+024221:         }
+024222:         setAutomaticUpdateButtonBusy(key,true);
+024223:         startActionProgressPolling(key,'update',String(info.phase||''));
+024224:       }else{
+024225:         setAutomaticUpdateButtonBusy(key,true);
+024226:         applyActionProgressToDom(key);
+024227:       }
+024228:       return;
+024229:     }
+024230: 
+024231:     if(state.autoLiveActions.has(key)){
+024232:       state.actionProgress.set(key,info);
+024233:       applyActionProgressToDom(key);
+024234:       stopActionProgressPolling(key);
+024235:       state.autoLiveActions.delete(key);
+024236:       state.updatingApps.delete(key);
+024237:       beginVerificationState(key,state.verificationBaselines.get(key));
+024238: 
+024239:       // Installation is finished, but the authoritative app recheck is not.
+024240:       // Keep the stale install button disabled as PRÜFUNG… until that recheck ends.
+024241:       document.querySelectorAll('[data-progress-stack][data-progress-kind="update"]').forEach(button=>{
+024242:         if(String(button.dataset.progressStack||'')!==key)return;
+024243:         button.classList.remove('action-progress','has-percent');
+024244:         button.style.removeProperty('--action-progress');
+024245:         button.disabled=true;
+024246:         button.textContent=t('verificationPhase');
+024247:       });
+024248: 
+024249:       if(info.success===false){
+024250:         const detail=localizeVersionDetail(String(info.error||'-').trim());
+024251:         state.updateMessages.set(
+024252:           key,
+024253:           {ok:false,kind:'update',text:t('updateFailed').replace('{error}',detail||'-')}
+024254:         );
+024255:       }else if(info.success===true){
+024256:         // The orange PRÜFUNG… state already communicates successful install +
+024257:         // pending verification. Keep the card quiet on success; only errors need
+024258:         // an extra message below the card.
+024259:         state.updateMessages.delete(key);
+024260:       }
+024261: 
+024262:       state.actionProgress.delete(key);
+024263:     }
+024264:   });
+024265: }
+024266: 
+024267: async function syncAutomaticScanNoRender(liveScan){
+024268:   if(!liveScan||typeof liveScan!=='object'||!state.data)return false;
+024269: 
+024270:   const current=state.data||{};
+024271:   const liveState=String(liveScan.state||'idle');
+024272:   const currentState=String(current.state||'idle');
+024273:   const startedChanged=String(liveScan.started_at||'')!==String(current.started_at||'');
+024274:   const finishedChanged=String(liveScan.finished_at||'')!==String(current.finished_at||'');
+024275: 
+024276:   if(liveState==='scanning'){
+024277:     state.data={
+024278:       ...current,
+024279:       state:'scanning',
+024280:       started_at:liveScan.started_at||current.started_at,
+024281:       progress_step:liveScan.progress_step,
+024282:       progress_percent:liveScan.progress_percent,
+024283:       progress_current:liveScan.progress_current,
+024284:       progress_total:liveScan.progress_total
+024285:     };
+024286:     updateScanProgressUi(state.data);
+024287:     return false;
+024288:   }
+024289: 
+024290:   if(currentState==='scanning'||startedChanged||finishedChanged){
+024291:     await loadStatus();
+024292:     return true;
+024293:   }
+024294: 
+024295:   return false;
+024296: }
+024297: 
+024298: async function refreshRuntimeStatus(force=false){
+024299:   if((runtimeRefreshBusy&&!force)||document.hidden||!state.data)return;
+024300:   if(!force)runtimeRefreshBusy=true;
+024301: 
+024302:   try{
+024303:     const data=await api('/api/runtime-status');
+024304:     if(reloadForBackendVersion(data&&data.version))return;
+024305:     const updates=Array.isArray(data.apps)?data.apps:[];
+024306:     const byKey=new Map(updates.map(item=>[String(item.stack_key||''),item]));
+024307:     const removedKeys=new Set(
+024308:       (Array.isArray(data.removed_stack_keys)?data.removed_stack_keys:[])
+024309:         .map(value=>String(value||''))
+024310:         .filter(Boolean)
+024311:     );
+024312: 
+024313:     if(removedKeys.size){
+024314:       for(const key of removedKeys){
+024315:         state.runtimeChangingApps.delete(key);
+024316:         state.updatingApps.delete(key);
+024317:         state.checkingApps.delete(key);
+024318:         state.checkBaselines.delete(key);
+024319:         state.verifyingApps.delete(key);
+024320:         state.pendingPostScans.delete(key);
+024321:         state.updateMessages.delete(key);
+024322:       }
+024323:       await loadStatus();
+024324:       return;
+024325:     }
+024326: 
+024327:     let runtimeChanged=false;
+024328:     for(const app of (state.data.apps||[])){
+024329:       const live=byKey.get(String(app.stack_key||''));
+024330:       if(!live)continue;
+024331: 
+024332:       const oldState=String(app.runtime_state||'unknown');
+024333:       const newState=String(live.runtime_state||'unknown');
+024334:       if(oldState!==newState)runtimeChanged=true;
+024335: 
+024336:       app.runtime_state=newState;
+024337:       app.running_count=Number(live.running_count||0);
+024338:       app.completed_count=Number(live.completed_count||0);
+024339:       if(Number.isFinite(Number(live.active_container_count))){
+024340:         app.active_container_count=Number(live.active_container_count);
+024341:       }
+024342:       app.self_protected=!!live.self_protected;
+024343:       if(Number.isFinite(Number(live.container_count))){
+024344:         app.container_count=Number(live.container_count);
+024345:       }
+024346:     }
+024347: 
+024348:     const runtimeSummary=appSummaryFromApps(state.data.apps||[]);
+024349:     const runningCount=document.getElementById('runningCount');
+024350:     const stoppedCount=document.getElementById('stoppedCount');
+024351:     const autoUpdateCount=document.getElementById('autoUpdateCount');
+024352:     if(runningCount)runningCount.textContent=runtimeSummary.RUNNING||0;
+024353:     if(stoppedCount)stoppedCount.textContent=runtimeSummary.STOPPED||0;
+024354:     if(autoUpdateCount)autoUpdateCount.textContent=runtimeSummary.AUTO_UPDATE||0;
+024355: 
+
+========================================================================
+WARNINGS 24635-24795
+========================================================================
+024635:         title:t('dockerVersionWarningTitle'),
+024636:         text:t('dockerVersionWarningText'),
+024637:         appName,
+024638:         image,
+024639:         displayed,
+024640:         projectUrl,
+024641:         stackKey:String(app.stack_key||item.stack_key||'')
+024642:       });
+024643:     });
+024644:   });
+024645: 
+024646:   return warnings;
+024647: }
+024648: 
+024649: function currentHeaderWarnings(){
+024650:   const warnings=[];
+024651:   const scanning=!!(state.data&&state.data.state==='scanning');
+024652: 
+024653:   if(scanning){
+024654:     warnings.push({
+024655:       kind:'scan-lock',
+024656:       title:t('scanLockWarningTitle'),
+024657:       text:t('scanLockWarning')
+024658:     });
+024659:   }
+024660: 
+024661:   warnings.push(...dockerVersionWarnings());
+024662:   return warnings;
+024663: }
+024664: 
+024665: function closeHeaderWarningPopover(){
+024666:   const button=document.getElementById('headerWarningButton');
+024667:   const popover=document.getElementById('headerWarningPopover');
+024668:   if(popover)popover.hidden=true;
+024669:   if(button)button.setAttribute('aria-expanded','false');
+024670: }
+024671: 
+024672: let headerWarningFilter='all';
+024673: function warningFilterLabels(){
+024674:   return ({
+024675:     de:{all:'Alle',important:'Wichtig',info:'Hinweise',versionGroup:'Versionsbestätigung erforderlich'},
+024676:     en:{all:'All',important:'Important',info:'Notices',versionGroup:'Version confirmation required'},
+024677:     fr:{all:'Tous',important:'Important',info:'Informations',versionGroup:'Confirmation de version requise'},
+024678:     pt:{all:'Todos',important:'Importante',info:'Avisos',versionGroup:'Confirmação de versão necessária'},
+024679:     es:{all:'Todos',important:'Importante',info:'Avisos',versionGroup:'Confirmación de versión necesaria'}
+024680:   }[state.language]||{all:'All',important:'Important',info:'Notices',versionGroup:'Version confirmation required'});
+024681: }
+024682: function renderDockerVersionWarning(warning){
+024683:   const meta=[warning.appName,warning.displayed?`${t('installedVersion')}: ${warning.displayed}`:'',warning.image].filter(Boolean).join(' · ');
+024684:   const link=warning.projectUrl
+024685:     ?`<a class="header-warning-link" href="${esc(warning.projectUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('dockerVersionOpenProject'))}</a>`:'';
+024686:   const scanning=!!(state.data&&state.data.state==='scanning');
+024687:   const confirm=`<button class="header-warning-confirm" type="button" data-version-confirm data-stack-key="${esc(warning.stackKey)}" data-image-ref="${esc(warning.image)}" ${scanning?'disabled':''}>${esc(t('dockerVersionConfirm'))}</button>`;
+024688:   return `<div class="header-warning-item docker-version-warning"><strong>${esc(warning.title)}</strong>${meta?`<small>${esc(meta)}</small>`:''}<span>${esc(warning.text)}</span><div class="header-warning-actions">${link}${confirm}</div></div>`;
+024689: }
+024690: function renderHeaderWarningPopover(){
+024691:   const title=document.getElementById('headerWarningTitle');
+024692:   const list=document.getElementById('headerWarningList');
+024693:   if(title)title.textContent=t('warningTitle');
+024694:   if(!list)return;
+024695: 
+024696:   const labels=warningFilterLabels();
+024697:   const warnings=currentHeaderWarnings();
+024698:   const important=warnings.filter(warning=>warning.kind==='scan-lock');
+024699:   const versions=warnings.filter(warning=>warning.kind==='docker-version');
+024700:   const showImportant=headerWarningFilter==='all'||headerWarningFilter==='important';
+024701:   const showInfo=headerWarningFilter==='all'||headerWarningFilter==='info';
+024702:   const filters=`<div class="header-warning-filters">
+024703:     <button type="button" data-warning-filter="all" class="${headerWarningFilter==='all'?'active':''}">${esc(labels.all)}</button>
+024704:     <button type="button" data-warning-filter="important" class="${headerWarningFilter==='important'?'active':''}">${esc(labels.important)}</button>
+024705:     <button type="button" data-warning-filter="info" class="${headerWarningFilter==='info'?'active':''}">${esc(labels.info)}</button>
+024706:   </div>`;
+024707:   const importantHtml=showImportant?important.map(warning=>`<div class="header-warning-item scan-warning-item"><strong>${esc(warning.title)}</strong><span>${esc(warning.text)}</span></div>`).join(''):'';
+024708:   let infoHtml='';
+024709:   if(showInfo&&versions.length===1)infoHtml=renderDockerVersionWarning(versions[0]);
+024710:   if(showInfo&&versions.length>1){
+024711:     infoHtml=`<details class="header-warning-group"><summary>${esc(labels.versionGroup)} · ${versions.length}</summary><div class="header-warning-group-items">${versions.map(renderDockerVersionWarning).join('')}</div></details>`;
+024712:   }
+024713:   list.innerHTML=filters+importantHtml+infoHtml;
+024714: 
+024715:   list.querySelectorAll('[data-warning-filter]').forEach(button=>{
+024716:     button.onclick=event=>{event.stopPropagation();headerWarningFilter=String(button.dataset.warningFilter||'all');renderHeaderWarningPopover();};
+024717:   });
+024718:   list.querySelectorAll('[data-version-confirm]').forEach(button=>{
+024719:     button.onclick=event=>{event.stopPropagation();confirmDockerVersion(button);};
+024720:   });
+024721: }
+024722: 
+024723: async function confirmDockerVersion(button){
+024724:   if(!button||button.disabled)return;
+024725:   const stackKey=String(button.dataset.stackKey||'');
+024726:   const imageRef=String(button.dataset.imageRef||'');
+024727:   if(!stackKey||!imageRef)return;
+024728: 
+024729:   button.disabled=true;
+024730:   const original=button.textContent;
+024731:   try{
+024732:     const result=await api('/api/version-confirmation',{
+024733:       method:'POST',
+024734:       body:JSON.stringify({stack_key:stackKey,image_ref:imageRef})
+024735:     });
+024736:     button.textContent=t('dockerVersionConfirmed');
+024737:     const app=(state.data&&Array.isArray(state.data.apps))
+024738:       ?state.data.apps.find(row=>String(row.stack_key||'')===stackKey)
+024739:       :null;
+024740:     const item=app&&Array.isArray(app.items)
+024741:       ?app.items.find(row=>String(row.image_ref||'')===imageRef)
+024742:       :null;
+024743:     if(item)item.version_confirmation=(result&&result.confirmation)||{confirmed:true};
+024744:     updateHeaderWarningState();
+024745:   }catch(err){
+024746:     button.disabled=false;
+024747:     button.textContent=original;
+024748:     if(err.message!=='auth')button.title=t('dockerVersionConfirmFailed').replace('{error}',err.message||'-');
+024749:   }
+024750: }
+024751: 
+024752: function updateHeaderWarningState(){
+024753:   const button=document.getElementById('headerWarningButton');
+024754:   const popover=document.getElementById('headerWarningPopover');
+024755:   if(!button||!popover)return;
+024756: 
+024757:   const warnings=currentHeaderWarnings();
+024758:   const visible=warnings.length>0;
+024759: 
+024760:   button.hidden=!visible;
+024761:   button.textContent='!';
+024762:   button.setAttribute('aria-label',t('warningButton'));
+024763:   button.title=t('warningButton');
+024764: 
+024765:   if(!visible){
+024766:     closeHeaderWarningPopover();
+024767:     return;
+024768:   }
+024769: 
+024770:   renderHeaderWarningPopover();
+024771: }
+024772: 
+024773: function toggleHeaderWarningPopover(event){
+024774:   event?.stopPropagation();
+024775:   const button=document.getElementById('headerWarningButton');
+024776:   const popover=document.getElementById('headerWarningPopover');
+024777:   if(!button||!popover||button.hidden)return;
+024778: 
+024779:   const willOpen=popover.hidden;
+024780:   if(willOpen){
+024781:     renderHeaderWarningPopover();
+024782:     popover.hidden=false;
+024783:   }else{
+024784:     popover.hidden=true;
+024785:   }
+024786:   button.setAttribute('aria-expanded',willOpen?'true':'false');
+024787: }
+024788: 
+024789: function setScanUiLocked(locked){
+024790:   const active=!!locked;
+024791:   const body=document.body;
+024792:   const shield=document.getElementById('scanInteractionShield');
+024793: 
+024794:   if(body)body.classList.toggle('scan-ui-locked',active);
+024795: 
+
+========================================================================
+CLICK_HANDLERS 25490-25590
+========================================================================
+025490:   track.addEventListener('pointerdown',event=>{
+025491:     if(event.target===thumb)return;
+025492:     const scroller=umPageScrollElementV21();
+025493:     const viewport=Math.max(1,window.innerHeight||document.documentElement.clientHeight||1);
+025494:     const total=Math.max(viewport,scroller.scrollHeight||viewport);
+025495:     const maxScroll=Math.max(0,total-viewport);
+025496:     if(maxScroll<=0)return;
+025497: 
+025498:     const rect=track.getBoundingClientRect();
+025499:     const ratio=Math.max(0,Math.min(1,(event.clientY-rect.top)/Math.max(1,rect.height)));
+025500:     scroller.scrollTop=ratio*maxScroll;
+025501:     event.preventDefault();
+025502:   });
+025503: 
+025504:   umSchedulePageScrollbarV21();
+025505: }
+025506: umInstallPageScrollbarV21();
+025507: 
+025508: 
+025509: /* v0.3.243 — fallback guard for scan-protected mutating controls.
+025510:    Dynamic cards/dialogs are covered automatically because the selector check
+025511:    runs at event time; no MutationObserver and no DOM-wide disabling is needed. */
+025512: const scanProtectedMutationSelector=[
+025513:   '[data-update-index]',
+025514:   '[data-check-index]',
+025515:   '[data-runtime-stack]',
+025516:   '[data-uninstall-index]',
+025517:   '[data-uninstall-folder-index]',
+025518:   '#uninstallConfirmOk',
+025519:   '[data-policy-choice]',
+025520:   '[data-policy-choice-quick]',
+025521:   '[data-policy-version-toggle]',
+025522:   '[data-policy-version-option]',
+025523:   '[data-policy-apply-index]',
+025524:   '[data-auto-toggle]',
+025525:   '[data-auto-immediate]',
+025526:   '[data-auto-day]',
+025527:   '[data-auto-all-days]',
+025528:   '[data-auto-time-button]',
+025529:   '[data-time-key]',
+025530:   '[data-backup-policy-select-toggle]',
+025531:   '[data-backup-policy-value]',
+025532:   '#backupPreviewContinue',
+025533:   '#backupRestoreDelete',
+025534:   '#backupRestoreConfirm',
+025535:   '[data-backup-retention-select-toggle]',
+025536:   '[data-backup-retention-value]',
+025537:   '[data-backup-count-select-toggle]',
+025538:   '[data-backup-count-value]',
+025539:   '#backupEncryptionPassword',
+025540:   '#backupEncryptionConfirm',
+025541:   '#backupEncryptionEnable',
+025542:   '#backupEncryptionUnlock',
+025543:   '#backupEncryptionDisable',
+025544:   '#githubTokenInput',
+025545:   '#githubTokenSave',
+025546:   '#githubTokenTest',
+025547:   '#githubTokenRemove',
+025548:   '#intervalSelect',
+025549:   '#intervalSelect + .settings-custom-select',
+025550:   '[data-version-confirm]',
+025551:   '#imageSourceApply'
+025552: ].join(',');
+025553: 
+025554: function scanMutationIsLocked(){
+025555:   return state.checkingApps.size>0||!!(state.data&&state.data.state==='scanning');
+025556: }
+025557: 
+025558: function scanProtectedMutationTarget(target){
+025559:   if(!target||typeof target.closest!=='function')return null;
+025560:   return target.closest(scanProtectedMutationSelector);
+025561: }
+025562: 
+025563: document.addEventListener('click',event=>{
+025564:   if(!scanMutationIsLocked())return;
+025565:   if(!scanProtectedMutationTarget(event.target))return;
+025566:   event.preventDefault();
+025567:   event.stopImmediatePropagation();
+025568: },true);
+025569: 
+025570: document.addEventListener('keydown',event=>{
+025571:   if(!scanMutationIsLocked())return;
+025572:   if(event.key!=='Enter'&&event.key!==' ')return;
+025573:   if(!scanProtectedMutationTarget(event.target))return;
+025574:   event.preventDefault();
+025575:   event.stopImmediatePropagation();
+025576: },true);
+025577: 
+025578: 
+025579: 
+025580: document.getElementById('imageSourceClose')?.addEventListener('click',()=>closeImageSourceDialog());
+025581: document.getElementById('imageSourceBackdrop')?.addEventListener('click',event=>{
+025582:   if(event.target===event.currentTarget)closeImageSourceDialog();
+025583: });
+025584: document.addEventListener('keydown',event=>{
+025585:   if(event.key==='Escape'&&document.getElementById('imageSourceBackdrop')?.classList.contains('visible')){
+025586:     closeImageSourceDialog();
+025587:   }
+025588: });
+025589: 
+025590: 
