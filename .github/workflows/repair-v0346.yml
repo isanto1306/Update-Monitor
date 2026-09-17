@@ -1,4 +1,4 @@
-name: Repair v0.3.346 diagnostics
+name: Repair v0.3.346
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  diagnose:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repair branch
@@ -21,17 +21,28 @@ jobs:
           ref: repair-v0.3.346
           fetch-depth: 0
 
-      - name: Generate repair diagnostics
-        run: python3 scripts/repair_v0346.py
+      - name: Apply repair batch
+        run: python3 scripts/repair_v0346.py --apply
 
-      - name: Commit diagnostics report
+      - name: Compile backend
+        run: python3 -m py_compile app/main.py
+
+      - name: Run regression checks
+        run: python3 scripts/repair_v0346.py --test
+
+      - name: Validate patch whitespace
+        run: git diff --check
+
+      - name: Commit repaired release candidate
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add repair-v0346-report.txt
+          rm -f repair-v0346-report.txt scripts/repair_v0346.py .github/workflows/repair-v0346.yml
+          git add -A
+          git diff --cached --check
           if git diff --cached --quiet; then
-            echo "No report changes"
-          else
-            git commit -m "Record v0.3.346 repair diagnostics"
-            git push origin repair-v0.3.346
+            echo "No repair changes produced"
+            exit 1
           fi
+          git commit -m "Fix update and verification flows for v0.3.346"
+          git push origin repair-v0.3.346
