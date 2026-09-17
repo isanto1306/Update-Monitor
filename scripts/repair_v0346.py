@@ -11,88 +11,59 @@ REPORT = ROOT / "repair-v0346-report.txt"
 
 def function_source(source: str, name: str) -> str:
     tree = ast.parse(source)
-    candidates = [
-        node for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
-    ]
-    if not candidates:
-        return f"[MISSING FUNCTION {name}]\n"
-    node = candidates[0]
     lines = source.splitlines()
-    start = max(1, node.lineno - 3)
-    end = min(len(lines), (node.end_lineno or node.lineno) + 3)
-    numbered = [f"{idx:05d}: {lines[idx-1]}" for idx in range(start, end + 1)]
-    return "\n".join(numbered) + "\n"
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            start = max(1, node.lineno - 2)
+            end = min(len(lines), (node.end_lineno or node.lineno) + 2)
+            return "\n".join(f"{i:06d}: {lines[i-1]}" for i in range(start, end + 1)) + "\n"
+    return f"[MISSING FUNCTION {name}]\n"
 
 
-def keyword_context(source: str, patterns, context=3, max_hits=60, start_at=1):
+def first_context(source: str, label: str, pattern: str, context=16, start_at=18000):
     lines = source.splitlines()
-    compiled = [(label, re.compile(pattern, re.I)) for label, pattern in patterns]
-    hits = []
-    seen = set()
-    for idx, line in enumerate(lines, start=1):
-        if idx < start_at:
+    rx = re.compile(pattern, re.I)
+    blocks = []
+    hits = 0
+    for idx, line in enumerate(lines, 1):
+        if idx < start_at or not rx.search(line):
             continue
-        for label, rx in compiled:
-            if rx.search(line):
-                key = (idx, label)
-                if key in seen:
-                    continue
-                seen.add(key)
-                lo = max(1, idx-context)
-                hi = min(len(lines), idx+context)
-                block = [f"[{label}] line {idx}"] + [
-                    f"{n:06d}: {lines[n-1]}" for n in range(lo, hi+1)
-                ]
-                hits.append("\n".join(block))
-                if len(hits) >= max_hits:
-                    return hits
-    return hits
+        hits += 1
+        lo, hi = max(1, idx-context), min(len(lines), idx+context)
+        blocks.append(f"\n--- {label} hit {hits} @ {idx} ---\n" + "\n".join(
+            f"{n:06d}: {lines[n-1]}" for n in range(lo, hi+1)
+        ))
+        if hits >= 6:
+            break
+    return "\n".join(blocks) if blocks else f"\n--- {label}: NO MATCH ---\n"
 
 
 def main():
-    main_source = MAIN.read_text(encoding="utf-8")
-    index_source = INDEX.read_text(encoding="utf-8", errors="replace")
+    backend = MAIN.read_text(encoding="utf-8")
+    ui = INDEX.read_text(encoding="utf-8", errors="replace")
+    parts = ["UPDATE MONITOR v0.3.346 FOCUSED REPAIR DIAGNOSTICS\n"]
 
-    parts = []
-    parts.append("UPDATE MONITOR v0.3.346 REPAIR DIAGNOSTICS\n")
-    version = re.search(r'^VERSION\s*=\s*"([^"]+)"', main_source, re.M)
-    parts.append(f"Current backend version: {version.group(1) if version else 'UNKNOWN'}\n")
-    parts.append(f"main.py bytes: {len(main_source.encode('utf-8'))}\n")
-    parts.append(f"index.html bytes: {len(index_source.encode('utf-8'))}\n")
-
-    names = [
-        "schedule_app_scan",
-        "_scan_thread_entry",
-        "_start_scan_with_operation_lock",
+    for name in [
         "build_apps",
         "apply_monitor_policy_fields",
-        "refresh_scan_policy_fields",
         "_verify_restore_runtime",
-        "restore_app_backup",
         "app_update",
         "app_policy",
         "casaos_compose_project_exists",
-        "container_stack_metadata",
-    ]
-    for name in names:
-        parts.append("\n" + "="*90 + f"\nFUNCTION {name}\n" + "="*90 + "\n")
-        parts.append(function_source(main_source, name))
+    ]:
+        parts.append("\n" + "="*70 + f"\n{name}\n" + "="*70 + "\n")
+        parts.append(function_source(backend, name))
 
-    ui_patterns = [
-        ("INSTALL_KEY_USAGE", r"installUpdate|data-update-index|update-install-button"),
-        ("UNINSTALL_KEY_USAGE", r"uninstallButton|data-uninstall-index|uninstall-button"),
-        ("ERROR_RENDER", r"errorStatus|error_count|status.?===?.?['\"]ERROR|status.?==?.?['\"]ERROR|item\.detail|\.detail\s*\?"),
-        ("WARNING_RENDER", r"headerWarningList|headerWarningButton|warningTitle|warningButton|renderWarning|warningItems|warningList"),
-        ("POLICY_RENDER", r"policyVersionSelect|policyAvailable|fixedNotice|effective_status|can_version_update|can_image_update|monitor_policy"),
-        ("POST_SCAN_UI", r"pendingPostScans|checkingApps|verifyingApps|verificationBaselines|checkBaselines|verificationPhase|restoreVerificationApps"),
-        ("SCAN_API_USAGE", r"pending_app|pendingApp|post_scan|postScan|action_progress|actionProgress"),
-        ("DOCKER_INFO", r"dockerInfo|docker-info|Docker information|Docker Information|Docker Informationen"),
+    patterns = [
+        ("POST_SCAN", r"pendingPostScans|verifyingApps|verificationBaselines|checkingApps|verificationPhase|restoreVerificationApps"),
+        ("UPDATE_BUTTON", r"installUpdate|data-update-index|update-install-button"),
+        ("UNINSTALL_BUTTON", r"uninstallButton|data-uninstall-index|uninstall-button"),
+        ("POLICY_STATE", r"policyVersionSelect|fixedNotice|effective_status|can_version_update|monitor_policy"),
+        ("ERROR_DETAILS", r"headerWarningList|warningTitle|errorStatus|error_count|item\.detail|Docker information|Docker Informationen"),
     ]
-    parts.append("\n" + "="*90 + "\nUI JS/RENDER CONTEXT\n" + "="*90 + "\n")
-    hits = keyword_context(index_source, ui_patterns, context=8, max_hits=260, start_at=18000)
-    parts.extend(hit + "\n\n" for hit in hits)
-    parts.append(f"UI hits written: {len(hits)}\n")
+    for label, pattern in patterns:
+        parts.append("\n" + "="*70 + f"\nUI {label}\n" + "="*70 + "\n")
+        parts.append(first_context(ui, label, pattern))
 
     REPORT.write_text("".join(parts), encoding="utf-8")
     print(REPORT)
