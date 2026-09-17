@@ -1,0 +1,21 @@
+name: Extract repair context
+on:
+  push:
+    branches: [fix-v0.3.346]
+    paths: ['.github/workflows/extract-fix-context.yml']
+permissions:
+  contents: write
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-v0.3.346
+      - run: python .github/scripts/extract_fix_context.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix-context-backend.txt fix-context-ui.txt
+          git commit -m "Add v0.3.346 repair contexts"
+          git push origin HEAD:fix-v0.3.346
