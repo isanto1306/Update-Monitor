@@ -1,0 +1,217 @@
+name: Apply v0.3.348 repair
+
+on:
+  push:
+    branches:
+      - fix-v0.3.348
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-v0.3.348
+          fetch-depth: 0
+
+      - name: Apply digest and version fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('app/main.py')
+          text = p.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'VERSION = "0.3.347"',
+              'VERSION = "0.3.348"',
+              'backend version',
+          )
+
+          replace_once(
+              '''_DYNAMIC_REGISTRY_TAGS = {\n    "latest", "stable", "main", "master", "develop", "development",\n    "nightly", "edge", "testing", "test", "dev",\n}\n_ARCH_TAG_PREFIXES = (''',
+              '''_DYNAMIC_REGISTRY_TAGS = {\n    "latest", "stable", "main", "master", "develop", "development",\n    "nightly", "edge", "testing", "test", "dev",\n}\n\n\ndef _is_build_identity_tag(tag):\n    """Return True for CI commit-identity tags, not user release versions."""\n    value = str(tag or "").strip()\n    return bool(re.fullmatch(r"sha-[0-9a-f]{7,64}", value, re.I))\n\n\n_ARCH_TAG_PREFIXES = (''',
+              'build identity helper',
+          )
+
+          replace_once(
+              '''        if lower in _DYNAMIC_REGISTRY_TAGS:\n            continue\n        if _is_arch_specific_tag(tag):''',
+              '''        if lower in _DYNAMIC_REGISTRY_TAGS:\n            continue\n        if _is_build_identity_tag(tag):\n            # GitHub Actions publishes sha-<commit> aliases for traceability.\n            # They identify a build, but they are not human release versions.\n            continue\n        if _is_arch_specific_tag(tag):''',
+              'registry sha filter',
+          )
+
+          replace_once(
+              '''        if not github_tag:\n            continue\n\n        # Prefer the actual Docker tag when an exact/v-prefix-equivalent tag''',
+              '''        if not github_tag:\n            continue\n        if _is_build_identity_tag(github_tag):\n            continue\n\n        # Prefer the actual Docker tag when an exact/v-prefix-equivalent tag''',
+              'github sha filter',
+          )
+
+          replace_once(
+              '''        if tag:\n            candidates.append(tag)\n\n    if not candidates:''',
+              '''        if tag and not _is_build_identity_tag(tag):\n            candidates.append(tag)\n\n    if not candidates:''',
+              'local repotag sha filter',
+          )
+
+          replace_once(
+              '''                    and previous_local == current_local\n                    and not previous_is_untrusted_label\n                ):''',
+              '''                    and previous_local == current_local\n                    and not previous_is_untrusted_label\n                    and not _is_build_identity_tag(previous_resolved)\n                ):''',
+              'stale sha cache guard',
+          )
+
+          replace_once(
+              '''    evidence = set()\n    for source in (runtime_refs or [], local_repo_tags or []):\n        for candidate in source if isinstance(source, (list, tuple, set)) else []:\n            candidate = str(candidate or "").strip()\n            if candidate:\n                evidence.add(candidate.lower())\n\n    if normalized_target in evidence:\n        return tag_ref''',
+              '''    evidence = set()\n    target_repo = str(parsed.get("normalized_repo") or "").strip().lower()\n    for source in (runtime_refs or [], local_repo_tags or []):\n        for candidate in source if isinstance(source, (list, tuple, set)) else []:\n            candidate = str(candidate or "").strip()\n            if not candidate:\n                continue\n            evidence.add(candidate.lower())\n\n            # ZimaOS can expose the already-resolved latest reference through\n            # Docker as repo:latest@sha256:<digest> instead of repo:latest.\n            # Canonicalize only same-repository latest refs. Numbered tags and\n            # digest-only refs remain immutable pins.\n            candidate_parsed = parse_image_ref(candidate)\n            if (\n                str(candidate_parsed.get("tag") or "").strip().lower() == "latest"\n                and str(candidate_parsed.get("normalized_repo") or "").strip().lower() == target_repo\n            ):\n                candidate_base = str(candidate_parsed.get("base") or "").strip().lower()\n                if candidate_base:\n                    evidence.add(candidate_base)\n\n    if normalized_target in evidence:\n        return tag_ref''',
+              'zima latest digest normalization',
+          )
+
+          p.write_text(text, encoding='utf-8')
+
+          # Synchronize active release/cache markers only. Historical comments stay untouched.
+          p = Path('static/index.html')
+          s = p.read_text(encoding='utf-8')
+          active_patterns = [
+              ('favicon.ico?v=0.3.347', 'favicon.ico?v=0.3.348'),
+              ('favicon-16x16.png?v=0.3.347', 'favicon-16x16.png?v=0.3.348'),
+              ('favicon-32x32.png?v=0.3.347', 'favicon-32x32.png?v=0.3.348'),
+              ('apple-touch-icon.png?v=0.3.347', 'apple-touch-icon.png?v=0.3.348'),
+              ('site.webmanifest?v=0.3.347', 'site.webmanifest?v=0.3.348'),
+              ('id="systemInfoVersion">v0.3.347<', 'id="systemInfoVersion">v0.3.348<'),
+              ("const UPDATE_MONITOR_VERSION = 'v0.3.347';", "const UPDATE_MONITOR_VERSION = 'v0.3.348';"),
+          ]
+          for old, new in active_patterns:
+              if s.count(old) != 1:
+                  raise SystemExit(f'index marker expected once: {old} -> {s.count(old)}')
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('static/site.webmanifest')
+          s = p.read_text(encoding='utf-8')
+          if s.count('v=0.3.347') != 2:
+              raise SystemExit('webmanifest expected two 0.3.347 cache markers')
+          p.write_text(s.replace('v=0.3.347', 'v=0.3.348'), encoding='utf-8')
+
+          p = Path('README.md')
+          s = p.read_text(encoding='utf-8')
+          old = 'Current release: **v0.3.347**'
+          if s.count(old) != 1:
+              raise SystemExit('README release marker mismatch')
+          p.write_text(s.replace(old, 'Current release: **v0.3.348**', 1), encoding='utf-8')
+
+          p = Path('docker-compose.zimaos.yml')
+          s = p.read_text(encoding='utf-8')
+          if s.count('version: "0.3.347"') != 1:
+              raise SystemExit('ZimaOS compose version marker mismatch')
+          s = s.replace('version: "0.3.347"', 'version: "0.3.348"', 1)
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('translation-audit-current.json')
+          s = p.read_text(encoding='utf-8')
+          if s.count('"version": "v0.3.347"') != 1:
+              raise SystemExit('translation audit version marker mismatch')
+          p.write_text(s.replace('"version": "v0.3.347"', '"version": "v0.3.348"', 1), encoding='utf-8')
+          PY
+
+      - name: Install test dependencies
+        run: python3 -m pip install -q -r requirements.txt
+
+      - name: Run v0.3.348 regressions
+        env:
+          PYTHONPATH: app
+          UPDATE_MONITOR_USERNAME: regression
+          UPDATE_MONITOR_PASSWORD: regression-password
+          UPDATE_MONITOR_SESSION_SECRET: regression-session-secret-0123456789abcdef
+          UPDATE_MONITOR_CACHE_DIR: ${{ runner.temp }}/um-cache
+          UPDATE_MONITOR_STATIC_DIR: ${{ github.workspace }}/static
+          UPDATE_MONITOR_BACKUP_DIR: ${{ runner.temp }}/um-backups
+        run: |
+          python3 -m py_compile app/main.py
+          python3 - <<'PY'
+          import main as m
+
+          tags = m.registry_selectable_version_tags(
+              ['latest', 'sha-88008de', 'sha-ABCDEF012345', '0.32.85', '0.32.86'],
+              repo_key='ghcr.io/isanto1306/disk-monitor',
+              current_tag='latest',
+          )
+          assert 'sha-88008de' not in tags, tags
+          assert 'sha-ABCDEF012345' not in tags, tags
+          assert '0.32.86' in tags and '0.32.85' in tags, tags
+
+          local = m._local_repo_tag_versions({
+              'image_ref': 'ghcr.io/isanto1306/disk-monitor:latest',
+              'local_repo_tags': [
+                  'ghcr.io/isanto1306/disk-monitor:sha-88008de',
+                  'ghcr.io/isanto1306/disk-monitor:0.32.86',
+              ],
+          })
+          assert local == ['0.32.86'], local
+
+          digest = 'sha256:' + ('a' * 64)
+          latest_digest = f'ghcr.io/isanto1306/disk-monitor:latest@{digest}'
+          normalized = m.zimaos_managed_latest_digest_ref(
+              latest_digest,
+              runtime_refs=[latest_digest],
+              local_repo_tags=['ghcr.io/isanto1306/disk-monitor:sha-88008de'],
+          )
+          assert normalized == 'ghcr.io/isanto1306/disk-monitor:latest', normalized
+
+          assert m.zimaos_managed_latest_digest_ref(
+              f'ghcr.io/isanto1306/disk-monitor:0.32.86@{digest}',
+              runtime_refs=[],
+              local_repo_tags=[],
+          ) is None
+          assert m.zimaos_managed_latest_digest_ref(
+              f'ghcr.io/isanto1306/disk-monitor@{digest}',
+              runtime_refs=[],
+              local_repo_tags=[],
+          ) is None
+
+          app = {'items': [{
+              'image_ref': 'ghcr.io/isanto1306/disk-monitor:latest',
+              'update_policy': 'follow_tag',
+              'available_version_tags': ['0.32.86', '0.32.85'],
+              'newer_tags': ['0.32.86'],
+              'resolved_installed_tag': None,
+              'tag': 'latest',
+              'containers': [{}],
+          }]}
+          groups = m.build_version_groups(app)
+          assert len(groups) == 1, groups
+          assert groups[0]['available']['display_tags'] == ['0.32.86', '0.32.85'], groups
+          print('v0.3.348 regression tests passed')
+          PY
+          git diff --check
+
+      - name: Validate synchronized active version markers
+        run: |
+          grep -n '^VERSION = "0.3.348"' app/main.py
+          grep -n 'systemInfoVersion">v0.3.348<' static/index.html
+          grep -n "UPDATE_MONITOR_VERSION = 'v0.3.348'" static/index.html
+          grep -n 'Current release: \*\*v0.3.348\*\*' README.md
+          grep -n 'version: "0.3.348"' docker-compose.zimaos.yml
+          grep -n '"version": "v0.3.348"' translation-audit-current.json
+          if grep -nE 'favicon[^" ]*\?v=0\.3\.347|site\.webmanifest\?v=0\.3\.347' static/index.html; then exit 1; fi
+          if grep -n 'v=0.3.347' static/site.webmanifest; then exit 1; fi
+
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py static/index.html static/site.webmanifest README.md docker-compose.zimaos.yml translation-audit-current.json
+          if git diff --cached --quiet; then
+            echo "Repair already applied"
+          else
+            git commit -m "Fix digest and release version detection in v0.3.348"
+            git push origin fix-v0.3.348
+          fi
