@@ -1,0 +1,2536 @@
+UPDATE MONITOR v0.3.346 REPAIR DIAGNOSTICS
+Current backend version: 0.3.345
+main.py bytes: 641768
+index.html bytes: 5971828
+
+==========================================================================================
+FUNCTION schedule_app_scan
+==========================================================================================
+10023:     return value if isinstance(value, dict) else None
+10024: 
+10025: 
+10026: def schedule_app_scan(
+10027:     stack_key,
+10028:     delay=8.0,
+10029:     max_wait_seconds=900,
+10030:     verification_result=None,
+10031: ):
+10032:     """
+10033:     Queue exactly one authoritative post-action scan for an app.
+10034: 
+10035:     v0.3.117 could create multiple waiter threads for the same app. After the
+10036:     operation lock became free those waiters ran the same targeted scan one
+10037:     after another, which looked like an endless update check and could starve
+10038:     automatic installation.
+10039:     """
+10040:     stack_key = str(stack_key or "").strip()
+10041:     if not stack_key:
+10042:         return False
+10043:     if self_update_handoff_owned_by_current_process(stack_key):
+10044:         return False
+10045: 
+10046:     requested_at = utc_now()
+10047:     verified_targets = _post_update_verified_targets(verification_result)
+10048: 
+10049:     with post_scan_lock:
+10050:         if stack_key in post_scan_pending:
+10051:             # One pending authoritative scan is sufficient. If a successful
+10052:             # update supplied stronger verification evidence, preserve it.
+10053:             if verified_targets:
+10054:                 current = post_scan_pending.get(stack_key) or {}
+10055:                 merged = dict(current.get("verified_targets") or {})
+10056:                 merged.update(verified_targets)
+10057:                 current["verified_targets"] = merged
+10058:                 post_scan_pending[stack_key] = current
+10059:             return False
+10060:         post_scan_pending[stack_key] = {
+10061:             "requested_at": requested_at,
+10062:             "created_at": requested_at,
+10063:             "verified_targets": verified_targets,
+10064:         }
+10065: 
+10066:     def waiter():
+10067:         try:
+10068:             time.sleep(max(0.0, float(delay)))
+10069:             deadline = time.time() + max(5.0, float(max_wait_seconds))
+10070: 
+10071:             while time.time() < deadline:
+10072:                 # A newer full/targeted scan may already have refreshed this app
+10073:                 # (for example because the user explicitly started a full scan).
+10074:                 if _scan_result_is_newer_than_request(stack_key, requested_at):
+10075:                     return
+10076: 
+10077:                 if start_app_scan(stack_key):
+10078:                     # Keep the pending marker until the scan thread really ends.
+10079:                     # This blocks stale-state automation decisions in between.
+10080:                     while True:
+10081:                         with scan_lock:
+10082:                             thread = scan_thread
+10083:                             scanning = scan_state.get("state") == "scanning"
+10084:                         if not scanning and (not thread or not thread.is_alive()):
+10085:                             break
+10086:                         time.sleep(0.25)
+10087:                     return
+10088: 
+10089:                 # If the app disappeared and no scan/update is active, there is
+10090:                 # nothing left to verify.
+10091:                 if not app_update_lock.locked():
+10092:                     with scan_lock:
+10093:                         exists = any(
+10094:                             app_item.get("stack_key") == stack_key
+10095:                             for app_item in (scan_state.get("apps") or [])
+10096:                         )
+10097:                     if not exists:
+10098:                         return
+10099: 
+10100:                 time.sleep(1.0)
+10101:         finally:
+10102:             with post_scan_lock:
+10103:                 post_scan_pending.pop(stack_key, None)
+10104: 
+10105:     thread = threading.Thread(
+10106:         target=waiter,
+10107:         name="update-monitor-post-update-scan-waiter",
+10108:         daemon=True,
+10109:     )
+10110:     thread.start()
+10111:     return True
+10112: 
+10113: 
+10114: 
+
+==========================================================================================
+FUNCTION _scan_thread_entry
+==========================================================================================
+09830:     return True
+09831: 
+09832: 
+09833: def _scan_thread_entry(stack_key=None):
+09834:     """
+09835:     Run one scan while owning the same exclusive operation lock used by Docker
+09836:     updates, uninstall and runtime changes.
+09837: 
+09838:     The common operation gate prevents scans from overlapping Compose/image updates.
+09839:     That could capture a transitional old state and later overwrite the fresh
+09840:     result with "Update installieren" again.
+09841:     """
+09842:     try:
+09843:         scan_all(stack_key)
+09844:     finally:
+09845:         app_update_lock.release()
+09846: 
+09847: 
+09848: def _start_scan_with_operation_lock(stack_key=None, *, origin="unknown"):
+
+==========================================================================================
+FUNCTION _start_scan_with_operation_lock
+==========================================================================================
+09845:         app_update_lock.release()
+09846: 
+09847: 
+09848: def _start_scan_with_operation_lock(stack_key=None, *, origin="unknown"):
+09849:     global scan_thread
+09850: 
+09851:     stack_key = str(stack_key or "").strip() or None
+09852: 
+09853:     # Full scans are subject to the strict central gate. A targeted verification
+09854:     # is intentionally exempt from the "pending targeted scan" check because it
+09855:     # is the operation that consumes that pending marker.
+09856:     if stack_key is None:
+09857:         if full_scan_block_reason():
+09858:             return False
+09859: 
+09860:     # Atomic common gate: if an update/uninstall/restore/source switch already
+09861:     # owns the operation lock, neither a full nor targeted scan can overlap it.
+09862:     if not app_update_lock.acquire(blocking=False):
+09863:         return False
+09864: 
+09865:     try:
+09866:         # Re-check the full-scan-only conditions after acquiring the lock to
+09867:         # close the race between the first check and lock acquisition.
+09868:         if stack_key is None:
+09869:             if active_mutating_action_keys() or has_pending_targeted_app_scan():
+09870:                 app_update_lock.release()
+09871:                 return False
+09872: 
+09873:         with scan_lock:
+09874:             if scan_thread and scan_thread.is_alive():
+09875:                 app_update_lock.release()
+09876:                 return False
+09877: 
+09878:             if scan_state.get("state") == "scanning":
+09879:                 app_update_lock.release()
+09880:                 return False
+09881: 
+09882:             if stack_key:
+09883:                 exists = any(
+09884:                     app_item.get("stack_key") == stack_key
+09885:                     for app_item in (scan_state.get("apps") or [])
+09886:                 )
+09887:                 if not exists:
+09888:                     app_update_lock.release()
+09889:                     return False
+09890: 
+09891:             scan_thread = threading.Thread(
+09892:                 target=_scan_thread_entry,
+09893:                 args=(stack_key,),
+09894:                 name=(
+09895:                     "update-monitor-scan-app"
+09896:                     if stack_key
+09897:                     else f"update-monitor-scan-all-{str(origin or 'unknown')}"
+09898:                 ),
+09899:                 daemon=True,
+09900:             )
+09901:             scan_thread.start()
+09902:             return True
+09903: 
+09904:     except Exception:
+09905:         if app_update_lock.locked():
+09906:             app_update_lock.release()
+09907:         raise
+09908: 
+09909: def start_scan(origin="manual"):
+09910:     """Start a full scan only when no Docker action/targeted verification exists."""
+
+==========================================================================================
+FUNCTION build_apps
+==========================================================================================
+07987:     return runtime_state, running_count, len(completed), len(active)
+07988: 
+07989: 
+07990: def build_apps(results):
+07991:     grouped = {}
+07992:     for item in results:
+07993:         key = item.get("stack_key") or ("image:" + item.get("image_ref", "unknown"))
+07994:         app_item = grouped.setdefault(key, {
+07995:             "stack_key": key,
+07996:             "name": item.get("display_title") or item.get("stack_name") or item.get("display_name") or item.get("image_ref"),
+07997:             "has_display_title": bool(item.get("display_title")),
+07998:             "compose_project": item.get("compose_project"),
+07999:             "compose_working_dir": item.get("compose_working_dir"),
+08000:             "compose_config_files": item.get("compose_config_files"),
+08001:             "icon_url": item.get("icon_url"),
+08002:             "project_url": item.get("project_url"),
+08003:             "project_provider": item.get("project_provider"),
+08004:             "project_url_source": item.get("project_url_source"),
+08005:             "items": [],
+08006:             "containers": [],
+08007:         })
+08008:         if not app_item.get("icon_url") and item.get("icon_url"):
+08009:             app_item["icon_url"] = item.get("icon_url")
+08010:         if not app_item.get("project_url") and item.get("project_url"):
+08011:             app_item["project_url"] = item.get("project_url")
+08012:             app_item["project_provider"] = item.get("project_provider")
+08013:             app_item["project_url_source"] = item.get("project_url_source")
+08014:         if not app_item.get("has_display_title") and item.get("display_title"):
+08015:             app_item["name"] = item.get("display_title")
+08016:             app_item["has_display_title"] = True
+08017:         app_item["items"].append(item)
+08018:         for container in item.get("containers", []):
+08019:             if not any(existing.get("name") == container.get("name") for existing in app_item["containers"]):
+08020:                 app_item["containers"].append(container)
+08021: 
+08022:     backup_index = backup_summary_index()
+08023: 
+08024:     apps = []
+08025:     for app_item in grouped.values():
+08026:         items = app_item["items"]
+08027:         statuses = [x.get("status") for x in items]
+08028:         update_count = sum(1 for s in statuses if s in {"IMAGE_UPDATE", "VERSION_UPDATE"})
+08029:         image_update_count = statuses.count("IMAGE_UPDATE")
+08030:         version_update_count = statuses.count("VERSION_UPDATE")
+08031:         error_count = statuses.count("ERROR")
+08032:         pinned_count = statuses.count("PINNED")
+08033:         local_count = statuses.count("LOCAL")
+08034:         fixed_count = sum(1 for x in items if x.get("update_policy") == "fixed_version")
+08035:         held_update_count = sum(
+08036:             1 for x in items
+08037:             if x.get("update_policy") == "fixed_version" and x.get("newer_tag")
+08038:         )
+08039:         can_image_update = any(
+08040:             x.get("status") == "IMAGE_UPDATE"
+08041:             and x.get("update_policy") == "follow_tag"
+08042:             and x.get("compose_project")
+08043:             for x in items
+08044:         )
+08045: 
+08046:         if image_update_count:
+08047:             aggregate_status = "IMAGE_UPDATE"
+08048:         elif version_update_count:
+08049:             aggregate_status = "VERSION_UPDATE"
+08050:         elif error_count:
+08051:             aggregate_status = "ERROR"
+08052:         elif statuses and all(s == "PINNED" for s in statuses):
+08053:             aggregate_status = "PINNED"
+08054:         elif statuses and all(s == "LOCAL" for s in statuses):
+08055:             aggregate_status = "LOCAL"
+08056:         else:
+08057:             aggregate_status = "CURRENT"
+08058: 
+08059:         name = app_item.get("name")
+08060:         if not app_item.get("has_display_title"):
+08061:             if _looks_generated_stack_name(name) or _looks_generated_stack_name(app_item.get("compose_project")):
+08062:                 name = _common_container_name(app_item["containers"]) or name
+08063:             name = clean_display_name(name)
+08064: 
+08065:         runtime_state, running_count, completed_count, active_container_count = (
+08066:             _aggregate_app_runtime(app_item["containers"])
+08067:         )
+08068: 
+08069:         created_values = [
+08070:             str(container.get("created_at") or "").strip()
+08071:             for container in app_item["containers"]
+08072:             if str(container.get("created_at") or "").strip()
+08073:         ]
+08074:         last_updated_at = max(created_values) if created_values else None
+08075:         app_ports = []
+08076:         seen_app_ports = set()
+08077:         for container in app_item["containers"]:
+08078:             for port_value in container.get("ports") or []:
+08079:                 port_value = str(port_value or "").strip()
+08080:                 if not port_value:
+08081:                     continue
+08082:                 port_key = port_value.casefold()
+08083:                 if port_key in seen_app_ports:
+08084:                     continue
+08085:                 seen_app_ports.add(port_key)
+08086:                 app_ports.append(port_value)
+08087: 
+08088:         def app_port_sort_key(value):
+08089:             raw = str(value or "")
+08090:             number = raw.split("/", 1)[0]
+08091:             try:
+08092:                 return (0, int(number), raw)
+08093:             except Exception:
+08094:                 return (1, 0, raw.lower())
+08095: 
+08096:         app_ports.sort(key=app_port_sort_key)
+08097: 
+08098:         built_app = {
+08099:             "stack_key": app_item["stack_key"],
+08100:             "name": name,
+08101:             "compose_project": app_item.get("compose_project"),
+08102:             "icon_url": app_item.get("icon_url"),
+08103:             "project_url": app_item.get("project_url"),
+08104:             "project_provider": app_item.get("project_provider"),
+08105:             "project_url_source": app_item.get("project_url_source"),
+08106:             "status": aggregate_status,
+08107:             "runtime_state": runtime_state,
+08108:             "running_count": running_count,
+08109:             "completed_count": completed_count,
+08110:             "active_container_count": active_container_count,
+08111:             "last_updated_at": last_updated_at,
+08112:             "update_count": update_count,
+08113:             "image_update_count": image_update_count,
+08114:             "version_update_count": version_update_count,
+08115:             "error_count": error_count,
+08116:             "pinned_count": pinned_count,
+08117:             "local_count": local_count,
+08118:             "fixed_count": fixed_count,
+08119:             "held_update_count": held_update_count,
+08120:             "can_image_update": can_image_update,
+08121:             "image_count": len(items),
+08122:             "container_count": len(app_item["containers"]),
+08123:             "ports": app_ports,
+08124:             "containers": sorted(app_item["containers"], key=lambda x: str(x.get("name", "")).lower()),
+08125:             "items": sorted(items, key=lambda x: str(x.get("image_ref", "")).lower()),
+08126:             "backup_summary": backup_summary_for_app(
+08127:                 backup_index,
+08128:                 app_item["stack_key"],
+08129:                 app_item.get("compose_project"),
+08130:             ),
+08131:             "image_source_available": image_source_available_for_app(app_item),
+08132:             "self_protected": is_update_monitor_self_app(app_item),
+08133:         }
+08134:         apply_monitor_policy_fields(built_app)
+08135: 
+08136:         # v0.3.310: A discovered newer VERSION is informational while the
+08137:         # app policy is "fixed".  "Version fixiert" means the user explicitly
+08138:         # chose to keep the configured version, so that newer tag must not be
+08139:         # counted or presented as an actionable update.  Same-tag IMAGE updates
+08140:         # remain actionable because they do not change the configured version.
+08141:         policy_mode = str((built_app.get("monitor_policy") or {}).get("mode") or "fixed")
+08142:         effective_version_update_count = (
+08143:             0 if policy_mode == "fixed" else int(built_app.get("version_update_count") or 0)
+08144:         )
+08145:         if policy_mode != "fixed" and built_app.get("can_version_update"):
+08146:             effective_version_update_count = max(1, effective_version_update_count)
+08147:         effective_image_update_count = int(built_app.get("image_update_count") or 0)
+08148:         effective_update_count = effective_image_update_count + effective_version_update_count
+08149: 
+08150:         if effective_image_update_count:
+08151:             effective_status = "IMAGE_UPDATE"
+08152:         elif effective_version_update_count:
+08153:             effective_status = "VERSION_UPDATE"
+08154:         elif built_app.get("error_count"):
+08155:             effective_status = "ERROR"
+08156:         elif statuses and all(s == "PINNED" for s in statuses):
+08157:             effective_status = "PINNED"
+08158:         elif statuses and all(s == "LOCAL" for s in statuses):
+08159:             effective_status = "LOCAL"
+08160:         else:
+08161:             effective_status = "CURRENT"
+08162: 
+08163:         built_app["effective_update_count"] = effective_update_count
+08164:         built_app["effective_version_update_count"] = effective_version_update_count
+08165:         built_app["effective_status"] = effective_status
+08166:         apps.append(built_app)
+08167: 
+08168:     apps.sort(key=lambda x: str(x.get("name", "")).lower())
+08169:     summary = {
+08170:         "UPDATES": sum(1 for x in apps if int(x.get("effective_update_count") or 0) > 0),
+08171:         "CURRENT": sum(1 for x in apps if int(x.get("effective_update_count") or 0) == 0 and x["error_count"] == 0 and x["pinned_count"] == 0 and x["local_count"] == 0),
+08172:         "FIXED": sum(1 for x in apps if x["fixed_count"] > 0),
+08173:         "PINNED": sum(1 for x in apps if x["pinned_count"] > 0),
+08174:         "LOCAL": sum(1 for x in apps if x["local_count"] > 0),
+08175:         "ERROR": sum(1 for x in apps if x["error_count"] > 0),
+08176:         "TOTAL": len(apps),
+08177:     }
+08178:     return apps, summary
+08179: 
+08180: 
+08181: 
+
+==========================================================================================
+FUNCTION apply_monitor_policy_fields
+==========================================================================================
+04373:     return dict((data.get("per_alias") or {}).get(alias) or {})
+04374: 
+04375: 
+04376: def apply_monitor_policy_fields(app_item):
+04377:     policy = get_monitor_policy(app_item.get("stack_key"))
+04378:     group = select_primary_version_group(app_item)
+04379:     available_tags = (
+04380:         list((group.get("available") or {}).get("display_tags") or [])
+04381:         if group else []
+04382:     )
+04383:     common_newer_tags = (
+04384:         list((group.get("newer") or {}).get("display_tags") or [])
+04385:         if group else []
+04386:     )
+04387: 
+04388:     mode = policy.get("mode") or "fixed"
+04389:     target_tag = str(policy.get("target_tag") or "").strip() or None
+04390:     can_version_update = False
+04391: 
+04392:     current_aliases = {
+04393:         _version_alias(value)
+04394:         for value in ((group or {}).get("current_tags") or [])
+04395:         if _version_alias(value)
+04396:     }
+04397: 
+04398:     follow_tag_switch_only = False
+04399:     follow_target_state = None
+04400: 
+04401:     if app_item.get("compose_project") and group:
+04402:         if mode == "follow":
+04403:             # A different tag name does not automatically mean a different image.
+04404:             # If all mismatched members already have the exact :latest digest,
+04405:             # suppress "Update installieren" and normalize only the Compose tag.
+04406:             group_items = list((group or {}).get("items") or [])
+04407:             mismatched = [
+04408:                 item
+04409:                 for item in group_items
+04410:                 if str(_version_item_current_tag(item) or "").strip().lower()
+04411:                 != FOLLOW_POLICY_TAG
+04412:             ]
+04413: 
+04414:             if mismatched:
+04415:                 target_states = [
+04416:                     str(item.get("follow_target_state") or "unknown")
+04417:                     for item in mismatched
+04418:                 ]
+04419:                 states = [item.get("follow_target_same_image") for item in mismatched]
+04420:                 if any(value == "missing" for value in target_states):
+04421:                     # At least one image in this version family has no :latest
+04422:                     # tag.  A family-wide follow transition is therefore not
+04423:                     # installable and must never be auto-attempted.
+04424:                     follow_target_state = "unavailable"
+04425:                     can_version_update = False
+04426:                 elif states and all(value is True for value in states):
+04427:                     follow_tag_switch_only = True
+04428:                     follow_target_state = "same-image"
+04429:                     can_version_update = False
+04430:                 else:
+04431:                     follow_target_state = (
+04432:                         "different-image"
+04433:                         if any(value is False for value in states)
+04434:                         else "unknown"
+04435:                     )
+04436:                     can_version_update = True
+04437:             else:
+04438:                 follow_target_state = "already-following"
+04439:                 can_version_update = False
+04440: 
+04441:         elif mode == "upgrade" and target_tag in available_tags:
+04442:             # Manual selection may intentionally move backwards, but changing
+04443:             # to the version already configured for the whole family is a no-op.
+04444:             can_version_update = _version_alias(target_tag) not in current_aliases
+04445: 
+04446:     app_item["monitor_policy"] = policy
+04447:     app_item["policy_available_tags"] = available_tags
+04448:     app_item["policy_follow_tag"] = FOLLOW_POLICY_TAG
+04449:     app_item["follow_tag_switch_only"] = follow_tag_switch_only
+04450:     app_item["follow_target_state"] = follow_target_state
+04451:     app_item["can_version_update"] = can_version_update
+04452:     app_item["installed_version"] = _version_group_installed_tag(group) if group else None
+04453:     app_item["version_group"] = _public_version_group(group)
+04454:     app_item["version_group_state"] = (
+04455:         "selected"
+04456:         if group
+04457:         else ("ambiguous" if len(build_version_groups(app_item)) > 1 else "none")
+04458:     )
+04459:     return app_item
+04460: 
+04461: 
+04462: def refresh_scan_policy_fields():
+
+==========================================================================================
+FUNCTION refresh_scan_policy_fields
+==========================================================================================
+04459:     return app_item
+04460: 
+04461: 
+04462: def refresh_scan_policy_fields():
+04463:     changed = False
+04464:     with scan_lock:
+04465:         for app_item in scan_state.get("apps") or []:
+04466:             before = (
+04467:                 dict(app_item.get("monitor_policy") or {}),
+04468:                 list(app_item.get("policy_available_tags") or []),
+04469:                 bool(app_item.get("can_version_update")),
+04470:             )
+04471:             apply_monitor_policy_fields(app_item)
+04472:             after = (
+04473:                 dict(app_item.get("monitor_policy") or {}),
+04474:                 list(app_item.get("policy_available_tags") or []),
+04475:                 bool(app_item.get("can_version_update")),
+04476:             )
+04477:             if before != after:
+04478:                 changed = True
+04479: 
+04480:         if changed:
+04481:             save_json(SCAN_FILE, scan_state)
+04482: 
+04483: 
+04484: 
+
+==========================================================================================
+FUNCTION _verify_restore_runtime
+==========================================================================================
+14941:     return verified
+14942: 
+14943: 
+14944: def _verify_restore_runtime(meta, container_names):
+14945:     snapshots = _backup_container_runtime_map(meta)
+14946:     verified = 0
+14947:     for name in container_names:
+14948:         expected = snapshots.get(name) or {}
+14949:         expected_state = str(expected.get("state") or "").strip().lower()
+14950:         if not expected_state:
+14951:             expected_state = (
+14952:                 "running"
+14953:                 if name in set(meta.get("running_containers_before_backup") or [])
+14954:                 else "exited"
+14955:             )
+14956:         try:
+14957:             baseline_restarts = int(expected.get("restart_count") or 0)
+14958:         except Exception:
+14959:             baseline_restarts = 0
+14960:         try:
+14961:             expected_exit = expected.get("exit_code")
+14962:             expected_exit = None if expected_exit is None else int(expected_exit)
+14963:         except Exception:
+14964:             expected_exit = None
+14965: 
+14966:         try:
+14967:             wait_for_image_source_runtime_stable(
+14968:                 name,
+14969:                 timeout=120,
+14970:                 stable_seconds=12,
+14971:                 baseline_restart_count=baseline_restarts,
+14972:                 expected_state=expected_state,
+14973:                 expected_exit_code=expected_exit,
+14974:                 expected_runtime_snapshot={
+14975:                     "health": expected.get("health"),
+14976:                     "restart_count": baseline_restarts,
+14977:                     "restart_policy": expected.get("restart_policy"),
+14978:                 },
+14979:             )
+14980:         except RuntimeError as exc:
+14981:             message = str(exc).replace("New image source", "Restored app").replace(
+14982:                 "source switch", "restore"
+14983:             )
+14984:             raise RuntimeError(message) from exc
+14985:         verified += 1
+14986:     return verified
+14987: 
+14988: 
+14989: def _preferred_backup_digest(image):
+
+==========================================================================================
+FUNCTION restore_app_backup
+==========================================================================================
+15111:                 raise RuntimeError(f"Could not restore stopped state for {name}: {err or 'docker stop failed'}")
+15112: 
+15113: 
+15114: def restore_app_backup(app_item, backup_id=None, stack_key=None):
+15115:     stack_key = str(stack_key or (app_item or {}).get("stack_key") or "").strip()
+15116:     project = str((app_item or {}).get("compose_project") or "").strip()
+15117:     if not stack_key or not project:
+15118:         raise RuntimeError("Backup restore requires a ZimaOS Compose app")
+15119: 
+15120:     record = _select_backup_record(app_item, backup_id)
+15121:     meta = record["metadata"]
+15122:     mode = _normalize_backup_mode(meta.get("mode"), "quick")
+15123:     payload_root = None
+15124:     temporary_root = None
+15125:     data_restored = False
+15126: 
+15127:     try:
+15128:         restore_safe, restore_warning = _quick_restore_safety(app_item, meta)
+15129:         if not restore_safe:
+15130:             raise RuntimeError(restore_warning or "Quick backup is not safe for this rollback")
+15131: 
+15132:         payload_root, temporary_root = _materialize_backup_payload(
+15133:             record["path"],
+15134:             meta,
+15135:         )
+15136:         restore_yaml, pinned_images, restore_pin_mappings = _restore_compose_yaml(
+15137:             payload_root,
+15138:             meta,
+15139:         )
+15140: 
+15141:         # Validate the saved Compose through ZimaOS before touching application data.
+15142:         update_action_progress(stack_key, 5, determinate=True, phase="restore_prepare")
+15143:         casaos_apply_compose(project, restore_yaml, dry_run=True)
+15144: 
+15145:         names = _backup_container_names(meta)
+15146:         current_names = _current_app_container_names(app_item)
+15147:         all_names = list(dict.fromkeys(current_names + names))
+15148:         restored_mounts = 0
+15149: 
+15150:         if mode == "full":
+15151:             # Critical order for downgrade safety:
+15152:             #   stop NEW app -> restore OLD AppData exactly -> remove OLD container
+15153:             #   -> apply/recreate OLD image.
+15154:             # The old image must never get a chance to open a database that was
+15155:             # already migrated by the newer image.
+15156:             update_action_progress(stack_key, 10, determinate=True, phase="restore_stop")
+15157:             _stop_restore_containers(all_names)
+15158:             update_action_progress(stack_key, 15, determinate=True, phase="restore_data")
+15159:             restored_mounts = _restore_full_backup_data(
+15160:                 payload_root,
+15161:                 meta,
+15162:                 progress_stack_key=stack_key,
+15163:             )
+15164:             data_restored = restored_mounts > 0
+15165: 
+15166:             # The previous implementation left the stopped pre-restore container
+15167:             # in place. Because ZimaOS applies Compose asynchronously, our wait could
+15168:             # see that old container immediately and start it again before ZimaOS had
+15169:             # recreated the backup image. Force exact recreation after AppData is safe.
+15170:             update_action_progress(stack_key, 50, determinate=True, phase="restore_recreate")
+15171:             _remove_restore_containers_for_recreate(all_names)
+15172: 
+15173:         update_action_progress(stack_key, 58, determinate=True, phase="restore_compose")
+15174:         casaos_apply_compose(project, restore_yaml, dry_run=False)
+15175: 
+15176:         update_action_progress(stack_key, 68, determinate=True, phase="restore_activate")
+15177:         if mode == "full":
+15178:             _wait_for_restore_image_activation(meta, names, timeout=180)
+15179:         else:
+15180:             _wait_for_restore_containers(names, timeout=180)
+15181: 
+15182:         # Let backed-up one-shot migration/job containers finish naturally before
+15183:         # restoring the exact running/stopped state. Stopping them immediately can
+15184:         # turn a successful code-0 job into a false code-137 failure.
+15185:         update_action_progress(stack_key, 78, determinate=True, phase="restore_jobs")
+15186:         _wait_for_completed_restore_jobs(meta, timeout=180)
+15187: 
+15188:         update_action_progress(stack_key, 84, determinate=True, phase="restore_runtime")
+15189:         _restore_container_runtime_states(meta, names)
+15190: 
+15191:         update_action_progress(stack_key, 92, determinate=True, phase="restore_verify")
+15192:         verified_images = _verify_restored_images(meta)
+15193:         verified_runtime = _verify_restore_runtime(meta, names)
+15194:         update_action_progress(stack_key, 99, determinate=True, phase="restore_verify")
+15195: 
+15196:         remember_restore_pin_assignments(
+15197:             project,
+15198:             stack_key,
+15199:             restore_pin_mappings,
+15200:             backup_id=record.get("backup_id"),
+15201:             source="backup-restore",
+15202:         )
+15203: 
+15204:         return {
+15205:             "backup_id": record["backup_id"],
+15206:             "mode": mode,
+15207:             "encrypted": bool(
+15208:                 isinstance(meta.get("encryption"), dict)
+15209:                 and meta.get("encryption", {}).get("encrypted")
+15210:             ),
+15211:             "restored_containers": len(names),
+15212:             "restored_data_mounts": restored_mounts,
+15213:             "verified_images": verified_images,
+15214:             "verified_runtime": verified_runtime,
+15215:             "digest_pinned_images": pinned_images,
+15216:             "project": project,
+15217:         }
+15218:     except Exception as exc:
+15219:         # Once old AppData has been put back, never restart the newer application
+15220:         # automatically on top of it. Keep the app stopped if a later Compose or
+15221:         # verification stage fails; the selected full backup remains available for retry.
+15222:         if data_restored:
+15223:             try:
+15224:                 _stop_restore_containers(_current_app_container_names(app_item) + _backup_container_names(meta))
+15225:             except Exception:
+15226:                 pass
+15227:             raise RuntimeError(
+15228:                 f"{exc} | Restored AppData was protected by keeping the app stopped."
+15229:             ) from exc
+15230:         if isinstance(exc, RuntimeError):
+15231:             raise
+15232:         raise RuntimeError(str(exc)) from exc
+15233:     finally:
+15234:         if temporary_root is not None:
+15235:             shutil.rmtree(temporary_root, ignore_errors=True)
+15236: 
+15237: def perform_version_update(app_item):
+15238:     project = app_item.get("compose_project")
+
+==========================================================================================
+FUNCTION app_update
+==========================================================================================
+17421: 
+17422: 
+17423: @app.post("/api/app-update")
+17424: def app_update(data: AppUpdateRequest, request: Request):
+17425:     require_auth(request)
+17426: 
+17427:     if scan_state.get("state") == "scanning":
+17428:         raise HTTPException(status_code=409, detail="Wait until the current update check is finished")
+17429: 
+17430:     app_item = find_scanned_app(data.stack_key)
+17431:     if not app_item:
+17432:         raise HTTPException(status_code=404, detail="App not found in current scan")
+17433: 
+17434:     if not app_item.get("can_image_update") and not app_item.get("can_version_update"):
+17435:         raise HTTPException(
+17436:             status_code=400,
+17437:             detail="This update is currently blocked by its update policy",
+17438:         )
+17439: 
+17440:     if has_pending_app_scan():
+17441:         raise HTTPException(
+17442:             status_code=409,
+17443:             detail="Wait until the post-update verification scan is finished",
+17444:         )
+17445: 
+17446:     if not app_update_lock.acquire(blocking=False):
+17447:         raise HTTPException(status_code=409, detail="Another app update is already running")
+17448: 
+17449:     if has_pending_app_scan():
+17450:         app_update_lock.release()
+17451:         raise HTTPException(
+17452:             status_code=409,
+17453:             detail="Wait until the post-update verification scan is finished",
+17454:         )
+17455: 
+17456:     requested_backup_mode = str(data.backup_mode or "none").strip().lower()
+17457:     if requested_backup_mode not in {"none", "quick", "full"}:
+17458:         app_update_lock.release()
+17459:         raise HTTPException(status_code=400, detail="Invalid backup mode")
+17460: 
+17461:     # If this app is already configured for automatic updating, the user has
+17462:     # already chosen the backup rule. A faster manual click must use exactly
+17463:     # that saved rule instead of opening/accepting a second backup decision.
+17464:     auto_policy = get_monitor_policy(data.stack_key)
+17465:     auto_rule_applies = bool(auto_policy.get("auto_enabled")) and str(
+17466:         auto_policy.get("mode") or ""
+17467:     ) in {"upgrade", "follow"}
+17468:     if auto_rule_applies:
+17469:         backup_mode = _normalize_backup_mode(auto_policy.get("auto_backup_mode"), "none")
+17470:     else:
+17471:         backup_mode = _normalize_backup_mode(requested_backup_mode, "none")
+17472: 
+17473:     update_error = None
+17474:     result = None
+17475:     backup_result = None
+17476:     begin_action_progress(data.stack_key, "update", app_item)
+17477: 
+17478:     try:
+17479:         if backup_mode != "none":
+17480:             update_action_progress(data.stack_key, determinate=False, phase="backup")
+17481:             backup_result = create_pre_update_backup(
+17482:                 app_item,
+17483:                 backup_mode,
+17484:                 stack_key=data.stack_key,
+17485:             )
+17486:             update_action_progress(data.stack_key, determinate=False, phase="starting")
+17487: 
+17488:         if app_item.get("can_version_update"):
+17489:             result = perform_version_update(app_item)
+17490:         else:
+17491:             result = perform_image_update(app_item)
+17492:         if isinstance(result, dict) and backup_result:
+17493:             result["backup"] = backup_result
+17494:         finish_action_progress(data.stack_key, True)
+17495:     except RuntimeError as exc:
+17496:         update_error = exc
+17497:         finish_action_progress(data.stack_key, False, str(exc))
+17498:     finally:
+17499:         # MANUAL UPDATE RULE:
+17500:         # Never start a full/interval scan here. Queue exactly one targeted scan
+17501:         # for this stack while the Docker-operation lock is still held. The
+17502:         # pending marker then blocks the 1/6/12/24-hour scheduler until this one
+17503:         # app verification has completed.
+17504:         schedule_app_scan(
+17505:             data.stack_key,
+17506:             verification_result=result if update_error is None else None,
+17507:         )
+17508:         app_update_lock.release()
+17509: 
+17510:     if update_error is not None:
+17511:         raise HTTPException(status_code=500, detail=str(update_error)) from update_error
+17512: 
+17513:     return {
+17514:         "success": True,
+17515:         "app": app_item.get("name"),
+17516:         **result,
+17517:     }
+17518: 
+17519: 
+17520: @app.put("/api/github-token")
+
+==========================================================================================
+FUNCTION app_policy
+==========================================================================================
+16926: 
+16927: 
+16928: @app.put("/api/app-policy")
+16929: def app_policy(data: AppPolicyRequest, request: Request):
+16930:     require_auth(request)
+16931:     reject_mutation_during_scan()
+16932: 
+16933:     app_item = find_scanned_app(data.stack_key)
+16934:     if not app_item:
+16935:         raise HTTPException(status_code=404, detail="App not found in current scan")
+16936: 
+16937:     mode = str(data.mode or "").strip().lower()
+16938:     if mode not in {"fixed", "upgrade", "follow", "notify"}:
+16939:         raise HTTPException(status_code=400, detail="Unsupported update policy")
+16940: 
+16941:     available_tags = policy_available_tags(app_item)
+16942:     target_tag = str(data.target_tag or "").strip() or None
+16943: 
+16944:     if mode in {"upgrade", "follow", "notify"} and not app_item.get("compose_project"):
+16945:         raise HTTPException(
+16946:             status_code=400,
+16947:             detail="ZimaOS Compose app ID is missing for this app",
+16948:         )
+16949: 
+16950:     if mode == "upgrade":
+16951:         if not target_tag:
+16952:             raise HTTPException(status_code=400, detail="Select a target version")
+16953:         if target_tag not in available_tags:
+16954:             raise HTTPException(
+16955:                 status_code=400,
+16956:                 detail="The selected version is not available in the current scan",
+16957:             )
+16958:     else:
+16959:         target_tag = None
+16960: 
+16961:     auto_time = _normalize_auto_time(data.auto_time)
+16962:     if str(data.auto_time or auto_time).strip() != auto_time:
+16963:         raise HTTPException(status_code=400, detail="Invalid automatic update time")
+16964: 
+16965:     auto_days = _normalize_auto_days(data.auto_days)
+16966:     requested_days = data.auto_days if isinstance(data.auto_days, list) else auto_days
+16967:     if any((not isinstance(day, int)) or day < 0 or day > 6 for day in requested_days):
+16968:         raise HTTPException(status_code=400, detail="Invalid automatic update weekdays")
+16969: 
+16970:     auto_timezone = _normalize_auto_timezone(data.auto_timezone)
+16971:     requested_timezone = str(data.auto_timezone or auto_timezone).strip()
+16972:     if requested_timezone and requested_timezone != auto_timezone:
+16973:         raise HTTPException(status_code=400, detail="Invalid automatic update timezone")
+16974: 
+16975:     auto_enabled = bool(data.auto_enabled)
+16976:     if auto_enabled and mode not in {"upgrade", "follow"}:
+16977:         raise HTTPException(
+16978:             status_code=400,
+16979:             detail="Automatic updates require 'Switch to a new version' or 'Follow tag / automatic'",
+16980:         )
+16981: 
+16982:     auto_backup_mode = _normalize_backup_mode(data.auto_backup_mode, "none")
+16983:     requested_backup_mode = str(data.auto_backup_mode or auto_backup_mode).strip().lower()
+16984:     if requested_backup_mode not in {"none", "quick", "full"}:
+16985:         raise HTTPException(status_code=400, detail="Invalid automatic backup mode")
+16986: 
+16987:     saved = save_monitor_policy(
+16988:         data.stack_key,
+16989:         mode,
+16990:         target_tag,
+16991:         auto_enabled=auto_enabled,
+16992:         auto_immediate=bool(data.auto_immediate),
+16993:         auto_time=auto_time,
+16994:         auto_days=auto_days,
+16995:         auto_timezone=auto_timezone,
+16996:         auto_backup_mode=auto_backup_mode,
+16997:     )
+16998: 
+16999:     with scan_lock:
+17000:         for current in scan_state.get("apps") or []:
+17001:             if current.get("stack_key") == data.stack_key:
+17002:                 apply_monitor_policy_fields(current)
+17003:                 break
+17004:         save_json(SCAN_FILE, scan_state)
+17005: 
+17006:     return {
+17007:         "success": True,
+17008:         "stack_key": data.stack_key,
+17009:         "policy": saved,
+17010:     }
+17011: 
+17012: 
+17013: 
+
+==========================================================================================
+FUNCTION casaos_compose_project_exists
+==========================================================================================
+10989:     return raw
+10990: 
+10991: 
+10992: def casaos_compose_project_exists(compose_project):
+10993:     """
+10994:     Return True/False when the ZimaOS Compose list can be read.
+10995:     Return None if the App Management list is temporarily unavailable.
+10996:     """
+10997:     try:
+10998:         status, raw = casaos_request(
+10999:             "/v2/app_management/compose",
+11000:             method="GET",
+11001:             accept="application/json",
+11002:             timeout=20,
+11003:         )
+11004:         if status != 200:
+11005:             return None
+11006:         payload = json.loads(raw or "{}")
+11007:         data = payload.get("data") or {}
+11008:         if not isinstance(data, dict):
+11009:             return None
+11010:         return str(compose_project) in data
+11011:     except Exception:
+11012:         return None
+11013: 
+11014: 
+11015: def wait_for_uninstall_complete(compose_project, timeout=180, progress_stack_key=None):
+
+==========================================================================================
+FUNCTION container_stack_metadata
+==========================================================================================
+03523:     return False
+03524: 
+03525: 
+03526: def container_stack_metadata(container):
+03527:     config = container.get("Config", {}) or {}
+03528:     labels = config.get("Labels", {}) or {}
+03529:     name = container.get("Name", "").lstrip("/")
+03530:     project = (labels.get("com.docker.compose.project") or "").strip()
+03531:     service = (labels.get("com.docker.compose.service") or "").strip()
+03532:     container_number = (
+03533:         labels.get("com.docker.compose.container-number") or ""
+03534:     ).strip()
+03535:     working_dir = (labels.get("com.docker.compose.project.working_dir") or "").strip()
+03536:     config_files = (labels.get("com.docker.compose.project.config_files") or "").strip()
+03537:     icon_url = (
+03538:         labels.get("icon")
+03539:         or labels.get("casaos.icon")
+03540:         or labels.get("net.unraid.docker.icon")
+03541:         or ""
+03542:     ).strip()
+03543: 
+03544:     project_link = project_link_from_labels(labels)
+03545:     project_url = (project_link or {}).get("url") or ""
+03546:     project_provider = (project_link or {}).get("provider")
+03547:     project_url_source = (project_link or {}).get("source")
+03548: 
+03549:     if config_files:
+03550:         stack_key = "config:" + config_files
+03551:     elif working_dir:
+03552:         stack_key = "workdir:" + working_dir
+03553:     elif project:
+03554:         stack_key = "project:" + project
+03555:     else:
+03556:         stack_key = "container:" + name
+03557: 
+03558:     path_name = _path_stack_name(working_dir) or _path_stack_name(config_files)
+03559:     if path_name and not _looks_generated_stack_name(path_name):
+03560:         stack_name = path_name
+03561:     elif project and not _looks_generated_stack_name(project):
+03562:         stack_name = project
+03563:     else:
+03564:         stack_name = name
+03565: 
+03566:     return {
+03567:         "stack_key": stack_key,
+03568:         "stack_name": stack_name,
+03569:         "compose_project": project or None,
+03570:         "compose_service": service or None,
+03571:         "compose_container_number": container_number or None,
+03572:         "compose_working_dir": working_dir or None,
+03573:         "compose_config_files": config_files or None,
+03574:         "icon_url": icon_url or None,
+03575:         "project_url": project_url or None,
+03576:         "project_provider": project_provider,
+03577:         "project_url_source": project_url_source,
+03578:     }
+03579: 
+03580: 
+03581: 
+
+==========================================================================================
+UI KEYWORD CONTEXT
+==========================================================================================
+[ERROR_DETAIL] line 1222
+001218:         
+001219: 
+001220:         
+001221: 
+001222:         .detail-overview,
+001223:         .detail-smart {
+001224:             background:
+001225:                 rgba(31, 46, 61, .70);
+001226: 
+
+[ERROR_DETAIL] line 1223
+001219: 
+001220:         
+001221: 
+001222:         .detail-overview,
+001223:         .detail-smart {
+001224:             background:
+001225:                 rgba(31, 46, 61, .70);
+001226: 
+001227:             border:
+
+[ERROR_DETAIL] line 1233
+001229: 
+001230:             border-radius: 11px;
+001231:         }
+001232: 
+001233:         .detail-overview {
+001234:             padding:
+001235:                 17px;
+001236:         }
+001237: 
+
+[ERROR_DETAIL] line 1238
+001234:             padding:
+001235:                 17px;
+001236:         }
+001237: 
+001238:         .detail-health {
+001239:             margin-bottom:
+001240:                 16px;
+001241:         }
+001242: 
+
+[ERROR_DETAIL] line 1243
+001239:             margin-bottom:
+001240:                 16px;
+001241:         }
+001242: 
+001243:         .detail-health .status-badge {
+001244:             font-size: 10.23px;
+001245:         }
+001246: 
+001247:         .detail-overview-row {
+
+[ERROR_DETAIL] line 1247
+001243:         .detail-health .status-badge {
+001244:             font-size: 10.23px;
+001245:         }
+001246: 
+001247:         .detail-overview-row {
+001248:             padding:
+001249:                 10px 0;
+001250: 
+001251:             border-bottom:
+
+[ERROR_DETAIL] line 1255
+001251:             border-bottom:
+001252:                 1px solid rgba(67, 87, 107, .35);
+001253:         }
+001254: 
+001255:         .detail-overview-row:last-child {
+001256:             border-bottom: 0;
+001257:         }
+001258: 
+001259:         .detail-overview-label {
+
+[ERROR_DETAIL] line 1259
+001255:         .detail-overview-row:last-child {
+001256:             border-bottom: 0;
+001257:         }
+001258: 
+001259:         .detail-overview-label {
+001260:             color: var(--muted);
+001261: 
+001262:             font-size: 10.35px;
+001263: 
+
+[ERROR_DETAIL] line 1271
+001267: 
+001268:             font-weight: 700;
+001269:         }
+001270: 
+001271:         .detail-overview-value {
+001272:             margin-top:
+001273:                 4px;
+001274: 
+001275:             font-size: 13.2px;
+
+[ERROR_DETAIL] line 1394
+001390: 
+001391:             
+001392:         }
+001393: 
+001394:         .detail-lower-controls {
+001395:             padding:
+001396:                 14px 16px 16px;
+001397: 
+001398:             border-top:
+
+[ERROR_DETAIL] line 1405
+001401:             background:
+001402:                 rgba(18, 31, 43, .20);
+001403:         }
+001404: 
+001405:         .detail-lower-controls
+001406: 
+001407:         .detail-lower-standby-grid {
+001408:             display: grid;
+001409: 
+
+[ERROR_DETAIL] line 1407
+001403:         }
+001404: 
+001405:         .detail-lower-controls
+001406: 
+001407:         .detail-lower-standby-grid {
+001408:             display: grid;
+001409: 
+001410:             grid-template-columns:
+001411:                 minmax(0, 1.15fr)
+
+[ERROR_DETAIL] line 1432
+001428:         
+001429: 
+001430:         
+001431: 
+001432:         .detail-lower-standby-single {
+001433:             margin-top: 14px;
+001434: 
+001435:             padding-top: 14px;
+001436: 
+
+[ERROR_DETAIL] line 1451
+001447:             
+001448: 
+001449:             
+001450: 
+001451:             .detail-lower-standby-grid {
+001452:                 grid-template-columns: 1fr;
+001453: 
+001454:                 gap: 14px;
+001455:             }
+
+[NOTICES] line 1579
+001575: 
+001576:         
+001577: 
+001578: 
+001579:         .detail-notice {
+001580:             margin:
+001581:                 16px;
+001582: 
+001583:             padding:
+
+[ERROR_DETAIL] line 1579
+001575: 
+001576:         
+001577: 
+001578: 
+001579:         .detail-notice {
+001580:             margin:
+001581:                 16px;
+001582: 
+001583:             padding:
+
+[NOTICES] line 1635
+001631:         @media (
+001632:             max-width: 500px
+001633:         ) {
+001634: 
+001635:             .detail-notice {
+001636:                 overflow-x: auto;
+001637: 
+001638:                 scrollbar-width: thin;
+001639:             }
+
+[ERROR_DETAIL] line 1635
+001631:         @media (
+001632:             max-width: 500px
+001633:         ) {
+001634: 
+001635:             .detail-notice {
+001636:                 overflow-x: auto;
+001637: 
+001638:                 scrollbar-width: thin;
+001639:             }
+
+[ERROR_DETAIL] line 2599
+002595:         
+002596: 
+002597:         
+002598: 
+002599:         .detail-lower-controls .detail-lower-standby-grid,
+002600:         .detail-lower-controls .detail-lower-standby-single {
+002601:             margin-top: 0 !important;
+002602:             padding-top: 0 !important;
+002603:             border-top: 0 !important;
+
+[ERROR_DETAIL] line 2600
+002596: 
+002597:         
+002598: 
+002599:         .detail-lower-controls .detail-lower-standby-grid,
+002600:         .detail-lower-controls .detail-lower-standby-single {
+002601:             margin-top: 0 !important;
+002602:             padding-top: 0 !important;
+002603:             border-top: 0 !important;
+002604:         }
+
+[NOTICES] line 6408
+006404: 
+006405: 
+006406: 
+006407:         /* ============================================ */
+006408:         /* RAID SMART LABEL + NOTICE v0.32.34          */
+006409:         /* ============================================ */
+006410:         /* RAID SMART action wording refined; result notice persistence is handled in JS. */
+006411: 
+006412: 
+
+[NOTICES] line 6410
+006406: 
+006407:         /* ============================================ */
+006408:         /* RAID SMART LABEL + NOTICE v0.32.34          */
+006409:         /* ============================================ */
+006410:         /* RAID SMART action wording refined; result notice persistence is handled in JS. */
+006411: 
+006412: 
+006413:         /* ============================================ */
+006414:         /* RAID SMART OVERVIEW 4-COLUMN v0.32.34       */
+
+[ERROR_DETAIL] line 6522
+006518:         /* HDD STANDBY REAL FIX v0.32.34               */
+006519:         /* ============================================ */
+006520:         /*
+006521:          * Actual fix for the lower standby area.
+006522:          * The darker surface came from .detail-lower-controls, not from the
+006523:          * standby row itself. Remove that darker fill and restore a clear lower
+006524:          * separator line across the whole lower control block.
+006525:          */
+006526:         .detail-lower-controls {
+
+[ERROR_DETAIL] line 6526
+006522:          * The darker surface came from .detail-lower-controls, not from the
+006523:          * standby row itself. Remove that darker fill and restore a clear lower
+006524:          * separator line across the whole lower control block.
+006525:          */
+006526:         .detail-lower-controls {
+006527:             background: transparent !important;
+006528:             border-bottom: 1px solid rgba(67, 87, 107, .35) !important;
+006529:         }
+006530: 
+
+[ERROR_DETAIL] line 6531
+006527:             background: transparent !important;
+006528:             border-bottom: 1px solid rgba(67, 87, 107, .35) !important;
+006529:         }
+006530: 
+006531:         .detail-lower-standby-single,
+006532:         .detail-lower-standby-grid {
+006533:             padding-bottom: 0 !important;
+006534:             margin-bottom: 0 !important;
+006535:         }
+
+[ERROR_DETAIL] line 6532
+006528:             border-bottom: 1px solid rgba(67, 87, 107, .35) !important;
+006529:         }
+006530: 
+006531:         .detail-lower-standby-single,
+006532:         .detail-lower-standby-grid {
+006533:             padding-bottom: 0 !important;
+006534:             margin-bottom: 0 !important;
+006535:         }
+006536: 
+
+[NOTICES] line 6583
+006579:             --dm-scrollbar-thumb: rgba(94, 124, 151, .62);
+006580:             --dm-scrollbar-thumb-hover: rgba(111, 147, 178, .76);
+006581:         }
+006582: 
+006583:         .settings-panel, .system-info-panel, .settings-custom-select-menu, .summary-dropdown, .detail-notice{
+006584:             scrollbar-width: thin !important;
+006585:             scrollbar-color:
+006586:                 var(--dm-scrollbar-thumb)
+006587:                 var(--dm-scrollbar-track) !important;
+
+[ERROR_DETAIL] line 6583
+006579:             --dm-scrollbar-thumb: rgba(94, 124, 151, .62);
+006580:             --dm-scrollbar-thumb-hover: rgba(111, 147, 178, .76);
+006581:         }
+006582: 
+006583:         .settings-panel, .system-info-panel, .settings-custom-select-menu, .summary-dropdown, .detail-notice{
+006584:             scrollbar-width: thin !important;
+006585:             scrollbar-color:
+006586:                 var(--dm-scrollbar-thumb)
+006587:                 var(--dm-scrollbar-track) !important;
+
+[NOTICES] line 6591
+006587:                 var(--dm-scrollbar-track) !important;
+006588:             scrollbar-gutter: stable;
+006589:         }
+006590: 
+006591:         .settings-panel::-webkit-scrollbar, .system-info-panel::-webkit-scrollbar, .settings-custom-select-menu::-webkit-scrollbar, .summary-dropdown::-webkit-scrollbar, .detail-notice::-webkit-scrollbar{
+006592:             width: var(--dm-scrollbar-width) !important;
+006593:             height: var(--dm-scrollbar-width) !important;
+006594:         }
+006595: 
+
+[ERROR_DETAIL] line 6591
+006587:                 var(--dm-scrollbar-track) !important;
+006588:             scrollbar-gutter: stable;
+006589:         }
+006590: 
+006591:         .settings-panel::-webkit-scrollbar, .system-info-panel::-webkit-scrollbar, .settings-custom-select-menu::-webkit-scrollbar, .summary-dropdown::-webkit-scrollbar, .detail-notice::-webkit-scrollbar{
+006592:             width: var(--dm-scrollbar-width) !important;
+006593:             height: var(--dm-scrollbar-width) !important;
+006594:         }
+006595: 
+
+[NOTICES] line 6596
+006592:             width: var(--dm-scrollbar-width) !important;
+006593:             height: var(--dm-scrollbar-width) !important;
+006594:         }
+006595: 
+006596:         .settings-panel::-webkit-scrollbar-track, .system-info-panel::-webkit-scrollbar-track, .settings-custom-select-menu::-webkit-scrollbar-track, .summary-dropdown::-webkit-scrollbar-track, .detail-notice::-webkit-scrollbar-track{
+006597:             background: var(--dm-scrollbar-track) !important;
+006598:             border: 0 !important;
+006599:             border-radius: 999px !important;
+006600:             box-shadow: none !important;
+
+[ERROR_DETAIL] line 6596
+006592:             width: var(--dm-scrollbar-width) !important;
+006593:             height: var(--dm-scrollbar-width) !important;
+006594:         }
+006595: 
+006596:         .settings-panel::-webkit-scrollbar-track, .system-info-panel::-webkit-scrollbar-track, .settings-custom-select-menu::-webkit-scrollbar-track, .summary-dropdown::-webkit-scrollbar-track, .detail-notice::-webkit-scrollbar-track{
+006597:             background: var(--dm-scrollbar-track) !important;
+006598:             border: 0 !important;
+006599:             border-radius: 999px !important;
+006600:             box-shadow: none !important;
+
+[NOTICES] line 6603
+006599:             border-radius: 999px !important;
+006600:             box-shadow: none !important;
+006601:         }
+006602: 
+006603:         .settings-panel::-webkit-scrollbar-thumb, .system-info-panel::-webkit-scrollbar-thumb, .settings-custom-select-menu::-webkit-scrollbar-thumb, .summary-dropdown::-webkit-scrollbar-thumb, .detail-notice::-webkit-scrollbar-thumb{
+006604:             background: var(--dm-scrollbar-thumb) !important;
+006605:             border: 0 !important;
+006606:             border-radius: 999px !important;
+006607:             box-shadow: none !important;
+
+[ERROR_DETAIL] line 6603
+006599:             border-radius: 999px !important;
+006600:             box-shadow: none !important;
+006601:         }
+006602: 
+006603:         .settings-panel::-webkit-scrollbar-thumb, .system-info-panel::-webkit-scrollbar-thumb, .settings-custom-select-menu::-webkit-scrollbar-thumb, .summary-dropdown::-webkit-scrollbar-thumb, .detail-notice::-webkit-scrollbar-thumb{
+006604:             background: var(--dm-scrollbar-thumb) !important;
+006605:             border: 0 !important;
+006606:             border-radius: 999px !important;
+006607:             box-shadow: none !important;
+
+[NOTICES] line 6610
+006606:             border-radius: 999px !important;
+006607:             box-shadow: none !important;
+006608:         }
+006609: 
+006610:         .settings-panel::-webkit-scrollbar-thumb:hover, .system-info-panel::-webkit-scrollbar-thumb:hover, .settings-custom-select-menu::-webkit-scrollbar-thumb:hover, .summary-dropdown::-webkit-scrollbar-thumb:hover, .detail-notice::-webkit-scrollbar-thumb:hover{
+006611:             background: var(--dm-scrollbar-thumb-hover) !important;
+006612:         }
+006613: 
+006614:         .settings-panel::-webkit-scrollbar-button, .system-info-panel::-webkit-scrollbar-button, .settings-custom-select-menu::-webkit-scrollbar-button, .summary-dropdown::-webkit-scrollbar-button, .detail-notice::-webkit-scrollbar-button{
+
+[ERROR_DETAIL] line 6610
+006606:             border-radius: 999px !important;
+006607:             box-shadow: none !important;
+006608:         }
+006609: 
+006610:         .settings-panel::-webkit-scrollbar-thumb:hover, .system-info-panel::-webkit-scrollbar-thumb:hover, .settings-custom-select-menu::-webkit-scrollbar-thumb:hover, .summary-dropdown::-webkit-scrollbar-thumb:hover, .detail-notice::-webkit-scrollbar-thumb:hover{
+006611:             background: var(--dm-scrollbar-thumb-hover) !important;
+006612:         }
+006613: 
+006614:         .settings-panel::-webkit-scrollbar-button, .system-info-panel::-webkit-scrollbar-button, .settings-custom-select-menu::-webkit-scrollbar-button, .summary-dropdown::-webkit-scrollbar-button, .detail-notice::-webkit-scrollbar-button{
+
+[NOTICES] line 6614
+006610:         .settings-panel::-webkit-scrollbar-thumb:hover, .system-info-panel::-webkit-scrollbar-thumb:hover, .settings-custom-select-menu::-webkit-scrollbar-thumb:hover, .summary-dropdown::-webkit-scrollbar-thumb:hover, .detail-notice::-webkit-scrollbar-thumb:hover{
+006611:             background: var(--dm-scrollbar-thumb-hover) !important;
+006612:         }
+006613: 
+006614:         .settings-panel::-webkit-scrollbar-button, .system-info-panel::-webkit-scrollbar-button, .settings-custom-select-menu::-webkit-scrollbar-button, .summary-dropdown::-webkit-scrollbar-button, .detail-notice::-webkit-scrollbar-button{
+006615:             display: none !important;
+006616:             width: 0 !important;
+006617:             height: 0 !important;
+006618:         }
+
+[ERROR_DETAIL] line 6614
+006610:         .settings-panel::-webkit-scrollbar-thumb:hover, .system-info-panel::-webkit-scrollbar-thumb:hover, .settings-custom-select-menu::-webkit-scrollbar-thumb:hover, .summary-dropdown::-webkit-scrollbar-thumb:hover, .detail-notice::-webkit-scrollbar-thumb:hover{
+006611:             background: var(--dm-scrollbar-thumb-hover) !important;
+006612:         }
+006613: 
+006614:         .settings-panel::-webkit-scrollbar-button, .system-info-panel::-webkit-scrollbar-button, .settings-custom-select-menu::-webkit-scrollbar-button, .summary-dropdown::-webkit-scrollbar-button, .detail-notice::-webkit-scrollbar-button{
+006615:             display: none !important;
+006616:             width: 0 !important;
+006617:             height: 0 !important;
+006618:         }
+
+[NOTICES] line 6632
+006628:          * must not reserve an extra stable gutter because that creates an ugly,
+006629:          * wide inset strip on the right side. Keep the gutter only where it was
+006630:          * visually useful: the SMART-Check result list.
+006631:          */
+006632:         .settings-panel, .system-info-panel, .settings-custom-select-menu, .summary-dropdown, .detail-notice{
+006633:             scrollbar-gutter: auto !important;
+006634:         }
+006635: 
+006636:         
+
+[ERROR_DETAIL] line 6632
+006628:          * must not reserve an extra stable gutter because that creates an ugly,
+006629:          * wide inset strip on the right side. Keep the gutter only where it was
+006630:          * visually useful: the SMART-Check result list.
+006631:          */
+006632:         .settings-panel, .system-info-panel, .settings-custom-select-menu, .summary-dropdown, .detail-notice{
+006633:             scrollbar-gutter: auto !important;
+006634:         }
+006635: 
+006636:         
+
+[NOTICES] line 6906
+006902:         
+006903: 
+006904: 
+006905:         /* ============================================ */
+006906:         /* SMART RESPONSIVE SPACING + NOTICE WRAP v0.32.73 */
+006907:         /* ============================================ */
+006908:         /*
+006909:          * Platform-independent correction:
+006910:          * - At intermediate widths, keep the three SMART top actions on one row
+
+[NOTICES] line 6914
+006910:          * - At intermediate widths, keep the three SMART top actions on one row
+006911:          *   with three equal button widths and identical gaps.
+006912:          * - On genuinely narrow screens (<= 640px), the existing stacked layout
+006913:          *   remains unchanged.
+006914:          * - Standby/cached SMART notices may wrap instead of being clipped.
+006915:          */
+006916:         @media (min-width: 641px) and (max-width: 1199px) {
+006917:             
+006918: 
+
+[NOTICES] line 6924
+006920: 
+006921:             
+006922:         }
+006923: 
+006924:         .detail-notice {
+006925:             white-space: normal !important;
+006926:             overflow-wrap: anywhere;
+006927:             word-break: normal;
+006928:         }
+
+[ERROR_DETAIL] line 6924
+006920: 
+006921:             
+006922:         }
+006923: 
+006924:         .detail-notice {
+006925:             white-space: normal !important;
+006926:             overflow-wrap: anywhere;
+006927:             word-break: normal;
+006928:         }
+
+[NOTICES] line 7353
+007349:     font-weight: 700;
+007350:     overflow-wrap: anywhere;
+007351: }
+007352: 
+007353: /* Fixed-version notice stays compact so all closed cards keep one size. */
+007354: .update-held {
+007355:     margin-top: 5px;
+007356:     padding: 4px 6px;
+007357:     border: 1px solid rgba(105, 183, 255, .34);
+
+[INSTALL_LITERAL] line 7794
+007790:     gap: 4px;
+007791:     margin-top: auto;
+007792:     padding-top: 8px;
+007793: }
+007794: .update-install-button {
+007795:     width: auto;
+007796:     align-self: center;
+007797:     margin-bottom: 18px;
+007798:     border: 1px solid rgba(255, 180, 84, .72);
+
+[INSTALL_LITERAL] line 7810
+007806:     letter-spacing: .025em;
+007807:     white-space: nowrap;
+007808:     cursor: pointer;
+007809: }
+007810: .update-install-button:hover:not(:disabled) {
+007811:     background: rgba(255, 180, 84, .16);
+007812: }
+007813: .update-install-button:disabled {
+007814:     opacity: .55;
+
+[INSTALL_LITERAL] line 7813
+007809: }
+007810: .update-install-button:hover:not(:disabled) {
+007811:     background: rgba(255, 180, 84, .16);
+007812: }
+007813: .update-install-button:disabled {
+007814:     opacity: .55;
+007815:     cursor: wait;
+007816: }
+007817: 
+
+[INSTALL_LITERAL] line 7818
+007814:     opacity: .55;
+007815:     cursor: wait;
+007816: }
+007817: 
+007818: .update-install-button,
+007819: .uninstall-button {
+007820:     position: relative;
+007821:     overflow: hidden;
+007822:     isolation: isolate;
+
+[UNINSTALL] line 7819
+007815:     cursor: wait;
+007816: }
+007817: 
+007818: .update-install-button,
+007819: .uninstall-button {
+007820:     position: relative;
+007821:     overflow: hidden;
+007822:     isolation: isolate;
+007823: }
+
+[INSTALL_LITERAL] line 7824
+007820:     position: relative;
+007821:     overflow: hidden;
+007822:     isolation: isolate;
+007823: }
+007824: .update-install-button::before,
+007825: .uninstall-button::before {
+007826:     content: "";
+007827:     position: absolute;
+007828:     z-index: -1;
+
+[UNINSTALL] line 7825
+007821:     overflow: hidden;
+007822:     isolation: isolate;
+007823: }
+007824: .update-install-button::before,
+007825: .uninstall-button::before {
+007826:     content: "";
+007827:     position: absolute;
+007828:     z-index: -1;
+007829:     inset: 0 auto 0 0;
+
+[INSTALL_LITERAL] line 7835
+007831:     opacity: 0;
+007832:     transform: translateX(-115%);
+007833:     pointer-events: none;
+007834: }
+007835: .update-install-button.action-progress::before {
+007836:     opacity: 1;
+007837:     background: linear-gradient(
+007838:         90deg,
+007839:         rgba(255,180,84,.04) 0%,
+
+[UNINSTALL] line 7845
+007841:         rgba(255,180,84,.10) 100%
+007842:     );
+007843:     animation: update-monitor-button-progress 1.15s linear infinite;
+007844: }
+007845: .uninstall-button.action-progress::before {
+007846:     opacity: 1;
+007847:     background: linear-gradient(
+007848:         90deg,
+007849:         rgba(255,107,107,.04) 0%,
+
+[INSTALL_LITERAL] line 7855
+007851:         rgba(255,107,107,.10) 100%
+007852:     );
+007853:     animation: update-monitor-button-progress 1.15s linear infinite;
+007854: }
+007855: .update-install-button.action-progress.has-percent::before,
+007856: .uninstall-button.action-progress.has-percent::before {
+007857:     width: var(--action-progress, 0%);
+007858:     opacity: 1;
+007859:     transform: none;
+
+[UNINSTALL] line 7856
+007852:     );
+007853:     animation: update-monitor-button-progress 1.15s linear infinite;
+007854: }
+007855: .update-install-button.action-progress.has-percent::before,
+007856: .uninstall-button.action-progress.has-percent::before {
+007857:     width: var(--action-progress, 0%);
+007858:     opacity: 1;
+007859:     transform: none;
+007860:     animation: none;
+
+[INSTALL_LITERAL] line 7863
+007859:     transform: none;
+007860:     animation: none;
+007861:     transition: width .22s linear;
+007862: }
+007863: .update-install-button.action-progress.has-percent::before {
+007864:     background: rgba(255,180,84,.24);
+007865: }
+007866: .uninstall-button.action-progress.has-percent::before {
+007867:     background: rgba(255,107,107,.24);
+
+[UNINSTALL] line 7866
+007862: }
+007863: .update-install-button.action-progress.has-percent::before {
+007864:     background: rgba(255,180,84,.24);
+007865: }
+007866: .uninstall-button.action-progress.has-percent::before {
+007867:     background: rgba(255,107,107,.24);
+007868: }
+007869: @keyframes update-monitor-button-progress {
+007870:     0%   { transform: translateX(-115%); }
+
+[UNINSTALL] line 8008
+008004: }
+008005: .update-details-label { color: #8293a0; }
+008006: .update-details-value { color: #dbe3e8; overflow-wrap: anywhere; }
+008007: 
+008008: .uninstall-panel {
+008009:     margin-top: 10px;
+008010:     padding-top: 10px;
+008011:     border-top: 1.5px solid rgba(255, 107, 107, .24);
+008012: }
+
+[UNINSTALL] line 8013
+008009:     margin-top: 10px;
+008010:     padding-top: 10px;
+008011:     border-top: 1.5px solid rgba(255, 107, 107, .24);
+008012: }
+008013: .uninstall-panel-title {
+008014:     margin-bottom: 7px;
+008015:     color: #ff8f8f;
+008016:     font-size: 10.2px;
+008017:     font-weight: 800;
+
+[UNINSTALL] line 8019
+008015:     color: #ff8f8f;
+008016:     font-size: 10.2px;
+008017:     font-weight: 800;
+008018: }
+008019: .uninstall-folder-option {
+008020:     display: flex;
+008021:     align-items: center;
+008022:     gap: 7px;
+008023:     margin-bottom: 4px;
+
+[UNINSTALL] line 8029
+008025:     font-size: 9.8px;
+008026:     cursor: pointer;
+008027:     user-select: none;
+008028: }
+008029: .uninstall-folder-option input {
+008030:     width: 14px;
+008031:     height: 14px;
+008032:     margin: 0;
+008033:     accent-color: #e06363;
+
+[UNINSTALL] line 8036
+008032:     margin: 0;
+008033:     accent-color: #e06363;
+008034:     cursor: pointer;
+008035: }
+008036: .uninstall-folder-help {
+008037:     margin: 0 0 9px 21px;
+008038:     color: #8293a0;
+008039:     font-size: 9px;
+008040:     line-height: 1.3;
+
+[UNINSTALL] line 8042
+008038:     color: #8293a0;
+008039:     font-size: 9px;
+008040:     line-height: 1.3;
+008041: }
+008042: .uninstall-button {
+008043:     display: block;
+008044:     width: auto;
+008045:     margin: 0 auto;
+008046:     border: 1px solid rgba(255, 107, 107, .62);
+
+[UNINSTALL] line 8058
+008054:     letter-spacing: .025em;
+008055:     cursor: pointer;
+008056:     white-space: nowrap;
+008057: }
+008058: .uninstall-button:hover:not(:disabled) {
+008059:     background: rgba(255, 107, 107, .15);
+008060: }
+008061: .uninstall-button:disabled {
+008062:     opacity: .55;
+
+[UNINSTALL] line 8061
+008057: }
+008058: .uninstall-button:hover:not(:disabled) {
+008059:     background: rgba(255, 107, 107, .15);
+008060: }
+008061: .uninstall-button:disabled {
+008062:     opacity: .55;
+008063:     cursor: wait;
+008064: }
+008065: 
+
+[UNINSTALL] line 8680
+008676:     touch-action: pan-y;
+008677: }
+008678: 
+008679: 
+008680: .uninstall-confirm-backdrop {
+008681:     position: fixed;
+008682:     inset: 0;
+008683:     z-index: 12000;
+008684:     display: none;
+
+[UNINSTALL] line 8690
+008686:     padding: 18px;
+008687:     background: rgba(4, 8, 12, .58);
+008688:     backdrop-filter: blur(4px);
+008689: }
+008690: .uninstall-confirm-backdrop.visible {
+008691:     display: grid;
+008692: }
+008693: .uninstall-confirm-box {
+008694:     width: min(300px, calc(100vw - 36px));
+
+[UNINSTALL] line 8693
+008689: }
+008690: .uninstall-confirm-backdrop.visible {
+008691:     display: grid;
+008692: }
+008693: .uninstall-confirm-box {
+008694:     width: min(300px, calc(100vw - 36px));
+008695:     border: 1.5px solid rgba(125,145,160,.48);
+008696:     border-radius: 12px;
+008697:     background: #151e27;
+
+[UNINSTALL] line 8701
+008697:     background: #151e27;
+008698:     box-shadow: 0 20px 60px rgba(0,0,0,.45);
+008699:     padding: 15px;
+008700: }
+008701: .uninstall-confirm-title {
+008702:     color: #eef3f6;
+008703:     font-size: 13px;
+008704:     font-weight: 800;
+008705:     text-align: center;
+
+[UNINSTALL] line 8708
+008704:     font-weight: 800;
+008705:     text-align: center;
+008706:     margin-bottom: 14px;
+008707: }
+008708: .uninstall-confirm-actions {
+008709:     display: flex;
+008710:     justify-content: center;
+008711:     gap: 8px;
+008712: }
+
+[UNINSTALL] line 8713
+008709:     display: flex;
+008710:     justify-content: center;
+008711:     gap: 8px;
+008712: }
+008713: .uninstall-confirm-actions button {
+008714:     min-width: 92px;
+008715:     border-radius: 7px;
+008716:     padding: 7px 11px;
+008717:     font: inherit;
+
+[UNINSTALL] line 8722
+008718:     font-size: 10px;
+008719:     font-weight: 800;
+008720:     cursor: pointer;
+008721: }
+008722: .uninstall-confirm-cancel {
+008723:     border: 1px solid rgba(125,145,160,.42);
+008724:     background: rgba(255,255,255,.025);
+008725:     color: #c7d1d8;
+008726: }
+
+[UNINSTALL] line 8727
+008723:     border: 1px solid rgba(125,145,160,.42);
+008724:     background: rgba(255,255,255,.025);
+008725:     color: #c7d1d8;
+008726: }
+008727: .uninstall-confirm-ok {
+008728:     border: 1px solid rgba(255,107,107,.62);
+008729:     background: rgba(255,107,107,.08);
+008730:     color: #ff8f8f;
+008731: }
+
+[INSTALL_LITERAL] line 13501
+013497: }
+013498: .update-card-title-runtime{
+013499:   flex:0 0 auto;
+013500: }
+013501: /* The old 18 px bottom margin made cards with an install button push
+013502:    “Details anzeigen” much lower than cards with the blue fixed-version chip. */
+013503: .update-install-button{
+013504:   margin-bottom:0 !important;
+013505: }
+
+[INSTALL_LITERAL] line 13503
+013499:   flex:0 0 auto;
+013500: }
+013501: /* The old 18 px bottom margin made cards with an install button push
+013502:    “Details anzeigen” much lower than cards with the blue fixed-version chip. */
+013503: .update-install-button{
+013504:   margin-bottom:0 !important;
+013505: }
+013506: </style>
+013507: 
+
+[INSTALL_LITERAL] line 13513
+013509: /*
+013510:  * v0.3.154 — canonical policy icons used consistently everywhere.
+013511:  * Only main-card action geometry is touched; locked top header/summary is untouched.
+013512:  */
+013513: .update-card-actions > .update-install-button,
+013514: .update-card-actions > .policy-chip{
+013515:   box-sizing:border-box !important;
+013516:   height:28px !important;
+013517:   min-height:28px !important;
+
+[UNINSTALL] line 15137
+015133:    Visual-only refinement:
+015134:    - top-right app status badges adopt the restrained Backup/"Vorhanden" style
+015135:    - each status keeps its existing semantic color
+015136:    - Backup "Vorhanden" + restore action use a distinct yellow accent
+015137:    - restore action becomes compact, similar in scale to Deinstallieren
+015138:    The locked top summary/header geometry is untouched.
+015139: */
+015140: 
+015141: /* One shared compact badge geometry for the status in the upper-right
+
+[UNINSTALL] line 15197
+015193:   border-color:rgba(246,205,120,.38) !important;
+015194:   background:rgba(246,205,120,.075) !important;
+015195: }
+015196: 
+015197: /* Compact restore button: same visual scale as the existing uninstall action. */
+015198: .update-backup-detail-section .backup-restore-button{
+015199:   display:block !important;
+015200:   width:auto !important;
+015201:   min-height:0 !important;
+
+[INSTALL_LITERAL] line 15231
+015227: /* v0.3.220 — unify action-button geometry only.
+015228:    Update installieren is the reference geometry.
+015229:    Version fixieren / policy controls are intentionally untouched. */
+015230: 
+015231: .update-install-button,
+015232: .uninstall-button,
+015233: .update-backup-detail-section .backup-restore-button{
+015234:   width:auto !important;
+015235:   min-height:0 !important;
+
+[UNINSTALL] line 15232
+015228:    Update installieren is the reference geometry.
+015229:    Version fixieren / policy controls are intentionally untouched. */
+015230: 
+015231: .update-install-button,
+015232: .uninstall-button,
+015233: .update-backup-detail-section .backup-restore-button{
+015234:   width:auto !important;
+015235:   min-height:0 !important;
+015236:   padding:5px 8px !important;
+
+[UNINSTALL] line 15246
+015242: }
+015243: 
+015244: /* The previous Backup override used a separate 1.1 line-height.
+015245:    Remove that difference so it follows the same normal button text metrics
+015246:    as Update installieren and Deinstallieren. */
+015247: .update-backup-detail-section .backup-restore-button{
+015248:   line-height:normal !important;
+015249: }
+015250: </style>
+
+[UNINSTALL] line 16099
+016095: 
+016096: <style id="um-backup-settings-action-geometry-v03214">
+016097: /* v0.3.220 — Backup Einstellungen action buttons.
+016098:    Use exactly the compact action geometry already established for
+016099:    Backup Einstellungen / Deinstallieren. Colors remain semantic.
+016100:    Locked header and summary geometry are untouched. */
+016101: 
+016102: .backup-settings-actions .backup-preview-action{
+016103:   width:auto !important;
+
+[UNINSTALL] line 16904
+016900: #settingsOverlay.visible,
+016901: #dockerInfoBackdrop.visible,
+016902: #portConflictBackdrop.visible,
+016903: #backupRestoreBackdrop.visible,
+016904: #uninstallConfirmBackdrop.visible,
+016905: #backupPreviewBackdrop.visible,
+016906: #imageSourceBackdrop.visible,
+016907: .policy-modal-backdrop.visible {
+016908:     min-height:100vh;
+
+[UNINSTALL] line 16921
+016917: .docker-info-body,
+016918: .port-conflict-dialog,
+016919: .backup-restore-dialog,
+016920: .backup-preview-dialog,
+016921: .uninstall-confirm-box,
+016922: .image-source-dialog,
+016923: .image-source-body {
+016924:     overscroll-behavior:contain !important;
+016925:     -webkit-overflow-scrolling:touch;
+
+[UNINSTALL] line 17166
+017162: /* Controls below can alter Docker state, update policy, backup contents or
+017163:    backend settings that are intentionally protected by the server during scan. */
+017164: body.scan-ui-locked [data-update-index],
+017165: body.scan-ui-locked [data-runtime-stack],
+017166: body.scan-ui-locked [data-uninstall-index],
+017167: body.scan-ui-locked [data-uninstall-folder-index],
+017168: body.scan-ui-locked #uninstallConfirmOk,
+017169: body.scan-ui-locked [data-policy-choice],
+017170: body.scan-ui-locked [data-policy-choice-quick],
+
+[UNINSTALL] line 17167
+017163:    backend settings that are intentionally protected by the server during scan. */
+017164: body.scan-ui-locked [data-update-index],
+017165: body.scan-ui-locked [data-runtime-stack],
+017166: body.scan-ui-locked [data-uninstall-index],
+017167: body.scan-ui-locked [data-uninstall-folder-index],
+017168: body.scan-ui-locked #uninstallConfirmOk,
+017169: body.scan-ui-locked [data-policy-choice],
+017170: body.scan-ui-locked [data-policy-choice-quick],
+017171: body.scan-ui-locked [data-policy-version-toggle],
+
+[UNINSTALL] line 17168
+017164: body.scan-ui-locked [data-update-index],
+017165: body.scan-ui-locked [data-runtime-stack],
+017166: body.scan-ui-locked [data-uninstall-index],
+017167: body.scan-ui-locked [data-uninstall-folder-index],
+017168: body.scan-ui-locked #uninstallConfirmOk,
+017169: body.scan-ui-locked [data-policy-choice],
+017170: body.scan-ui-locked [data-policy-choice-quick],
+017171: body.scan-ui-locked [data-policy-version-toggle],
+017172: body.scan-ui-locked [data-policy-version-option],
+
+[NOTICES] line 17421
+017417:     font-size:9.5px;
+017418:     line-height:1.42;
+017419: }
+017420: 
+017421: .image-source-schema-notice{
+017422:     margin-bottom:12px;
+017423:     padding:8px 10px;
+017424:     border:1px solid rgba(229,184,90,.28);
+017425:     border-radius:8px;
+
+[NOTICES] line 18325
+018321:     </button>
+018322:     <button id="headerWarningButton" class="header-warning-button" type="button" aria-expanded="false" aria-controls="headerWarningPopover" aria-label="Warnungen" title="Warnungen" hidden>!</button>
+018323:     <div id="headerWarningPopover" class="header-warning-popover" role="dialog" aria-modal="false" aria-labelledby="headerWarningTitle" hidden>
+018324:       <div class="header-warning-popover-scroll">
+018325:         <div class="header-warning-popover-title" id="headerWarningTitle">Hinweise</div>
+018326:         <div id="headerWarningList" class="header-warning-list"></div>
+018327:       </div>
+018328:     </div>
+018329:     <button class="icon-button" id="settingsButton" aria-label="Settings" title="Settings">
+
+[UNINSTALL] line 18547
+018543:   </div>
+018544: </div>
+018545: 
+018546: 
+018547: <div id="uninstallConfirmBackdrop" class="uninstall-confirm-backdrop" aria-hidden="true">
+018548:   <div class="uninstall-confirm-box" role="dialog" aria-modal="true" aria-labelledby="uninstallConfirmTitle">
+018549:     <div id="uninstallConfirmTitle" class="uninstall-confirm-title">Deinstallieren?</div>
+018550:     <div class="uninstall-confirm-actions">
+018551:       <button id="uninstallConfirmCancel" class="uninstall-confirm-cancel" type="button">Abbrechen</button>
+
+[UNINSTALL] line 18548
+018544: </div>
+018545: 
+018546: 
+018547: <div id="uninstallConfirmBackdrop" class="uninstall-confirm-backdrop" aria-hidden="true">
+018548:   <div class="uninstall-confirm-box" role="dialog" aria-modal="true" aria-labelledby="uninstallConfirmTitle">
+018549:     <div id="uninstallConfirmTitle" class="uninstall-confirm-title">Deinstallieren?</div>
+018550:     <div class="uninstall-confirm-actions">
+018551:       <button id="uninstallConfirmCancel" class="uninstall-confirm-cancel" type="button">Abbrechen</button>
+018552:       <button id="uninstallConfirmOk" class="uninstall-confirm-ok" type="button">OK</button>
+
+[UNINSTALL] line 18549
+018545: 
+018546: 
+018547: <div id="uninstallConfirmBackdrop" class="uninstall-confirm-backdrop" aria-hidden="true">
+018548:   <div class="uninstall-confirm-box" role="dialog" aria-modal="true" aria-labelledby="uninstallConfirmTitle">
+018549:     <div id="uninstallConfirmTitle" class="uninstall-confirm-title">Deinstallieren?</div>
+018550:     <div class="uninstall-confirm-actions">
+018551:       <button id="uninstallConfirmCancel" class="uninstall-confirm-cancel" type="button">Abbrechen</button>
+018552:       <button id="uninstallConfirmOk" class="uninstall-confirm-ok" type="button">OK</button>
+018553:     </div>
+
+[UNINSTALL] line 18550
+018546: 
+018547: <div id="uninstallConfirmBackdrop" class="uninstall-confirm-backdrop" aria-hidden="true">
+018548:   <div class="uninstall-confirm-box" role="dialog" aria-modal="true" aria-labelledby="uninstallConfirmTitle">
+018549:     <div id="uninstallConfirmTitle" class="uninstall-confirm-title">Deinstallieren?</div>
+018550:     <div class="uninstall-confirm-actions">
+018551:       <button id="uninstallConfirmCancel" class="uninstall-confirm-cancel" type="button">Abbrechen</button>
+018552:       <button id="uninstallConfirmOk" class="uninstall-confirm-ok" type="button">OK</button>
+018553:     </div>
+018554:   </div>
+
+[UNINSTALL] line 18551
+018547: <div id="uninstallConfirmBackdrop" class="uninstall-confirm-backdrop" aria-hidden="true">
+018548:   <div class="uninstall-confirm-box" role="dialog" aria-modal="true" aria-labelledby="uninstallConfirmTitle">
+018549:     <div id="uninstallConfirmTitle" class="uninstall-confirm-title">Deinstallieren?</div>
+018550:     <div class="uninstall-confirm-actions">
+018551:       <button id="uninstallConfirmCancel" class="uninstall-confirm-cancel" type="button">Abbrechen</button>
+018552:       <button id="uninstallConfirmOk" class="uninstall-confirm-ok" type="button">OK</button>
+018553:     </div>
+018554:   </div>
+018555: </div>
+
+[UNINSTALL] line 18552
+018548:   <div class="uninstall-confirm-box" role="dialog" aria-modal="true" aria-labelledby="uninstallConfirmTitle">
+018549:     <div id="uninstallConfirmTitle" class="uninstall-confirm-title">Deinstallieren?</div>
+018550:     <div class="uninstall-confirm-actions">
+018551:       <button id="uninstallConfirmCancel" class="uninstall-confirm-cancel" type="button">Abbrechen</button>
+018552:       <button id="uninstallConfirmOk" class="uninstall-confirm-ok" type="button">OK</button>
+018553:     </div>
+018554:   </div>
+018555: </div>
+018556: 
+
+[NEW_VERSION] line 18673
+018669:       <div id="backupPreviewVersion" class="backup-preview-app-version">Update</div>
+018670:     </div>
+018671: 
+018672:     <div id="backupPreviewQuestion" class="backup-preview-question">Backup vor dem Update erstellen?</div>
+018673:     <div id="backupPreviewHelp" class="backup-preview-help">Ein Backup erleichtert die Wiederherstellung, falls die neue Version Probleme verursacht.</div>
+018674: 
+018675:     <div class="backup-preview-options">
+018676:       <button class="backup-preview-option" type="button" data-backup-preview-choice="quick">
+018677:         <span class="backup-preview-radio" aria-hidden="true"></span>
+
+[VERIFY_TEXT] line 18786
+018782:   runtimePendingActions: new Map(),
+018783:   updatingApps: new Set(),
+018784:   checkingApps: new Set(),
+018785:   checkBaselines: new Map(),
+018786:   verifyingApps: new Set(),
+018787:   verificationBaselines: new Map(),
+018788:   restoreVerificationApps: new Set(),
+018789:   pendingPostScans: new Set(),
+018790:   uninstallingApps: new Set(),
+
+[VERIFY_TEXT] line 18787
+018783:   updatingApps: new Set(),
+018784:   checkingApps: new Set(),
+018785:   checkBaselines: new Map(),
+018786:   verifyingApps: new Set(),
+018787:   verificationBaselines: new Map(),
+018788:   restoreVerificationApps: new Set(),
+018789:   pendingPostScans: new Set(),
+018790:   uninstallingApps: new Set(),
+018791:   restoringApps: new Set(),
+
+[VERIFY_TEXT] line 18788
+018784:   checkingApps: new Set(),
+018785:   checkBaselines: new Map(),
+018786:   verifyingApps: new Set(),
+018787:   verificationBaselines: new Map(),
+018788:   restoreVerificationApps: new Set(),
+018789:   pendingPostScans: new Set(),
+018790:   uninstallingApps: new Set(),
+018791:   restoringApps: new Set(),
+018792:   portConflicts: [],
+
+[PENDING_SCAN] line 18789
+018785:   checkBaselines: new Map(),
+018786:   verifyingApps: new Set(),
+018787:   verificationBaselines: new Map(),
+018788:   restoreVerificationApps: new Set(),
+018789:   pendingPostScans: new Set(),
+018790:   uninstallingApps: new Set(),
+018791:   restoringApps: new Set(),
+018792:   portConflicts: [],
+018793:   actionProgress: new Map(),
+
+[UNINSTALL] line 18790
+018786:   verifyingApps: new Set(),
+018787:   verificationBaselines: new Map(),
+018788:   restoreVerificationApps: new Set(),
+018789:   pendingPostScans: new Set(),
+018790:   uninstallingApps: new Set(),
+018791:   restoringApps: new Set(),
+018792:   portConflicts: [],
+018793:   actionProgress: new Map(),
+018794:   autoLiveActions: new Set(),
+
+[NOTICES] line 18803
+018799: const POLICY_VERSION_CACHE_TTL_MS=5*60*1000;
+018800: const translations = {
+018801:   de: {
+018802:     loginSubtitle:'Docker-Image- & Versionsüberwachung', username:'Benutzername', password:'Passwort', login:'Anmelden', loginError:'Benutzername oder Passwort ist falsch.',
+018803:     updates:'Updates', current:'Aktuell', runningApps:'Laufend', stoppedApps:'Gestoppt', fixed:'Version fest', pinned:'Digest gepinnt', local:'Lokale Images', error:'Fehler', autoUpdateSummary:'Auto-Updates', check:'UPDATES PRÜFEN', checking:'PRÜFUNG...', scanStarting:'Prüfung vorbereiten', scanDocker:'Docker prüfen', scanContainers:'Container erfassen', scanInspect:'Container analysieren', scanImages:'Images prüfen', scanResults:'Ergebnisse auswerten', scanDone:'Abgeschlossen', scanLockWarning:'Prüfung läuft. Navigation und Informationen bleiben verfügbar. Docker Änderungen und kritische Aktionen sind gesperrt.', warningTitle:'Hinweise', warningButton:'Warnungen', scanLockWarningTitle:'Prüfung läuft', dockerVersionWarningTitle:'Docker Version prüfen', dockerVersionWarningText:'Die angezeigte Docker Version konnte nicht eindeutig bestätigt werden. Prüfe bei Bedarf die Projektseite, bevor du ein Update installierst.', dockerVersionOpenProject:'Projektseite öffnen', dockerVersionConfirm:'Version bestätigen', dockerVersionConfirmed:'Version bestätigt', dockerVersionConfirmFailed:'Bestätigung fehlgeschlagen: {error}',
+018804:     noData:'Noch keine Prüfdaten vorhanden.', lastNever:'Noch keine Prüfung', last:'Letzte Prüfung', settings:'Einstellungen', auto:'Automatische Prüfung',
+018805:     off:'Aus', h1:'1 Stunde', h6:'6 Stunden', h12:'12 Stunden', h24:'24 Stunden', help:'Prüft Registries, ohne Images herunterzuladen.',
+018806:     language:'Sprache', german:'Deutsch', english:'English', timeFormat:'Zeitformat', time24:'24 Stunden', time12:'12 Stunden (AM/PM)', currentSort:'Sortierung', currentSortName:'Nach Name', currentSortUpdated:'Nach letzter Aktualisierung', currentSortBackup:'Nach Backup', apiConnected:'API verbunden', info:'Update-Monitor-Info', logout:'Abmelden', githubApi:'GitHub API', githubTokenPlaceholder:'GitHub Token einfügen', githubTokenHelp:'Optional. Mit Token werden GitHub-Anfragen authentifiziert und das API-Limit steigt normalerweise von 60 auf 5.000 Anfragen pro Stunde.', githubTokenSave:'Speichern', githubTokenTest:'Verbindung testen', githubTokenRemove:'Entfernen', githubTokenCreate:'Token erstellen', githubTokenMissing:'Kein Token gespeichert · ohne Anmeldung bis zu 60 Anfragen/Stunde', githubTokenSaved:'Token gespeichert', githubTokenEnvironment:'Token aus Docker-Umgebung aktiv', githubTokenConnected:'GitHub verbunden', githubTokenApiUsed:'{used}/{limit} API verwendet', githubTokenEnter:'Bitte zuerst einen Token eingeben.', githubTokenRemoved:'Gespeicherter Token entfernt.', cpuUsage:'CPU-Auslastung', memoryUsage:'Arbeitsspeicher', onlineSince:'Online seit', versionLabel:'Version', zimaLabel:'ZimaOS App Management', detected:'Erkannt', notDetected:'Nicht erkannt', supportedBy:'Unterstützt von', resourceContainer:'Ressourcenverbrauch des Update-Monitor-Containers',
+018807:     all:'Alle', updateApps:'Updates', imageUpdate:'Image-Update', versionUpdate:'Neue Version', held:'Version festgelegt', fixedFilter:'Festgelegt',
+
+[NEW_VERSION] line 18807
+018803:     updates:'Updates', current:'Aktuell', runningApps:'Laufend', stoppedApps:'Gestoppt', fixed:'Version fest', pinned:'Digest gepinnt', local:'Lokale Images', error:'Fehler', autoUpdateSummary:'Auto-Updates', check:'UPDATES PRÜFEN', checking:'PRÜFUNG...', scanStarting:'Prüfung vorbereiten', scanDocker:'Docker prüfen', scanContainers:'Container erfassen', scanInspect:'Container analysieren', scanImages:'Images prüfen', scanResults:'Ergebnisse auswerten', scanDone:'Abgeschlossen', scanLockWarning:'Prüfung läuft. Navigation und Informationen bleiben verfügbar. Docker Änderungen und kritische Aktionen sind gesperrt.', warningTitle:'Hinweise', warningButton:'Warnungen', scanLockWarningTitle:'Prüfung läuft', dockerVersionWarningTitle:'Docker Version prüfen', dockerVersionWarningText:'Die angezeigte Docker Version konnte nicht eindeutig bestätigt werden. Prüfe bei Bedarf die Projektseite, bevor du ein Update installierst.', dockerVersionOpenProject:'Projektseite öffnen', dockerVersionConfirm:'Version bestätigen', dockerVersionConfirmed:'Version bestätigt', dockerVersionConfirmFailed:'Bestätigung fehlgeschlagen: {error}',
+018804:     noData:'Noch keine Prüfdaten vorhanden.', lastNever:'Noch keine Prüfung', last:'Letzte Prüfung', settings:'Einstellungen', auto:'Automatische Prüfung',
+018805:     off:'Aus', h1:'1 Stunde', h6:'6 Stunden', h12:'12 Stunden', h24:'24 Stunden', help:'Prüft Registries, ohne Images herunterzuladen.',
+018806:     language:'Sprache', german:'Deutsch', english:'English', timeFormat:'Zeitformat', time24:'24 Stunden', time12:'12 Stunden (AM/PM)', currentSort:'Sortierung', currentSortName:'Nach Name', currentSortUpdated:'Nach letzter Aktualisierung', currentSortBackup:'Nach Backup', apiConnected:'API verbunden', info:'Update-Monitor-Info', logout:'Abmelden', githubApi:'GitHub API', githubTokenPlaceholder:'GitHub Token einfügen', githubTokenHelp:'Optional. Mit Token werden GitHub-Anfragen authentifiziert und das API-Limit steigt normalerweise von 60 auf 5.000 Anfragen pro Stunde.', githubTokenSave:'Speichern', githubTokenTest:'Verbindung testen', githubTokenRemove:'Entfernen', githubTokenCreate:'Token erstellen', githubTokenMissing:'Kein Token gespeichert · ohne Anmeldung bis zu 60 Anfragen/Stunde', githubTokenSaved:'Token gespeichert', githubTokenEnvironment:'Token aus Docker-Umgebung aktiv', githubTokenConnected:'GitHub verbunden', githubTokenApiUsed:'{used}/{limit} API verwendet', githubTokenEnter:'Bitte zuerst einen Token eingeben.', githubTokenRemoved:'Gespeicherter Token entfernt.', cpuUsage:'CPU-Auslastung', memoryUsage:'Arbeitsspeicher', onlineSince:'Online seit', versionLabel:'Version', zimaLabel:'ZimaOS App Management', detected:'Erkannt', notDetected:'Nicht erkannt', supportedBy:'Unterstützt von', resourceContainer:'Ressourcenverbrauch des Update-Monitor-Containers',
+018807:     all:'Alle', updateApps:'Updates', imageUpdate:'Image-Update', versionUpdate:'Neue Version', held:'Version festgelegt', fixedFilter:'Festgelegt',
+018808:     pinnedStatus:'Digest gepinnt', localStatus:'Lokales Image', errorStatus:'Prüffehler', containers:'Container', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installiert', installedVersion:'Version', available:'Verfügbar',
+018809:     policy:'Richtlinie', follow:'Tag folgen', fixedVersion:'Version beibehalten', digestPinned:'Digest festgelegt', localImage:'Kein Registry-Digest',
+018810:     running:'Laufend', stopped:'Gestoppt', zimaDetected:'App Management erkannt', zimaMissing:'App Management nicht erkannt', search:'Apps durchsuchen…',
+018811:     detailsShow:'Details anzeigen', detailsHide:'Details ausblenden', newImage:'Neues Image', noNewVersion:'Keine neuere Version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Letztes Update',
+
+[CHECK_ERROR] line 18808
+018804:     noData:'Noch keine Prüfdaten vorhanden.', lastNever:'Noch keine Prüfung', last:'Letzte Prüfung', settings:'Einstellungen', auto:'Automatische Prüfung',
+018805:     off:'Aus', h1:'1 Stunde', h6:'6 Stunden', h12:'12 Stunden', h24:'24 Stunden', help:'Prüft Registries, ohne Images herunterzuladen.',
+018806:     language:'Sprache', german:'Deutsch', english:'English', timeFormat:'Zeitformat', time24:'24 Stunden', time12:'12 Stunden (AM/PM)', currentSort:'Sortierung', currentSortName:'Nach Name', currentSortUpdated:'Nach letzter Aktualisierung', currentSortBackup:'Nach Backup', apiConnected:'API verbunden', info:'Update-Monitor-Info', logout:'Abmelden', githubApi:'GitHub API', githubTokenPlaceholder:'GitHub Token einfügen', githubTokenHelp:'Optional. Mit Token werden GitHub-Anfragen authentifiziert und das API-Limit steigt normalerweise von 60 auf 5.000 Anfragen pro Stunde.', githubTokenSave:'Speichern', githubTokenTest:'Verbindung testen', githubTokenRemove:'Entfernen', githubTokenCreate:'Token erstellen', githubTokenMissing:'Kein Token gespeichert · ohne Anmeldung bis zu 60 Anfragen/Stunde', githubTokenSaved:'Token gespeichert', githubTokenEnvironment:'Token aus Docker-Umgebung aktiv', githubTokenConnected:'GitHub verbunden', githubTokenApiUsed:'{used}/{limit} API verwendet', githubTokenEnter:'Bitte zuerst einen Token eingeben.', githubTokenRemoved:'Gespeicherter Token entfernt.', cpuUsage:'CPU-Auslastung', memoryUsage:'Arbeitsspeicher', onlineSince:'Online seit', versionLabel:'Version', zimaLabel:'ZimaOS App Management', detected:'Erkannt', notDetected:'Nicht erkannt', supportedBy:'Unterstützt von', resourceContainer:'Ressourcenverbrauch des Update-Monitor-Containers',
+018807:     all:'Alle', updateApps:'Updates', imageUpdate:'Image-Update', versionUpdate:'Neue Version', held:'Version festgelegt', fixedFilter:'Festgelegt',
+018808:     pinnedStatus:'Digest gepinnt', localStatus:'Lokales Image', errorStatus:'Prüffehler', containers:'Container', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installiert', installedVersion:'Version', available:'Verfügbar',
+018809:     policy:'Richtlinie', follow:'Tag folgen', fixedVersion:'Version beibehalten', digestPinned:'Digest festgelegt', localImage:'Kein Registry-Digest',
+018810:     running:'Laufend', stopped:'Gestoppt', zimaDetected:'App Management erkannt', zimaMissing:'App Management nicht erkannt', search:'Apps durchsuchen…',
+018811:     detailsShow:'Details anzeigen', detailsHide:'Details ausblenden', newImage:'Neues Image', noNewVersion:'Keine neuere Version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Letztes Update',
+018812:     fixedNotice:'Neue Version vorhanden – die konfigurierte Version bleibt bewusst festgelegt.', remoteDigest:'Remote-Digest', localDigest:'Lokaler Digest', service:'Service',
+
+[NEW_VERSION] line 18811
+018807:     all:'Alle', updateApps:'Updates', imageUpdate:'Image-Update', versionUpdate:'Neue Version', held:'Version festgelegt', fixedFilter:'Festgelegt',
+018808:     pinnedStatus:'Digest gepinnt', localStatus:'Lokales Image', errorStatus:'Prüffehler', containers:'Container', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installiert', installedVersion:'Version', available:'Verfügbar',
+018809:     policy:'Richtlinie', follow:'Tag folgen', fixedVersion:'Version beibehalten', digestPinned:'Digest festgelegt', localImage:'Kein Registry-Digest',
+018810:     running:'Laufend', stopped:'Gestoppt', zimaDetected:'App Management erkannt', zimaMissing:'App Management nicht erkannt', search:'Apps durchsuchen…',
+018811:     detailsShow:'Details anzeigen', detailsHide:'Details ausblenden', newImage:'Neues Image', noNewVersion:'Keine neuere Version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Letztes Update',
+018812:     fixedNotice:'Neue Version vorhanden – die konfigurierte Version bleibt bewusst festgelegt.', remoteDigest:'Remote-Digest', localDigest:'Lokaler Digest', service:'Service',
+018813:     policyFixedShort:'Version fixiert', policyUpgrade:'Auf neue Version wechseln', policyUpgradeHelp:'Eine verfügbare Version für die Installation freigeben.',
+018814:     policyFollow:'Tag folgen / automatisch', policyFollowHelp:'Auf den Tag „latest“ wechseln und ihm danach automatisch folgen.', policyFollowTag:'Tag: {tag}',
+018815:     policyNotify:'Nur benachrichtigen', policyNotifyHelp:'Updates anzeigen, aber nicht zur Installation freigeben.',
+
+[NEW_VERSION] line 18812
+018808:     pinnedStatus:'Digest gepinnt', localStatus:'Lokales Image', errorStatus:'Prüffehler', containers:'Container', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installiert', installedVersion:'Version', available:'Verfügbar',
+018809:     policy:'Richtlinie', follow:'Tag folgen', fixedVersion:'Version beibehalten', digestPinned:'Digest festgelegt', localImage:'Kein Registry-Digest',
+018810:     running:'Laufend', stopped:'Gestoppt', zimaDetected:'App Management erkannt', zimaMissing:'App Management nicht erkannt', search:'Apps durchsuchen…',
+018811:     detailsShow:'Details anzeigen', detailsHide:'Details ausblenden', newImage:'Neues Image', noNewVersion:'Keine neuere Version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Letztes Update',
+018812:     fixedNotice:'Neue Version vorhanden – die konfigurierte Version bleibt bewusst festgelegt.', remoteDigest:'Remote-Digest', localDigest:'Lokaler Digest', service:'Service',
+018813:     policyFixedShort:'Version fixiert', policyUpgrade:'Auf neue Version wechseln', policyUpgradeHelp:'Eine verfügbare Version für die Installation freigeben.',
+018814:     policyFollow:'Tag folgen / automatisch', policyFollowHelp:'Auf den Tag „latest“ wechseln und ihm danach automatisch folgen.', policyFollowTag:'Tag: {tag}',
+018815:     policyNotify:'Nur benachrichtigen', policyNotifyHelp:'Updates anzeigen, aber nicht zur Installation freigeben.',
+018816:     policyAuto:'Automatisch aktualisieren', policyAutoHelp:'Verfügbare Updates automatisch herunterladen und installieren.',
+
+[NOTICES] line 18812
+018808:     pinnedStatus:'Digest gepinnt', localStatus:'Lokales Image', errorStatus:'Prüffehler', containers:'Container', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installiert', installedVersion:'Version', available:'Verfügbar',
+018809:     policy:'Richtlinie', follow:'Tag folgen', fixedVersion:'Version beibehalten', digestPinned:'Digest festgelegt', localImage:'Kein Registry-Digest',
+018810:     running:'Laufend', stopped:'Gestoppt', zimaDetected:'App Management erkannt', zimaMissing:'App Management nicht erkannt', search:'Apps durchsuchen…',
+018811:     detailsShow:'Details anzeigen', detailsHide:'Details ausblenden', newImage:'Neues Image', noNewVersion:'Keine neuere Version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Letztes Update',
+018812:     fixedNotice:'Neue Version vorhanden – die konfigurierte Version bleibt bewusst festgelegt.', remoteDigest:'Remote-Digest', localDigest:'Lokaler Digest', service:'Service',
+018813:     policyFixedShort:'Version fixiert', policyUpgrade:'Auf neue Version wechseln', policyUpgradeHelp:'Eine verfügbare Version für die Installation freigeben.',
+018814:     policyFollow:'Tag folgen / automatisch', policyFollowHelp:'Auf den Tag „latest“ wechseln und ihm danach automatisch folgen.', policyFollowTag:'Tag: {tag}',
+018815:     policyNotify:'Nur benachrichtigen', policyNotifyHelp:'Updates anzeigen, aber nicht zur Installation freigeben.',
+018816:     policyAuto:'Automatisch aktualisieren', policyAutoHelp:'Verfügbare Updates automatisch herunterladen und installieren.',
+
+[NEW_VERSION] line 18813
+018809:     policy:'Richtlinie', follow:'Tag folgen', fixedVersion:'Version beibehalten', digestPinned:'Digest festgelegt', localImage:'Kein Registry-Digest',
+018810:     running:'Laufend', stopped:'Gestoppt', zimaDetected:'App Management erkannt', zimaMissing:'App Management nicht erkannt', search:'Apps durchsuchen…',
+018811:     detailsShow:'Details anzeigen', detailsHide:'Details ausblenden', newImage:'Neues Image', noNewVersion:'Keine neuere Version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Letztes Update',
+018812:     fixedNotice:'Neue Version vorhanden – die konfigurierte Version bleibt bewusst festgelegt.', remoteDigest:'Remote-Digest', localDigest:'Lokaler Digest', service:'Service',
+018813:     policyFixedShort:'Version fixiert', policyUpgrade:'Auf neue Version wechseln', policyUpgradeHelp:'Eine verfügbare Version für die Installation freigeben.',
+018814:     policyFollow:'Tag folgen / automatisch', policyFollowHelp:'Auf den Tag „latest“ wechseln und ihm danach automatisch folgen.', policyFollowTag:'Tag: {tag}',
+018815:     policyNotify:'Nur benachrichtigen', policyNotifyHelp:'Updates anzeigen, aber nicht zur Installation freigeben.',
+018816:     policyAuto:'Automatisch aktualisieren', policyAutoHelp:'Verfügbare Updates automatisch herunterladen und installieren.',
+018817:     policyFixedHelp:'Die aktuell konfigurierte Version bleibt unverändert.', policyVersionSelect:'Version auswählen', policySelectedVersion:'Verfügbar: {version}', policyVersionsLoading:'Verfügbare Versionen werden geladen…', policyVersionsNone:'Keine Version verfügbar', policyVersionsFailed:'Versionen konnten nicht geladen werden', policyCancel:'Abbrechen', policyApply:'Übernehmen',
+
+[SELECT_VERSION] line 18817
+018813:     policyFixedShort:'Version fixiert', policyUpgrade:'Auf neue Version wechseln', policyUpgradeHelp:'Eine verfügbare Version für die Installation freigeben.',
+018814:     policyFollow:'Tag folgen / automatisch', policyFollowHelp:'Auf den Tag „latest“ wechseln und ihm danach automatisch folgen.', policyFollowTag:'Tag: {tag}',
+018815:     policyNotify:'Nur benachrichtigen', policyNotifyHelp:'Updates anzeigen, aber nicht zur Installation freigeben.',
+018816:     policyAuto:'Automatisch aktualisieren', policyAutoHelp:'Verfügbare Updates automatisch herunterladen und installieren.',
+018817:     policyFixedHelp:'Die aktuell konfigurierte Version bleibt unverändert.', policyVersionSelect:'Version auswählen', policySelectedVersion:'Verfügbar: {version}', policyVersionsLoading:'Verfügbare Versionen werden geladen…', policyVersionsNone:'Keine Version verfügbar', policyVersionsFailed:'Versionen konnten nicht geladen werden', policyCancel:'Abbrechen', policyApply:'Übernehmen',
+018818:     policySaved:'Richtlinie gespeichert.', policySaveFailed:'Richtlinie konnte nicht gespeichert werden: {error}', policyAvailable:'{version} verfügbar',
+018819:     runtimeStateLabel:'Zustand', runtimeRunning:'Läuft', runtimeRunningCompleted:'{running} aktiv · {completed} fertig', runtimeCompleted:'Abgeschlossen', runtimeStopped:'Gestoppt', runtimeMixed:'{running}/{total} laufen', runtimeMixedCompleted:'{running}/{total} aktiv · {completed} fertig', runtimeRestarting:'Neustart', runtimeError:'Fehler', runtimeUnknown:'Unbekannt',
+018820:     runtimeStart:'Starten', runtimeStop:'Stoppen', runtimeStarting:'Startet', runtimeStopping:'Stoppt', runtimeStartConfirm:'„{name}“ starten?', runtimeStopConfirm:'„{name}“ stoppen?', runtimeActionFailed:'Container-Aktion fehlgeschlagen: {error}', selfProtectionActive:'Selbstschutz aktiv', selfProtectionText:'Update Monitor kann sich nicht selbst stoppen, neu starten oder deinstallieren.', selfProtectionUninstall:'Selbstschutz aktiv – Update Monitor kann sich nicht selbst deinstallieren.', runtimeStartAcceptedButExited:'ZimaOS hat den Start angenommen, aber der Container ist nicht im laufenden Zustand geblieben. {states}', runtimeStopAcceptedButNotStopped:'ZimaOS hat das Stoppen angenommen, aber der Container hat den gewünschten Zustand nicht erreicht. {states}',
+018821:     autoUpdate:'Automatische Updates', autoUpdateHelp:'Zeitpunkt und Bedingungen für automatische Updates konfigurieren.', autoUpdateOff:'Aus', autoUpdateOn:'An',
+
+[UNINSTALL] line 18820
+018816:     policyAuto:'Automatisch aktualisieren', policyAutoHelp:'Verfügbare Updates automatisch herunterladen und installieren.',
+018817:     policyFixedHelp:'Die aktuell konfigurierte Version bleibt unverändert.', policyVersionSelect:'Version auswählen', policySelectedVersion:'Verfügbar: {version}', policyVersionsLoading:'Verfügbare Versionen werden geladen…', policyVersionsNone:'Keine Version verfügbar', policyVersionsFailed:'Versionen konnten nicht geladen werden', policyCancel:'Abbrechen', policyApply:'Übernehmen',
+018818:     policySaved:'Richtlinie gespeichert.', policySaveFailed:'Richtlinie konnte nicht gespeichert werden: {error}', policyAvailable:'{version} verfügbar',
+018819:     runtimeStateLabel:'Zustand', runtimeRunning:'Läuft', runtimeRunningCompleted:'{running} aktiv · {completed} fertig', runtimeCompleted:'Abgeschlossen', runtimeStopped:'Gestoppt', runtimeMixed:'{running}/{total} laufen', runtimeMixedCompleted:'{running}/{total} aktiv · {completed} fertig', runtimeRestarting:'Neustart', runtimeError:'Fehler', runtimeUnknown:'Unbekannt',
+018820:     runtimeStart:'Starten', runtimeStop:'Stoppen', runtimeStarting:'Startet', runtimeStopping:'Stoppt', runtimeStartConfirm:'„{name}“ starten?', runtimeStopConfirm:'„{name}“ stoppen?', runtimeActionFailed:'Container-Aktion fehlgeschlagen: {error}', selfProtectionActive:'Selbstschutz aktiv', selfProtectionText:'Update Monitor kann sich nicht selbst stoppen, neu starten oder deinstallieren.', selfProtectionUninstall:'Selbstschutz aktiv – Update Monitor kann sich nicht selbst deinstallieren.', runtimeStartAcceptedButExited:'ZimaOS hat den Start angenommen, aber der Container ist nicht im laufenden Zustand geblieben. {states}', runtimeStopAcceptedButNotStopped:'ZimaOS hat das Stoppen angenommen, aber der Container hat den gewünschten Zustand nicht erreicht. {states}',
+018821:     autoUpdate:'Automatische Updates', autoUpdateHelp:'Zeitpunkt und Bedingungen für automatische Updates konfigurieren.', autoUpdateOff:'Aus', autoUpdateOn:'An',
+018822:     autoSchedule:'Zeitplan', autoTime:'Uhrzeit', autoDays:'Wochentage', autoTimezone:'Zeitzone', autoUnavailable:'Wähle „Automatisch aktualisieren“, um den Zeitplan zu aktivieren.',
+018823:     autoImmediate:'Sofort', autoImmediateHelp:'Update wird direkt nach Erkennung automatisch installiert.', autoImmediateHint:'Bei aktivierter Sofort-Installation wird die geplante Uhrzeit ignoriert.',
+018824:     autoTimeKeypadHint:'00:00–23:59', autoTimeKeypadBackspace:'Letzte Ziffer löschen', autoTimeKeypadConfirm:'Uhrzeit übernehmen',
+
+[NEW_VERSION] line 18825
+018821:     autoUpdate:'Automatische Updates', autoUpdateHelp:'Zeitpunkt und Bedingungen für automatische Updates konfigurieren.', autoUpdateOff:'Aus', autoUpdateOn:'An',
+018822:     autoSchedule:'Zeitplan', autoTime:'Uhrzeit', autoDays:'Wochentage', autoTimezone:'Zeitzone', autoUnavailable:'Wähle „Automatisch aktualisieren“, um den Zeitplan zu aktivieren.',
+018823:     autoImmediate:'Sofort', autoImmediateHelp:'Update wird direkt nach Erkennung automatisch installiert.', autoImmediateHint:'Bei aktivierter Sofort-Installation wird die geplante Uhrzeit ignoriert.',
+018824:     autoTimeKeypadHint:'00:00–23:59', autoTimeKeypadBackspace:'Letzte Ziffer löschen', autoTimeKeypadConfirm:'Uhrzeit übernehmen',
+018825:     backupBeforeUpdateTitle:'Backup vor dem Update', backupDialogSubtitle:'Wähle, ob vor der Installation eine Sicherung erstellt werden soll.', backupQuestion:'Backup vor dem Update erstellen?', backupHelp:'Ein Backup erleichtert die Wiederherstellung, falls die neue Version Probleme verursacht.', backupQuick:'Schnellbackup', backupQuickHelp:'Docker Rücksetzpunkt ohne AppData. Nicht für ein Versions Downgrade geeignet, nachdem die neue App bereits gestartet wurde.', backupFull:'Vollständiges App Backup (empfohlen)', backupFullHelp:'Sichert zusätzlich relevante AppData und Volume Daten für eine sichere Wiederherstellung nach dem Update.', backupFullWarn:'Kann bei großen Apps mehrere Minuten dauern.', backupNone:'Ohne Backup', backupNoneHelp:'Update wie bisher direkt starten.', backupCleanup:'Automatische Bereinigung', backupRetention:'Aufbewahrung', backupAutoTitle:'Backup vor Update', backupAutoHelp:'Vor jedem automatischen Update eine Sicherung erstellen.', backupKind:'Backup Art', backupRunning:'BACKUP LÄUFT…', backupContinue:'Weiter',
+018826:     backupDetailsTitle:'Backup', backupDetailsExists:'Vorhanden', backupDetailsNone:'Kein Backup vorhanden', backupDetailsCount:'Backups', backupDetailsType:'Art', backupDetailsContainers:'Gesicherte Container', backupDetailsCreated:'Erstellt', backupDetailsDeleteIn:'Verbleibend', backupDetailsEncrypted:'Verschlüsselt', backupYes:'Ja', backupNo:'Nein', backupQuickShort:'Schnellbackup', backupFullShort:'Vollbackup', backupDeleteDue:'fällig', backupSize:'Größe',
+018827:     backupRestoreButton:'BACKUP EINSTELLUNGEN', backupRestoring:'WIEDERHERSTELLUNG…', backupRestoreProgress:'WIEDERHERSTELLUNG {progress} %', backupRestoreTitle:'Backup Einstellungen', backupRestoreHelp:'Backups auswählen, wiederherstellen oder löschen.', backupRestoreConfirm:'Wiederherstellen', backupRestoreLoading:'Backups werden geladen…', backupRestoreNone:'Keine Backups vorhanden.', backupRestoreEncrypted:'Verschlüsselt', backupRestoreSuccess:'Backup erfolgreich wiederhergestellt.', restoreVerificationPhase:'APP WIRD ÜBERPRÜFT…', backupRestoreFailed:'Wiederherstellung fehlgeschlagen: {error}', backupQuickUnsafe:'Nicht sicher für Versions Downgrade: AppData wurde nicht gesichert.',
+018828:     backupSettingsRetention:'Aufbewahrungsdauer', backupSettingsRetentionAll:'Gilt für alle Backups.', backupSettingsCount:'Backups behalten', backupSettingsCountAll:'Pro App.', backupCount1:'1 Backup', backupCount2:'2 Backups', backupCount3:'3 Backups', backupCountSaved:'Backup Anzahl gespeichert.', backupCountFailed:'Backup Anzahl konnte nicht gespeichert werden: {error}', backupRetention2:'2 Tage', backupRetention5:'5 Tage', backupRetention10:'10 Tage', backupRetentionForever:'Unbegrenzt', backupRetentionSaved:'Aufbewahrungsdauer gespeichert.', backupRetentionFailed:'Aufbewahrungsdauer konnte nicht gespeichert werden: {error}',
+018829:     backupDelete:'Löschen', backupDeleteConfirm:'Ausgewähltes Backup wirklich löschen?', backupDeleteSuccess:'Backup wurde gelöscht.', backupDeleteFailed:'Backup konnte nicht gelöscht werden: {error}',
+
+[VERIFY_TEXT] line 18827
+018823:     autoImmediate:'Sofort', autoImmediateHelp:'Update wird direkt nach Erkennung automatisch installiert.', autoImmediateHint:'Bei aktivierter Sofort-Installation wird die geplante Uhrzeit ignoriert.',
+018824:     autoTimeKeypadHint:'00:00–23:59', autoTimeKeypadBackspace:'Letzte Ziffer löschen', autoTimeKeypadConfirm:'Uhrzeit übernehmen',
+018825:     backupBeforeUpdateTitle:'Backup vor dem Update', backupDialogSubtitle:'Wähle, ob vor der Installation eine Sicherung erstellt werden soll.', backupQuestion:'Backup vor dem Update erstellen?', backupHelp:'Ein Backup erleichtert die Wiederherstellung, falls die neue Version Probleme verursacht.', backupQuick:'Schnellbackup', backupQuickHelp:'Docker Rücksetzpunkt ohne AppData. Nicht für ein Versions Downgrade geeignet, nachdem die neue App bereits gestartet wurde.', backupFull:'Vollständiges App Backup (empfohlen)', backupFullHelp:'Sichert zusätzlich relevante AppData und Volume Daten für eine sichere Wiederherstellung nach dem Update.', backupFullWarn:'Kann bei großen Apps mehrere Minuten dauern.', backupNone:'Ohne Backup', backupNoneHelp:'Update wie bisher direkt starten.', backupCleanup:'Automatische Bereinigung', backupRetention:'Aufbewahrung', backupAutoTitle:'Backup vor Update', backupAutoHelp:'Vor jedem automatischen Update eine Sicherung erstellen.', backupKind:'Backup Art', backupRunning:'BACKUP LÄUFT…', backupContinue:'Weiter',
+018826:     backupDetailsTitle:'Backup', backupDetailsExists:'Vorhanden', backupDetailsNone:'Kein Backup vorhanden', backupDetailsCount:'Backups', backupDetailsType:'Art', backupDetailsContainers:'Gesicherte Container', backupDetailsCreated:'Erstellt', backupDetailsDeleteIn:'Verbleibend', backupDetailsEncrypted:'Verschlüsselt', backupYes:'Ja', backupNo:'Nein', backupQuickShort:'Schnellbackup', backupFullShort:'Vollbackup', backupDeleteDue:'fällig', backupSize:'Größe',
+018827:     backupRestoreButton:'BACKUP EINSTELLUNGEN', backupRestoring:'WIEDERHERSTELLUNG…', backupRestoreProgress:'WIEDERHERSTELLUNG {progress} %', backupRestoreTitle:'Backup Einstellungen', backupRestoreHelp:'Backups auswählen, wiederherstellen oder löschen.', backupRestoreConfirm:'Wiederherstellen', backupRestoreLoading:'Backups werden geladen…', backupRestoreNone:'Keine Backups vorhanden.', backupRestoreEncrypted:'Verschlüsselt', backupRestoreSuccess:'Backup erfolgreich wiederhergestellt.', restoreVerificationPhase:'APP WIRD ÜBERPRÜFT…', backupRestoreFailed:'Wiederherstellung fehlgeschlagen: {error}', backupQuickUnsafe:'Nicht sicher für Versions Downgrade: AppData wurde nicht gesichert.',
+018828:     backupSettingsRetention:'Aufbewahrungsdauer', backupSettingsRetentionAll:'Gilt für alle Backups.', backupSettingsCount:'Backups behalten', backupSettingsCountAll:'Pro App.', backupCount1:'1 Backup', backupCount2:'2 Backups', backupCount3:'3 Backups', backupCountSaved:'Backup Anzahl gespeichert.', backupCountFailed:'Backup Anzahl konnte nicht gespeichert werden: {error}', backupRetention2:'2 Tage', backupRetention5:'5 Tage', backupRetention10:'10 Tage', backupRetentionForever:'Unbegrenzt', backupRetentionSaved:'Aufbewahrungsdauer gespeichert.', backupRetentionFailed:'Aufbewahrungsdauer konnte nicht gespeichert werden: {error}',
+018829:     backupDelete:'Löschen', backupDeleteConfirm:'Ausgewähltes Backup wirklich löschen?', backupDeleteSuccess:'Backup wurde gelöscht.', backupDeleteFailed:'Backup konnte nicht gelöscht werden: {error}',
+018830:     backupEncryptionLabel:'Backup Verschlüsselung', backupEncryptionHelp:'Optional. Neue Backups werden mit AES 256 GCM verschlüsselt. Das Passwort wird nicht gespeichert.', backupEncryptionOff:'Nicht aktiviert', backupEncryptionOn:'Aktiv · entsperrt', backupEncryptionLocked:'Aktiv · gesperrt', backupEncryptionPassword:'Backup Passwort', backupEncryptionConfirm:'Passwort bestätigen', backupEncryptionEnable:'Aktivieren / Passwort setzen', backupEncryptionChange:'Passwort ändern', backupEncryptionUnlock:'Entsperren', backupEncryptionDisable:'Ausschalten', backupEncryptionMismatch:'Die Passwörter stimmen nicht überein.', backupEncryptionSaved:'Backup Verschlüsselung ist aktiv.', backupEncryptionDisabled:'Backup Verschlüsselung ist ausgeschaltet.', backupEncryptionError:'Backup Verschlüsselung: {error}',
+018831:     backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'UPDATE WIRD INSTALLIERT…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'UPDATE WIRD ÜBERPRÜFT…',
+
+[VERIFY_TEXT] line 18831
+018827:     backupRestoreButton:'BACKUP EINSTELLUNGEN', backupRestoring:'WIEDERHERSTELLUNG…', backupRestoreProgress:'WIEDERHERSTELLUNG {progress} %', backupRestoreTitle:'Backup Einstellungen', backupRestoreHelp:'Backups auswählen, wiederherstellen oder löschen.', backupRestoreConfirm:'Wiederherstellen', backupRestoreLoading:'Backups werden geladen…', backupRestoreNone:'Keine Backups vorhanden.', backupRestoreEncrypted:'Verschlüsselt', backupRestoreSuccess:'Backup erfolgreich wiederhergestellt.', restoreVerificationPhase:'APP WIRD ÜBERPRÜFT…', backupRestoreFailed:'Wiederherstellung fehlgeschlagen: {error}', backupQuickUnsafe:'Nicht sicher für Versions Downgrade: AppData wurde nicht gesichert.',
+018828:     backupSettingsRetention:'Aufbewahrungsdauer', backupSettingsRetentionAll:'Gilt für alle Backups.', backupSettingsCount:'Backups behalten', backupSettingsCountAll:'Pro App.', backupCount1:'1 Backup', backupCount2:'2 Backups', backupCount3:'3 Backups', backupCountSaved:'Backup Anzahl gespeichert.', backupCountFailed:'Backup Anzahl konnte nicht gespeichert werden: {error}', backupRetention2:'2 Tage', backupRetention5:'5 Tage', backupRetention10:'10 Tage', backupRetentionForever:'Unbegrenzt', backupRetentionSaved:'Aufbewahrungsdauer gespeichert.', backupRetentionFailed:'Aufbewahrungsdauer konnte nicht gespeichert werden: {error}',
+018829:     backupDelete:'Löschen', backupDeleteConfirm:'Ausgewähltes Backup wirklich löschen?', backupDeleteSuccess:'Backup wurde gelöscht.', backupDeleteFailed:'Backup konnte nicht gelöscht werden: {error}',
+018830:     backupEncryptionLabel:'Backup Verschlüsselung', backupEncryptionHelp:'Optional. Neue Backups werden mit AES 256 GCM verschlüsselt. Das Passwort wird nicht gespeichert.', backupEncryptionOff:'Nicht aktiviert', backupEncryptionOn:'Aktiv · entsperrt', backupEncryptionLocked:'Aktiv · gesperrt', backupEncryptionPassword:'Backup Passwort', backupEncryptionConfirm:'Passwort bestätigen', backupEncryptionEnable:'Aktivieren / Passwort setzen', backupEncryptionChange:'Passwort ändern', backupEncryptionUnlock:'Entsperren', backupEncryptionDisable:'Ausschalten', backupEncryptionMismatch:'Die Passwörter stimmen nicht überein.', backupEncryptionSaved:'Backup Verschlüsselung ist aktiv.', backupEncryptionDisabled:'Backup Verschlüsselung ist ausgeschaltet.', backupEncryptionError:'Backup Verschlüsselung: {error}',
+018831:     backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'UPDATE WIRD INSTALLIERT…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'UPDATE WIRD ÜBERPRÜFT…',
+018832:     portConflictBannerOne:'Port Konflikt erkannt · {count} Port', portConflictBannerMany:'Port Konflikte erkannt · {count} Ports', portConflictSummary:'Port Konflikt', portConflictTitle:'Port Konflikte', portConflictHelp:'Mehrere Docker-Apps verwenden denselben veröffentlichten Host-Port.', portConflictApps:'Betroffene Docker-Apps',
+018833:     policyLegendTitle:'Symbol-Erklärung', policyLegendSubtitle:'Die verschiedenen Update-Optionen im Überblick.', legendFixedTitle:'Fixiert', legendFixedText:'Version bleibt unverändert.', legendUpgradeTitle:'Neue Version', legendUpgradeText:'Eine verfügbare Version gezielt freigeben.', legendFollowTitle:'Folgen', legendFollowText:'Neuere Versionen automatisch als Update erkennen.', legendNotifyTitle:'Benachrichtigen', legendNotifyText:'Nur über verfügbare Updates informieren.', legendAutoTitle:'Auto-Update', legendAutoText:'Updates automatisch herunterladen und installieren.', policyTipTitle:'Tipp', policyTipText:'Mit automatischen Updates bleibt dein Container immer aktuell und sicher – ganz ohne manuellen Aufwand.',
+018834:     autoLastSuccess:'Letztes Auto-Update erfolgreich', autoLastError:'Letztes Auto-Update fehlgeschlagen',
+018835:     checkDocker:'DOCKER PRÜFEN', checkingDocker:'PRÜFUNG…', checkDockerFailed:'Docker Prüfung fehlgeschlagen: {error}',
+
+[NEW_VERSION] line 18833
+018829:     backupDelete:'Löschen', backupDeleteConfirm:'Ausgewähltes Backup wirklich löschen?', backupDeleteSuccess:'Backup wurde gelöscht.', backupDeleteFailed:'Backup konnte nicht gelöscht werden: {error}',
+018830:     backupEncryptionLabel:'Backup Verschlüsselung', backupEncryptionHelp:'Optional. Neue Backups werden mit AES 256 GCM verschlüsselt. Das Passwort wird nicht gespeichert.', backupEncryptionOff:'Nicht aktiviert', backupEncryptionOn:'Aktiv · entsperrt', backupEncryptionLocked:'Aktiv · gesperrt', backupEncryptionPassword:'Backup Passwort', backupEncryptionConfirm:'Passwort bestätigen', backupEncryptionEnable:'Aktivieren / Passwort setzen', backupEncryptionChange:'Passwort ändern', backupEncryptionUnlock:'Entsperren', backupEncryptionDisable:'Ausschalten', backupEncryptionMismatch:'Die Passwörter stimmen nicht überein.', backupEncryptionSaved:'Backup Verschlüsselung ist aktiv.', backupEncryptionDisabled:'Backup Verschlüsselung ist ausgeschaltet.', backupEncryptionError:'Backup Verschlüsselung: {error}',
+018831:     backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'UPDATE WIRD INSTALLIERT…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'UPDATE WIRD ÜBERPRÜFT…',
+018832:     portConflictBannerOne:'Port Konflikt erkannt · {count} Port', portConflictBannerMany:'Port Konflikte erkannt · {count} Ports', portConflictSummary:'Port Konflikt', portConflictTitle:'Port Konflikte', portConflictHelp:'Mehrere Docker-Apps verwenden denselben veröffentlichten Host-Port.', portConflictApps:'Betroffene Docker-Apps',
+018833:     policyLegendTitle:'Symbol-Erklärung', policyLegendSubtitle:'Die verschiedenen Update-Optionen im Überblick.', legendFixedTitle:'Fixiert', legendFixedText:'Version bleibt unverändert.', legendUpgradeTitle:'Neue Version', legendUpgradeText:'Eine verfügbare Version gezielt freigeben.', legendFollowTitle:'Folgen', legendFollowText:'Neuere Versionen automatisch als Update erkennen.', legendNotifyTitle:'Benachrichtigen', legendNotifyText:'Nur über verfügbare Updates informieren.', legendAutoTitle:'Auto-Update', legendAutoText:'Updates automatisch herunterladen und installieren.', policyTipTitle:'Tipp', policyTipText:'Mit automatischen Updates bleibt dein Container immer aktuell und sicher – ganz ohne manuellen Aufwand.',
+018834:     autoLastSuccess:'Letztes Auto-Update erfolgreich', autoLastError:'Letztes Auto-Update fehlgeschlagen',
+018835:     checkDocker:'DOCKER PRÜFEN', checkingDocker:'PRÜFUNG…', checkDockerFailed:'Docker Prüfung fehlgeschlagen: {error}',
+018836:     installUpdate:'UPDATE INSTALLIEREN', updating:'UPDATE LÄUFT…', updateProgress:'UPDATE {progress} %',
+018837:     confirmUpdate:'Update für „{name}“ installieren? ZimaOS wird die betroffenen Container mit der freigegebenen Version bzw. dem neuen Image aktualisieren. Gestoppte Container werden danach wieder gestoppt.',
+
+[UNINSTALL] line 18839
+018835:     checkDocker:'DOCKER PRÜFEN', checkingDocker:'PRÜFUNG…', checkDockerFailed:'Docker Prüfung fehlgeschlagen: {error}',
+018836:     installUpdate:'UPDATE INSTALLIEREN', updating:'UPDATE LÄUFT…', updateProgress:'UPDATE {progress} %',
+018837:     confirmUpdate:'Update für „{name}“ installieren? ZimaOS wird die betroffenen Container mit der freigegebenen Version bzw. dem neuen Image aktualisieren. Gestoppte Container werden danach wieder gestoppt.',
+018838:     updateSuccess:'Update abgeschlossen. Diese App wird neu geprüft.', updateFailed:'Update fehlgeschlagen: {error}',
+018839:     uninstallTitle:'Deinstallieren', uninstallDeleteFolder:'App-Ordner mit löschen', uninstallFolderHelp:'Ohne Haken bleibt der ZimaOS-App-Ordner erhalten.',
+018840:     uninstallButton:'DEINSTALLIEREN', uninstalling:'DEINSTALLATION…', uninstallProgress:'DEINSTALLATION {progress} %',
+018841:     uninstallConfirmKeep:'„{name}“ deinstallieren? Der ZimaOS-App-Ordner bleibt erhalten.',
+018842:     uninstallConfirmDelete:'„{name}“ deinstallieren und den ZimaOS-App-Ordner ebenfalls löschen?',
+018843:     uninstallStarted:'Deinstallation abgeschlossen.', uninstallFailed:'Deinstallation fehlgeschlagen: {error}', uninstallConfirmShort:'Deinstallieren?'
+
+[UNINSTALL] line 18840
+018836:     installUpdate:'UPDATE INSTALLIEREN', updating:'UPDATE LÄUFT…', updateProgress:'UPDATE {progress} %',
+018837:     confirmUpdate:'Update für „{name}“ installieren? ZimaOS wird die betroffenen Container mit der freigegebenen Version bzw. dem neuen Image aktualisieren. Gestoppte Container werden danach wieder gestoppt.',
+018838:     updateSuccess:'Update abgeschlossen. Diese App wird neu geprüft.', updateFailed:'Update fehlgeschlagen: {error}',
+018839:     uninstallTitle:'Deinstallieren', uninstallDeleteFolder:'App-Ordner mit löschen', uninstallFolderHelp:'Ohne Haken bleibt der ZimaOS-App-Ordner erhalten.',
+018840:     uninstallButton:'DEINSTALLIEREN', uninstalling:'DEINSTALLATION…', uninstallProgress:'DEINSTALLATION {progress} %',
+018841:     uninstallConfirmKeep:'„{name}“ deinstallieren? Der ZimaOS-App-Ordner bleibt erhalten.',
+018842:     uninstallConfirmDelete:'„{name}“ deinstallieren und den ZimaOS-App-Ordner ebenfalls löschen?',
+018843:     uninstallStarted:'Deinstallation abgeschlossen.', uninstallFailed:'Deinstallation fehlgeschlagen: {error}', uninstallConfirmShort:'Deinstallieren?'
+018844:   },
+
+[UNINSTALL] line 18841
+018837:     confirmUpdate:'Update für „{name}“ installieren? ZimaOS wird die betroffenen Container mit der freigegebenen Version bzw. dem neuen Image aktualisieren. Gestoppte Container werden danach wieder gestoppt.',
+018838:     updateSuccess:'Update abgeschlossen. Diese App wird neu geprüft.', updateFailed:'Update fehlgeschlagen: {error}',
+018839:     uninstallTitle:'Deinstallieren', uninstallDeleteFolder:'App-Ordner mit löschen', uninstallFolderHelp:'Ohne Haken bleibt der ZimaOS-App-Ordner erhalten.',
+018840:     uninstallButton:'DEINSTALLIEREN', uninstalling:'DEINSTALLATION…', uninstallProgress:'DEINSTALLATION {progress} %',
+018841:     uninstallConfirmKeep:'„{name}“ deinstallieren? Der ZimaOS-App-Ordner bleibt erhalten.',
+018842:     uninstallConfirmDelete:'„{name}“ deinstallieren und den ZimaOS-App-Ordner ebenfalls löschen?',
+018843:     uninstallStarted:'Deinstallation abgeschlossen.', uninstallFailed:'Deinstallation fehlgeschlagen: {error}', uninstallConfirmShort:'Deinstallieren?'
+018844:   },
+018845:   en: {
+
+[UNINSTALL] line 18842
+018838:     updateSuccess:'Update abgeschlossen. Diese App wird neu geprüft.', updateFailed:'Update fehlgeschlagen: {error}',
+018839:     uninstallTitle:'Deinstallieren', uninstallDeleteFolder:'App-Ordner mit löschen', uninstallFolderHelp:'Ohne Haken bleibt der ZimaOS-App-Ordner erhalten.',
+018840:     uninstallButton:'DEINSTALLIEREN', uninstalling:'DEINSTALLATION…', uninstallProgress:'DEINSTALLATION {progress} %',
+018841:     uninstallConfirmKeep:'„{name}“ deinstallieren? Der ZimaOS-App-Ordner bleibt erhalten.',
+018842:     uninstallConfirmDelete:'„{name}“ deinstallieren und den ZimaOS-App-Ordner ebenfalls löschen?',
+018843:     uninstallStarted:'Deinstallation abgeschlossen.', uninstallFailed:'Deinstallation fehlgeschlagen: {error}', uninstallConfirmShort:'Deinstallieren?'
+018844:   },
+018845:   en: {
+018846:     loginSubtitle:'Docker Image & Version Monitoring', username:'Username', password:'Password', login:'Login', loginError:'Invalid username or password.',
+
+[UNINSTALL] line 18843
+018839:     uninstallTitle:'Deinstallieren', uninstallDeleteFolder:'App-Ordner mit löschen', uninstallFolderHelp:'Ohne Haken bleibt der ZimaOS-App-Ordner erhalten.',
+018840:     uninstallButton:'DEINSTALLIEREN', uninstalling:'DEINSTALLATION…', uninstallProgress:'DEINSTALLATION {progress} %',
+018841:     uninstallConfirmKeep:'„{name}“ deinstallieren? Der ZimaOS-App-Ordner bleibt erhalten.',
+018842:     uninstallConfirmDelete:'„{name}“ deinstallieren und den ZimaOS-App-Ordner ebenfalls löschen?',
+018843:     uninstallStarted:'Deinstallation abgeschlossen.', uninstallFailed:'Deinstallation fehlgeschlagen: {error}', uninstallConfirmShort:'Deinstallieren?'
+018844:   },
+018845:   en: {
+018846:     loginSubtitle:'Docker Image & Version Monitoring', username:'Username', password:'Password', login:'Login', loginError:'Invalid username or password.',
+018847:     updates:'Updates', current:'Current', runningApps:'Running', stoppedApps:'Stopped', fixed:'Fixed version', pinned:'Digest pinned', local:'Local images', error:'Errors', autoUpdateSummary:'Auto updates', check:'CHECK UPDATES', checking:'CHECKING...', scanStarting:'Preparing check', scanDocker:'Checking Docker', scanContainers:'Finding containers', scanInspect:'Analyzing containers', scanImages:'Checking images', scanResults:'Evaluating results', scanDone:'Complete', scanLockWarning:'Check running. Navigation and information remain available. Docker changes and critical actions are locked.', warningTitle:'Notices', warningButton:'Warnings', scanLockWarningTitle:'Check running', dockerVersionWarningTitle:'Check Docker version', dockerVersionWarningText:'The displayed Docker version could not be confirmed unambiguously. Check the project page if needed before installing an update.', dockerVersionOpenProject:'Open project page', dockerVersionConfirm:'Confirm version', dockerVersionConfirmed:'Version confirmed', dockerVersionConfirmFailed:'Confirmation failed: {error}',
+
+[NOTICES] line 18847
+018843:     uninstallStarted:'Deinstallation abgeschlossen.', uninstallFailed:'Deinstallation fehlgeschlagen: {error}', uninstallConfirmShort:'Deinstallieren?'
+018844:   },
+018845:   en: {
+018846:     loginSubtitle:'Docker Image & Version Monitoring', username:'Username', password:'Password', login:'Login', loginError:'Invalid username or password.',
+018847:     updates:'Updates', current:'Current', runningApps:'Running', stoppedApps:'Stopped', fixed:'Fixed version', pinned:'Digest pinned', local:'Local images', error:'Errors', autoUpdateSummary:'Auto updates', check:'CHECK UPDATES', checking:'CHECKING...', scanStarting:'Preparing check', scanDocker:'Checking Docker', scanContainers:'Finding containers', scanInspect:'Analyzing containers', scanImages:'Checking images', scanResults:'Evaluating results', scanDone:'Complete', scanLockWarning:'Check running. Navigation and information remain available. Docker changes and critical actions are locked.', warningTitle:'Notices', warningButton:'Warnings', scanLockWarningTitle:'Check running', dockerVersionWarningTitle:'Check Docker version', dockerVersionWarningText:'The displayed Docker version could not be confirmed unambiguously. Check the project page if needed before installing an update.', dockerVersionOpenProject:'Open project page', dockerVersionConfirm:'Confirm version', dockerVersionConfirmed:'Version confirmed', dockerVersionConfirmFailed:'Confirmation failed: {error}',
+018848:     noData:'No scan data yet.', lastNever:'No scan yet', last:'Last check', settings:'Settings', auto:'Automatic check',
+018849:     off:'Off', h1:'1 hour', h6:'6 hours', h12:'12 hours', h24:'24 hours', help:'Checks registries without pulling images.',
+018850:     language:'Language', german:'German', english:'English', timeFormat:'Time format', time24:'24 hours', time12:'12 hours (AM/PM)', currentSort:'Sorting', currentSortName:'By name', currentSortUpdated:'By last update', currentSortBackup:'By backup', apiConnected:'API connected', info:'Update Monitor info', logout:'Logout', githubApi:'GitHub API', githubTokenPlaceholder:'Paste GitHub token', githubTokenHelp:'Optional. A token authenticates GitHub requests and normally raises the API limit from 60 to 5,000 requests per hour.', githubTokenSave:'Save', githubTokenTest:'Test connection', githubTokenRemove:'Remove', githubTokenCreate:'Create token', githubTokenMissing:'No token saved · without authentication up to 60 requests/hour', githubTokenSaved:'Token saved', githubTokenEnvironment:'Token from Docker environment is active', githubTokenConnected:'GitHub connected', githubTokenApiUsed:'{used}/{limit} API used', githubTokenEnter:'Enter a token first.', githubTokenRemoved:'Saved token removed.', cpuUsage:'CPU usage', memoryUsage:'Memory', onlineSince:'Online since', versionLabel:'Version', zimaLabel:'ZimaOS App Management', detected:'Detected', notDetected:'Not detected', supportedBy:'Supported by', resourceContainer:'Resources used by the Update Monitor container',
+018851:     all:'All', updateApps:'Updates', imageUpdate:'Image update', versionUpdate:'New version', held:'Fixed version', fixedFilter:'Fixed',
+
+[NEW_VERSION] line 18851
+018847:     updates:'Updates', current:'Current', runningApps:'Running', stoppedApps:'Stopped', fixed:'Fixed version', pinned:'Digest pinned', local:'Local images', error:'Errors', autoUpdateSummary:'Auto updates', check:'CHECK UPDATES', checking:'CHECKING...', scanStarting:'Preparing check', scanDocker:'Checking Docker', scanContainers:'Finding containers', scanInspect:'Analyzing containers', scanImages:'Checking images', scanResults:'Evaluating results', scanDone:'Complete', scanLockWarning:'Check running. Navigation and information remain available. Docker changes and critical actions are locked.', warningTitle:'Notices', warningButton:'Warnings', scanLockWarningTitle:'Check running', dockerVersionWarningTitle:'Check Docker version', dockerVersionWarningText:'The displayed Docker version could not be confirmed unambiguously. Check the project page if needed before installing an update.', dockerVersionOpenProject:'Open project page', dockerVersionConfirm:'Confirm version', dockerVersionConfirmed:'Version confirmed', dockerVersionConfirmFailed:'Confirmation failed: {error}',
+018848:     noData:'No scan data yet.', lastNever:'No scan yet', last:'Last check', settings:'Settings', auto:'Automatic check',
+018849:     off:'Off', h1:'1 hour', h6:'6 hours', h12:'12 hours', h24:'24 hours', help:'Checks registries without pulling images.',
+018850:     language:'Language', german:'German', english:'English', timeFormat:'Time format', time24:'24 hours', time12:'12 hours (AM/PM)', currentSort:'Sorting', currentSortName:'By name', currentSortUpdated:'By last update', currentSortBackup:'By backup', apiConnected:'API connected', info:'Update Monitor info', logout:'Logout', githubApi:'GitHub API', githubTokenPlaceholder:'Paste GitHub token', githubTokenHelp:'Optional. A token authenticates GitHub requests and normally raises the API limit from 60 to 5,000 requests per hour.', githubTokenSave:'Save', githubTokenTest:'Test connection', githubTokenRemove:'Remove', githubTokenCreate:'Create token', githubTokenMissing:'No token saved · without authentication up to 60 requests/hour', githubTokenSaved:'Token saved', githubTokenEnvironment:'Token from Docker environment is active', githubTokenConnected:'GitHub connected', githubTokenApiUsed:'{used}/{limit} API used', githubTokenEnter:'Enter a token first.', githubTokenRemoved:'Saved token removed.', cpuUsage:'CPU usage', memoryUsage:'Memory', onlineSince:'Online since', versionLabel:'Version', zimaLabel:'ZimaOS App Management', detected:'Detected', notDetected:'Not detected', supportedBy:'Supported by', resourceContainer:'Resources used by the Update Monitor container',
+018851:     all:'All', updateApps:'Updates', imageUpdate:'Image update', versionUpdate:'New version', held:'Fixed version', fixedFilter:'Fixed',
+018852:     pinnedStatus:'Digest pinned', localStatus:'Local image', errorStatus:'Check error', containers:'Containers', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installed', installedVersion:'Version', available:'Available',
+018853:     policy:'Policy', follow:'Follow tag', fixedVersion:'Keep version', digestPinned:'Digest pinned', localImage:'No registry digest',
+018854:     running:'Running', stopped:'Stopped', zimaDetected:'App Management detected', zimaMissing:'App Management not detected', search:'Search apps…',
+018855:     detailsShow:'Show details', detailsHide:'Hide details', newImage:'New image', noNewVersion:'No newer version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Last update',
+
+[CHECK_ERROR] line 18852
+018848:     noData:'No scan data yet.', lastNever:'No scan yet', last:'Last check', settings:'Settings', auto:'Automatic check',
+018849:     off:'Off', h1:'1 hour', h6:'6 hours', h12:'12 hours', h24:'24 hours', help:'Checks registries without pulling images.',
+018850:     language:'Language', german:'German', english:'English', timeFormat:'Time format', time24:'24 hours', time12:'12 hours (AM/PM)', currentSort:'Sorting', currentSortName:'By name', currentSortUpdated:'By last update', currentSortBackup:'By backup', apiConnected:'API connected', info:'Update Monitor info', logout:'Logout', githubApi:'GitHub API', githubTokenPlaceholder:'Paste GitHub token', githubTokenHelp:'Optional. A token authenticates GitHub requests and normally raises the API limit from 60 to 5,000 requests per hour.', githubTokenSave:'Save', githubTokenTest:'Test connection', githubTokenRemove:'Remove', githubTokenCreate:'Create token', githubTokenMissing:'No token saved · without authentication up to 60 requests/hour', githubTokenSaved:'Token saved', githubTokenEnvironment:'Token from Docker environment is active', githubTokenConnected:'GitHub connected', githubTokenApiUsed:'{used}/{limit} API used', githubTokenEnter:'Enter a token first.', githubTokenRemoved:'Saved token removed.', cpuUsage:'CPU usage', memoryUsage:'Memory', onlineSince:'Online since', versionLabel:'Version', zimaLabel:'ZimaOS App Management', detected:'Detected', notDetected:'Not detected', supportedBy:'Supported by', resourceContainer:'Resources used by the Update Monitor container',
+018851:     all:'All', updateApps:'Updates', imageUpdate:'Image update', versionUpdate:'New version', held:'Fixed version', fixedFilter:'Fixed',
+018852:     pinnedStatus:'Digest pinned', localStatus:'Local image', errorStatus:'Check error', containers:'Containers', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installed', installedVersion:'Version', available:'Available',
+018853:     policy:'Policy', follow:'Follow tag', fixedVersion:'Keep version', digestPinned:'Digest pinned', localImage:'No registry digest',
+018854:     running:'Running', stopped:'Stopped', zimaDetected:'App Management detected', zimaMissing:'App Management not detected', search:'Search apps…',
+018855:     detailsShow:'Show details', detailsHide:'Hide details', newImage:'New image', noNewVersion:'No newer version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Last update',
+018856:     fixedNotice:'A newer version exists – the configured version remains intentionally fixed.', remoteDigest:'Remote digest', localDigest:'Local digest', service:'Service',
+
+[NEW_VERSION] line 18855
+018851:     all:'All', updateApps:'Updates', imageUpdate:'Image update', versionUpdate:'New version', held:'Fixed version', fixedFilter:'Fixed',
+018852:     pinnedStatus:'Digest pinned', localStatus:'Local image', errorStatus:'Check error', containers:'Containers', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installed', installedVersion:'Version', available:'Available',
+018853:     policy:'Policy', follow:'Follow tag', fixedVersion:'Keep version', digestPinned:'Digest pinned', localImage:'No registry digest',
+018854:     running:'Running', stopped:'Stopped', zimaDetected:'App Management detected', zimaMissing:'App Management not detected', search:'Search apps…',
+018855:     detailsShow:'Show details', detailsHide:'Hide details', newImage:'New image', noNewVersion:'No newer version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Last update',
+018856:     fixedNotice:'A newer version exists – the configured version remains intentionally fixed.', remoteDigest:'Remote digest', localDigest:'Local digest', service:'Service',
+018857:     policyFixedShort:'Version fixed', policyUpgrade:'Switch to a new version', policyUpgradeHelp:'Release an available version for installation.',
+018858:     policyFollow:'Follow tag / automatic', policyFollowHelp:'Switch to the “latest” tag and follow it automatically afterwards.', policyFollowTag:'Tag: {tag}',
+018859:     policyNotify:'Notify only', policyNotifyHelp:'Show updates but do not release them for installation.',
+
+[NOTICES] line 18856
+018852:     pinnedStatus:'Digest pinned', localStatus:'Local image', errorStatus:'Check error', containers:'Containers', images:'Images', port:'Port', portsLabel:'Ports', installed:'Installed', installedVersion:'Version', available:'Available',
+018853:     policy:'Policy', follow:'Follow tag', fixedVersion:'Keep version', digestPinned:'Digest pinned', localImage:'No registry digest',
+018854:     running:'Running', stopped:'Stopped', zimaDetected:'App Management detected', zimaMissing:'App Management not detected', search:'Search apps…',
+018855:     detailsShow:'Show details', detailsHide:'Hide details', newImage:'New image', noNewVersion:'No newer version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Last update',
+018856:     fixedNotice:'A newer version exists – the configured version remains intentionally fixed.', remoteDigest:'Remote digest', localDigest:'Local digest', service:'Service',
+018857:     policyFixedShort:'Version fixed', policyUpgrade:'Switch to a new version', policyUpgradeHelp:'Release an available version for installation.',
+018858:     policyFollow:'Follow tag / automatic', policyFollowHelp:'Switch to the “latest” tag and follow it automatically afterwards.', policyFollowTag:'Tag: {tag}',
+018859:     policyNotify:'Notify only', policyNotifyHelp:'Show updates but do not release them for installation.',
+018860:     policyAuto:'Update automatically', policyAutoHelp:'Download and install available updates automatically.',
+
+[NEW_VERSION] line 18857
+018853:     policy:'Policy', follow:'Follow tag', fixedVersion:'Keep version', digestPinned:'Digest pinned', localImage:'No registry digest',
+018854:     running:'Running', stopped:'Stopped', zimaDetected:'App Management detected', zimaMissing:'App Management not detected', search:'Search apps…',
+018855:     detailsShow:'Show details', detailsHide:'Hide details', newImage:'New image', noNewVersion:'No newer version', updateSingular:'Update', updatePlural:'Updates', lastUpdate:'Last update',
+018856:     fixedNotice:'A newer version exists – the configured version remains intentionally fixed.', remoteDigest:'Remote digest', localDigest:'Local digest', service:'Service',
+018857:     policyFixedShort:'Version fixed', policyUpgrade:'Switch to a new version', policyUpgradeHelp:'Release an available version for installation.',
+018858:     policyFollow:'Follow tag / automatic', policyFollowHelp:'Switch to the “latest” tag and follow it automatically afterwards.', policyFollowTag:'Tag: {tag}',
+018859:     policyNotify:'Notify only', policyNotifyHelp:'Show updates but do not release them for installation.',
+018860:     policyAuto:'Update automatically', policyAutoHelp:'Download and install available updates automatically.',
+018861:     policyFixedHelp:'Keep the currently configured version unchanged.', policyVersionSelect:'Select version', policySelectedVersion:'Available: {version}', policyVersionsLoading:'Loading available versions…', policyVersionsNone:'No version available', policyVersionsFailed:'Could not load versions', policyCancel:'Cancel', policyApply:'Apply',
+
+[INSTALL_LITERAL] line 18860
+018856:     fixedNotice:'A newer version exists – the configured version remains intentionally fixed.', remoteDigest:'Remote digest', localDigest:'Local digest', service:'Service',
+018857:     policyFixedShort:'Version fixed', policyUpgrade:'Switch to a new version', policyUpgradeHelp:'Release an available version for installation.',
+018858:     policyFollow:'Follow tag / automatic', policyFollowHelp:'Switch to the “latest” tag and follow it automatically afterwards.', policyFollowTag:'Tag: {tag}',
+018859:     policyNotify:'Notify only', policyNotifyHelp:'Show updates but do not release them for installation.',
+018860:     policyAuto:'Update automatically', policyAutoHelp:'Download and install available updates automatically.',
+018861:     policyFixedHelp:'Keep the currently configured version unchanged.', policyVersionSelect:'Select version', policySelectedVersion:'Available: {version}', policyVersionsLoading:'Loading available versions…', policyVersionsNone:'No version available', policyVersionsFailed:'Could not load versions', policyCancel:'Cancel', policyApply:'Apply',
+018862:     policySaved:'Policy saved.', policySaveFailed:'Could not save policy: {error}', policyAvailable:'{version} available',
+018863:     runtimeStateLabel:'State', runtimeRunning:'Running', runtimeRunningCompleted:'{running} active · {completed} done', runtimeCompleted:'Completed', runtimeStopped:'Stopped', runtimeMixed:'{running}/{total} running', runtimeMixedCompleted:'{running}/{total} active · {completed} done', runtimeRestarting:'Restarting', runtimeError:'Error', runtimeUnknown:'Unknown',
+018864:     runtimeStart:'Start', runtimeStop:'Stop', runtimeStarting:'Starting', runtimeStopping:'Stopping', runtimeStartConfirm:'Start “{name}”?', runtimeStopConfirm:'Stop “{name}”?', runtimeActionFailed:'Container action failed: {error}', selfProtectionActive:'Self-protection active', selfProtectionText:'Update Monitor cannot stop, restart or uninstall itself.', selfProtectionUninstall:'Self-protection active – Update Monitor cannot uninstall itself.', runtimeStartAcceptedButExited:'ZimaOS accepted the start, but the container did not remain running. {states}', runtimeStopAcceptedButNotStopped:'ZimaOS accepted the stop, but the container did not reach the requested state. {states}',
+
+[SELECT_VERSION] line 18861
+018857:     policyFixedShort:'Version fixed', policyUpgrade:'Switch to a new version', policyUpgradeHelp:'Release an available version for installation.',
+018858:     policyFollow:'Follow tag / automatic', policyFollowHelp:'Switch to the “latest” tag and follow it automatically afterwards.', policyFollowTag:'Tag: {tag}',
+018859:     policyNotify:'Notify only', policyNotifyHelp:'Show updates but do not release them for installation.',
+018860:     policyAuto:'Update automatically', policyAutoHelp:'Download and install available updates automatically.',
+018861:     policyFixedHelp:'Keep the currently configured version unchanged.', policyVersionSelect:'Select version', policySelectedVersion:'Available: {version}', policyVersionsLoading:'Loading available versions…', policyVersionsNone:'No version available', policyVersionsFailed:'Could not load versions', policyCancel:'Cancel', policyApply:'Apply',
+018862:     policySaved:'Policy saved.', policySaveFailed:'Could not save policy: {error}', policyAvailable:'{version} available',
+018863:     runtimeStateLabel:'State', runtimeRunning:'Running', runtimeRunningCompleted:'{running} active · {completed} done', runtimeCompleted:'Completed', runtimeStopped:'Stopped', runtimeMixed:'{running}/{total} running', runtimeMixedCompleted:'{running}/{total} active · {completed} done', runtimeRestarting:'Restarting', runtimeError:'Error', runtimeUnknown:'Unknown',
+018864:     runtimeStart:'Start', runtimeStop:'Stop', runtimeStarting:'Starting', runtimeStopping:'Stopping', runtimeStartConfirm:'Start “{name}”?', runtimeStopConfirm:'Stop “{name}”?', runtimeActionFailed:'Container action failed: {error}', selfProtectionActive:'Self-protection active', selfProtectionText:'Update Monitor cannot stop, restart or uninstall itself.', selfProtectionUninstall:'Self-protection active – Update Monitor cannot uninstall itself.', runtimeStartAcceptedButExited:'ZimaOS accepted the start, but the container did not remain running. {states}', runtimeStopAcceptedButNotStopped:'ZimaOS accepted the stop, but the container did not reach the requested state. {states}',
+018865:     autoUpdate:'Automatic updates', autoUpdateHelp:'Configure timing and conditions for automatic updates.', autoUpdateOff:'Off', autoUpdateOn:'On',
+
+[UNINSTALL] line 18864
+018860:     policyAuto:'Update automatically', policyAutoHelp:'Download and install available updates automatically.',
+018861:     policyFixedHelp:'Keep the currently configured version unchanged.', policyVersionSelect:'Select version', policySelectedVersion:'Available: {version}', policyVersionsLoading:'Loading available versions…', policyVersionsNone:'No version available', policyVersionsFailed:'Could not load versions', policyCancel:'Cancel', policyApply:'Apply',
+018862:     policySaved:'Policy saved.', policySaveFailed:'Could not save policy: {error}', policyAvailable:'{version} available',
+018863:     runtimeStateLabel:'State', runtimeRunning:'Running', runtimeRunningCompleted:'{running} active · {completed} done', runtimeCompleted:'Completed', runtimeStopped:'Stopped', runtimeMixed:'{running}/{total} running', runtimeMixedCompleted:'{running}/{total} active · {completed} done', runtimeRestarting:'Restarting', runtimeError:'Error', runtimeUnknown:'Unknown',
+018864:     runtimeStart:'Start', runtimeStop:'Stop', runtimeStarting:'Starting', runtimeStopping:'Stopping', runtimeStartConfirm:'Start “{name}”?', runtimeStopConfirm:'Stop “{name}”?', runtimeActionFailed:'Container action failed: {error}', selfProtectionActive:'Self-protection active', selfProtectionText:'Update Monitor cannot stop, restart or uninstall itself.', selfProtectionUninstall:'Self-protection active – Update Monitor cannot uninstall itself.', runtimeStartAcceptedButExited:'ZimaOS accepted the start, but the container did not remain running. {states}', runtimeStopAcceptedButNotStopped:'ZimaOS accepted the stop, but the container did not reach the requested state. {states}',
+018865:     autoUpdate:'Automatic updates', autoUpdateHelp:'Configure timing and conditions for automatic updates.', autoUpdateOff:'Off', autoUpdateOn:'On',
+018866:     autoSchedule:'Schedule', autoTime:'Time', autoDays:'Weekdays', autoTimezone:'Time zone', autoUnavailable:'Choose “Update automatically” to enable the schedule.',
+018867:     autoImmediate:'Immediately', autoImmediateHelp:'Install the update automatically as soon as it is detected.', autoImmediateHint:'When immediate installation is enabled, the scheduled time is ignored.',
+018868:     autoTimeKeypadHint:'00:00–23:59', autoTimeKeypadBackspace:'Delete last digit', autoTimeKeypadConfirm:'Apply time',
+
+[INSTALL_LITERAL] line 18867
+018863:     runtimeStateLabel:'State', runtimeRunning:'Running', runtimeRunningCompleted:'{running} active · {completed} done', runtimeCompleted:'Completed', runtimeStopped:'Stopped', runtimeMixed:'{running}/{total} running', runtimeMixedCompleted:'{running}/{total} active · {completed} done', runtimeRestarting:'Restarting', runtimeError:'Error', runtimeUnknown:'Unknown',
+018864:     runtimeStart:'Start', runtimeStop:'Stop', runtimeStarting:'Starting', runtimeStopping:'Stopping', runtimeStartConfirm:'Start “{name}”?', runtimeStopConfirm:'Stop “{name}”?', runtimeActionFailed:'Container action failed: {error}', selfProtectionActive:'Self-protection active', selfProtectionText:'Update Monitor cannot stop, restart or uninstall itself.', selfProtectionUninstall:'Self-protection active – Update Monitor cannot uninstall itself.', runtimeStartAcceptedButExited:'ZimaOS accepted the start, but the container did not remain running. {states}', runtimeStopAcceptedButNotStopped:'ZimaOS accepted the stop, but the container did not reach the requested state. {states}',
+018865:     autoUpdate:'Automatic updates', autoUpdateHelp:'Configure timing and conditions for automatic updates.', autoUpdateOff:'Off', autoUpdateOn:'On',
+018866:     autoSchedule:'Schedule', autoTime:'Time', autoDays:'Weekdays', autoTimezone:'Time zone', autoUnavailable:'Choose “Update automatically” to enable the schedule.',
+018867:     autoImmediate:'Immediately', autoImmediateHelp:'Install the update automatically as soon as it is detected.', autoImmediateHint:'When immediate installation is enabled, the scheduled time is ignored.',
+018868:     autoTimeKeypadHint:'00:00–23:59', autoTimeKeypadBackspace:'Delete last digit', autoTimeKeypadConfirm:'Apply time',
+018869:     backupBeforeUpdateTitle:'Backup before update', backupDialogSubtitle:'Choose whether to create a backup before installation.', backupQuestion:'Create a backup before the update?', backupHelp:'A backup makes recovery easier if the new version causes problems.', backupQuick:'Quick backup', backupQuickHelp:'Docker restore point without AppData. Not suitable for a version downgrade after the new app has already started.', backupFull:'Full app backup (recommended)', backupFullHelp:'Also backs up relevant AppData and volume data for a safe restore after the update.', backupFullWarn:'Large apps can take several minutes.', backupNone:'Without backup', backupNoneHelp:'Start the update directly as before.', backupCleanup:'Automatic cleanup', backupRetention:'Retention', backupAutoTitle:'Backup before update', backupAutoHelp:'Create a backup before every automatic update.', backupKind:'Backup type', backupRunning:'BACKUP RUNNING…', backupContinue:'Continue',
+018870:     backupDetailsTitle:'Backup', backupDetailsExists:'Available', backupDetailsNone:'No backup available', backupDetailsCount:'Backups', backupDetailsType:'Type', backupDetailsContainers:'Backed up containers', backupDetailsCreated:'Created', backupDetailsDeleteIn:'Remaining', backupDetailsEncrypted:'Encrypted', backupYes:'Yes', backupNo:'No', backupQuickShort:'Quick backup', backupFullShort:'Full backup', backupDeleteDue:'due', backupSize:'Size',
+018871:     backupRestoreButton:'BACKUP SETTINGS', backupRestoring:'RESTORING…', backupRestoreProgress:'RESTORE {progress} %', backupRestoreTitle:'Backup settings', backupRestoreHelp:'Select, restore or delete backups.', backupRestoreConfirm:'Restore', backupRestoreLoading:'Loading backups…', backupRestoreNone:'No backups available.', backupRestoreEncrypted:'Encrypted', backupRestoreSuccess:'Backup restored successfully.', restoreVerificationPhase:'APP IS BEING VERIFIED…', backupRestoreFailed:'Restore failed: {error}', backupQuickUnsafe:'Not safe for version downgrade: AppData was not backed up.',
+
+[NEW_VERSION] line 18869
+018865:     autoUpdate:'Automatic updates', autoUpdateHelp:'Configure timing and conditions for automatic updates.', autoUpdateOff:'Off', autoUpdateOn:'On',
+018866:     autoSchedule:'Schedule', autoTime:'Time', autoDays:'Weekdays', autoTimezone:'Time zone', autoUnavailable:'Choose “Update automatically” to enable the schedule.',
+018867:     autoImmediate:'Immediately', autoImmediateHelp:'Install the update automatically as soon as it is detected.', autoImmediateHint:'When immediate installation is enabled, the scheduled time is ignored.',
+018868:     autoTimeKeypadHint:'00:00–23:59', autoTimeKeypadBackspace:'Delete last digit', autoTimeKeypadConfirm:'Apply time',
+018869:     backupBeforeUpdateTitle:'Backup before update', backupDialogSubtitle:'Choose whether to create a backup before installation.', backupQuestion:'Create a backup before the update?', backupHelp:'A backup makes recovery easier if the new version causes problems.', backupQuick:'Quick backup', backupQuickHelp:'Docker restore point without AppData. Not suitable for a version downgrade after the new app has already started.', backupFull:'Full app backup (recommended)', backupFullHelp:'Also backs up relevant AppData and volume data for a safe restore after the update.', backupFullWarn:'Large apps can take several minutes.', backupNone:'Without backup', backupNoneHelp:'Start the update directly as before.', backupCleanup:'Automatic cleanup', backupRetention:'Retention', backupAutoTitle:'Backup before update', backupAutoHelp:'Create a backup before every automatic update.', backupKind:'Backup type', backupRunning:'BACKUP RUNNING…', backupContinue:'Continue',
+018870:     backupDetailsTitle:'Backup', backupDetailsExists:'Available', backupDetailsNone:'No backup available', backupDetailsCount:'Backups', backupDetailsType:'Type', backupDetailsContainers:'Backed up containers', backupDetailsCreated:'Created', backupDetailsDeleteIn:'Remaining', backupDetailsEncrypted:'Encrypted', backupYes:'Yes', backupNo:'No', backupQuickShort:'Quick backup', backupFullShort:'Full backup', backupDeleteDue:'due', backupSize:'Size',
+018871:     backupRestoreButton:'BACKUP SETTINGS', backupRestoring:'RESTORING…', backupRestoreProgress:'RESTORE {progress} %', backupRestoreTitle:'Backup settings', backupRestoreHelp:'Select, restore or delete backups.', backupRestoreConfirm:'Restore', backupRestoreLoading:'Loading backups…', backupRestoreNone:'No backups available.', backupRestoreEncrypted:'Encrypted', backupRestoreSuccess:'Backup restored successfully.', restoreVerificationPhase:'APP IS BEING VERIFIED…', backupRestoreFailed:'Restore failed: {error}', backupQuickUnsafe:'Not safe for version downgrade: AppData was not backed up.',
+018872:     backupSettingsRetention:'Retention period', backupSettingsRetentionAll:'Applies to all backups.', backupSettingsCount:'Keep backups', backupSettingsCountAll:'Per app.', backupCount1:'1 backup', backupCount2:'2 backups', backupCount3:'3 backups', backupCountSaved:'Backup count saved.', backupCountFailed:'Could not save backup count: {error}', backupRetention2:'2 days', backupRetention5:'5 days', backupRetention10:'10 days', backupRetentionForever:'Unlimited', backupRetentionSaved:'Retention period saved.', backupRetentionFailed:'Could not save retention period: {error}',
+018873:     backupDelete:'Delete', backupDeleteConfirm:'Delete the selected backup?', backupDeleteSuccess:'Backup deleted.', backupDeleteFailed:'Could not delete backup: {error}',
+
+[VERIFY_TEXT] line 18871
+018867:     autoImmediate:'Immediately', autoImmediateHelp:'Install the update automatically as soon as it is detected.', autoImmediateHint:'When immediate installation is enabled, the scheduled time is ignored.',
+018868:     autoTimeKeypadHint:'00:00–23:59', autoTimeKeypadBackspace:'Delete last digit', autoTimeKeypadConfirm:'Apply time',
+018869:     backupBeforeUpdateTitle:'Backup before update', backupDialogSubtitle:'Choose whether to create a backup before installation.', backupQuestion:'Create a backup before the update?', backupHelp:'A backup makes recovery easier if the new version causes problems.', backupQuick:'Quick backup', backupQuickHelp:'Docker restore point without AppData. Not suitable for a version downgrade after the new app has already started.', backupFull:'Full app backup (recommended)', backupFullHelp:'Also backs up relevant AppData and volume data for a safe restore after the update.', backupFullWarn:'Large apps can take several minutes.', backupNone:'Without backup', backupNoneHelp:'Start the update directly as before.', backupCleanup:'Automatic cleanup', backupRetention:'Retention', backupAutoTitle:'Backup before update', backupAutoHelp:'Create a backup before every automatic update.', backupKind:'Backup type', backupRunning:'BACKUP RUNNING…', backupContinue:'Continue',
+018870:     backupDetailsTitle:'Backup', backupDetailsExists:'Available', backupDetailsNone:'No backup available', backupDetailsCount:'Backups', backupDetailsType:'Type', backupDetailsContainers:'Backed up containers', backupDetailsCreated:'Created', backupDetailsDeleteIn:'Remaining', backupDetailsEncrypted:'Encrypted', backupYes:'Yes', backupNo:'No', backupQuickShort:'Quick backup', backupFullShort:'Full backup', backupDeleteDue:'due', backupSize:'Size',
+018871:     backupRestoreButton:'BACKUP SETTINGS', backupRestoring:'RESTORING…', backupRestoreProgress:'RESTORE {progress} %', backupRestoreTitle:'Backup settings', backupRestoreHelp:'Select, restore or delete backups.', backupRestoreConfirm:'Restore', backupRestoreLoading:'Loading backups…', backupRestoreNone:'No backups available.', backupRestoreEncrypted:'Encrypted', backupRestoreSuccess:'Backup restored successfully.', restoreVerificationPhase:'APP IS BEING VERIFIED…', backupRestoreFailed:'Restore failed: {error}', backupQuickUnsafe:'Not safe for version downgrade: AppData was not backed up.',
+018872:     backupSettingsRetention:'Retention period', backupSettingsRetentionAll:'Applies to all backups.', backupSettingsCount:'Keep backups', backupSettingsCountAll:'Per app.', backupCount1:'1 backup', backupCount2:'2 backups', backupCount3:'3 backups', backupCountSaved:'Backup count saved.', backupCountFailed:'Could not save backup count: {error}', backupRetention2:'2 days', backupRetention5:'5 days', backupRetention10:'10 days', backupRetentionForever:'Unlimited', backupRetentionSaved:'Retention period saved.', backupRetentionFailed:'Could not save retention period: {error}',
+018873:     backupDelete:'Delete', backupDeleteConfirm:'Delete the selected backup?', backupDeleteSuccess:'Backup deleted.', backupDeleteFailed:'Could not delete backup: {error}',
+018874:     backupEncryptionLabel:'Backup encryption', backupEncryptionHelp:'Optional. New backups are encrypted with AES 256 GCM. The password is not stored.', backupEncryptionOff:'Not enabled', backupEncryptionOn:'Active · unlocked', backupEncryptionLocked:'Active · locked', backupEncryptionPassword:'Backup password', backupEncryptionConfirm:'Confirm password', backupEncryptionEnable:'Enable / set password', backupEncryptionChange:'Change password', backupEncryptionUnlock:'Unlock', backupEncryptionDisable:'Disable', backupEncryptionMismatch:'The passwords do not match.', backupEncryptionSaved:'Backup encryption is active.', backupEncryptionDisabled:'Backup encryption is disabled.', backupEncryptionError:'Backup encryption: {error}',
+018875:     backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
+
+[VERIFY_TEXT] line 18875
+018871:     backupRestoreButton:'BACKUP SETTINGS', backupRestoring:'RESTORING…', backupRestoreProgress:'RESTORE {progress} %', backupRestoreTitle:'Backup settings', backupRestoreHelp:'Select, restore or delete backups.', backupRestoreConfirm:'Restore', backupRestoreLoading:'Loading backups…', backupRestoreNone:'No backups available.', backupRestoreEncrypted:'Encrypted', backupRestoreSuccess:'Backup restored successfully.', restoreVerificationPhase:'APP IS BEING VERIFIED…', backupRestoreFailed:'Restore failed: {error}', backupQuickUnsafe:'Not safe for version downgrade: AppData was not backed up.',
+018872:     backupSettingsRetention:'Retention period', backupSettingsRetentionAll:'Applies to all backups.', backupSettingsCount:'Keep backups', backupSettingsCountAll:'Per app.', backupCount1:'1 backup', backupCount2:'2 backups', backupCount3:'3 backups', backupCountSaved:'Backup count saved.', backupCountFailed:'Could not save backup count: {error}', backupRetention2:'2 days', backupRetention5:'5 days', backupRetention10:'10 days', backupRetentionForever:'Unlimited', backupRetentionSaved:'Retention period saved.', backupRetentionFailed:'Could not save retention period: {error}',
+018873:     backupDelete:'Delete', backupDeleteConfirm:'Delete the selected backup?', backupDeleteSuccess:'Backup deleted.', backupDeleteFailed:'Could not delete backup: {error}',
+018874:     backupEncryptionLabel:'Backup encryption', backupEncryptionHelp:'Optional. New backups are encrypted with AES 256 GCM. The password is not stored.', backupEncryptionOff:'Not enabled', backupEncryptionOn:'Active · unlocked', backupEncryptionLocked:'Active · locked', backupEncryptionPassword:'Backup password', backupEncryptionConfirm:'Confirm password', backupEncryptionEnable:'Enable / set password', backupEncryptionChange:'Change password', backupEncryptionUnlock:'Unlock', backupEncryptionDisable:'Disable', backupEncryptionMismatch:'The passwords do not match.', backupEncryptionSaved:'Backup encryption is active.', backupEncryptionDisabled:'Backup encryption is disabled.', backupEncryptionError:'Backup encryption: {error}',
+018875:     backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
+018876:     portConflictBannerOne:'Port conflict detected · {count} port', portConflictBannerMany:'Port conflicts detected · {count} ports', portConflictSummary:'Port conflict', portConflictTitle:'Port conflicts', portConflictHelp:'Multiple Docker apps use the same published host port.', portConflictApps:'Affected Docker apps',
+018877:     policyLegendTitle:'Symbol legend', policyLegendSubtitle:'Overview of the available update options.', legendFixedTitle:'Fixed', legendFixedText:'Keep the current version unchanged.', legendUpgradeTitle:'New version', legendUpgradeText:'Release a specific available version.', legendFollowTitle:'Follow', legendFollowText:'Automatically recognize newer versions as updates.', legendNotifyTitle:'Notify', legendNotifyText:'Only inform about available updates.', legendAutoTitle:'Auto update', legendAutoText:'Download and install updates automatically.', policyTipTitle:'Tip', policyTipText:'Automatic updates keep your container current and secure with almost no manual work.',
+018878:     autoLastSuccess:'Last automatic update succeeded', autoLastError:'Last automatic update failed',
+018879:     checkDocker:'CHECK DOCKER', checkingDocker:'CHECKING…', checkDockerFailed:'Docker check failed: {error}',
+
+[INSTALL_LITERAL] line 18877
+018873:     backupDelete:'Delete', backupDeleteConfirm:'Delete the selected backup?', backupDeleteSuccess:'Backup deleted.', backupDeleteFailed:'Could not delete backup: {error}',
+018874:     backupEncryptionLabel:'Backup encryption', backupEncryptionHelp:'Optional. New backups are encrypted with AES 256 GCM. The password is not stored.', backupEncryptionOff:'Not enabled', backupEncryptionOn:'Active · unlocked', backupEncryptionLocked:'Active · locked', backupEncryptionPassword:'Backup password', backupEncryptionConfirm:'Confirm password', backupEncryptionEnable:'Enable / set password', backupEncryptionChange:'Change password', backupEncryptionUnlock:'Unlock', backupEncryptionDisable:'Disable', backupEncryptionMismatch:'The passwords do not match.', backupEncryptionSaved:'Backup encryption is active.', backupEncryptionDisabled:'Backup encryption is disabled.', backupEncryptionError:'Backup encryption: {error}',
+018875:     backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
+018876:     portConflictBannerOne:'Port conflict detected · {count} port', portConflictBannerMany:'Port conflicts detected · {count} ports', portConflictSummary:'Port conflict', portConflictTitle:'Port conflicts', portConflictHelp:'Multiple Docker apps use the same published host port.', portConflictApps:'Affected Docker apps',
+018877:     policyLegendTitle:'Symbol legend', policyLegendSubtitle:'Overview of the available update options.', legendFixedTitle:'Fixed', legendFixedText:'Keep the current version unchanged.', legendUpgradeTitle:'New version', legendUpgradeText:'Release a specific available version.', legendFollowTitle:'Follow', legendFollowText:'Automatically recognize newer versions as updates.', legendNotifyTitle:'Notify', legendNotifyText:'Only inform about available updates.', legendAutoTitle:'Auto update', legendAutoText:'Download and install updates automatically.', policyTipTitle:'Tip', policyTipText:'Automatic updates keep your container current and secure with almost no manual work.',
+018878:     autoLastSuccess:'Last automatic update succeeded', autoLastError:'Last automatic update failed',
+018879:     checkDocker:'CHECK DOCKER', checkingDocker:'CHECKING…', checkDockerFailed:'Docker check failed: {error}',
+018880:     installUpdate:'INSTALL UPDATE', updating:'UPDATING…', updateProgress:'UPDATE {progress} %',
+018881:     confirmUpdate:'Install the update for “{name}”? ZimaOS will update the affected containers to the released version or image. Previously stopped containers will be stopped again afterward.',
+
+[NEW_VERSION] line 18877
+018873:     backupDelete:'Delete', backupDeleteConfirm:'Delete the selected backup?', backupDeleteSuccess:'Backup deleted.', backupDeleteFailed:'Could not delete backup: {error}',
+018874:     backupEncryptionLabel:'Backup encryption', backupEncryptionHelp:'Optional. New backups are encrypted with AES 256 GCM. The password is not stored.', backupEncryptionOff:'Not enabled', backupEncryptionOn:'Active · unlocked', backupEncryptionLocked:'Active · locked', backupEncryptionPassword:'Backup password', backupEncryptionConfirm:'Confirm password', backupEncryptionEnable:'Enable / set password', backupEncryptionChange:'Change password', backupEncryptionUnlock:'Unlock', backupEncryptionDisable:'Disable', backupEncryptionMismatch:'The passwords do not match.', backupEncryptionSaved:'Backup encryption is active.', backupEncryptionDisabled:'Backup encryption is disabled.', backupEncryptionError:'Backup encryption: {error}',
+018875:     backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
+018876:     portConflictBannerOne:'Port conflict detected · {count} port', portConflictBannerMany:'Port conflicts detected · {count} ports', portConflictSummary:'Port conflict', portConflictTitle:'Port conflicts', portConflictHelp:'Multiple Docker apps use the same published host port.', portConflictApps:'Affected Docker apps',
+018877:     policyLegendTitle:'Symbol legend', policyLegendSubtitle:'Overview of the available update options.', legendFixedTitle:'Fixed', legendFixedText:'Keep the current version unchanged.', legendUpgradeTitle:'New version', legendUpgradeText:'Release a specific available version.', legendFollowTitle:'Follow', legendFollowText:'Automatically recognize newer versions as updates.', legendNotifyTitle:'Notify', legendNotifyText:'Only inform about available updates.', legendAutoTitle:'Auto update', legendAutoText:'Download and install updates automatically.', policyTipTitle:'Tip', policyTipText:'Automatic updates keep your container current and secure with almost no manual work.',
+018878:     autoLastSuccess:'Last automatic update succeeded', autoLastError:'Last automatic update failed',
+018879:     checkDocker:'CHECK DOCKER', checkingDocker:'CHECKING…', checkDockerFailed:'Docker check failed: {error}',
+018880:     installUpdate:'INSTALL UPDATE', updating:'UPDATING…', updateProgress:'UPDATE {progress} %',
+018881:     confirmUpdate:'Install the update for “{name}”? ZimaOS will update the affected containers to the released version or image. Previously stopped containers will be stopped again afterward.',
+
+[INSTALL_LITERAL] line 18880
+018876:     portConflictBannerOne:'Port conflict detected · {count} port', portConflictBannerMany:'Port conflicts detected · {count} ports', portConflictSummary:'Port conflict', portConflictTitle:'Port conflicts', portConflictHelp:'Multiple Docker apps use the same published host port.', portConflictApps:'Affected Docker apps',
+018877:     policyLegendTitle:'Symbol legend', policyLegendSubtitle:'Overview of the available update options.', legendFixedTitle:'Fixed', legendFixedText:'Keep the current version unchanged.', legendUpgradeTitle:'New version', legendUpgradeText:'Release a specific available version.', legendFollowTitle:'Follow', legendFollowText:'Automatically recognize newer versions as updates.', legendNotifyTitle:'Notify', legendNotifyText:'Only inform about available updates.', legendAutoTitle:'Auto update', legendAutoText:'Download and install updates automatically.', policyTipTitle:'Tip', policyTipText:'Automatic updates keep your container current and secure with almost no manual work.',
+018878:     autoLastSuccess:'Last automatic update succeeded', autoLastError:'Last automatic update failed',
+018879:     checkDocker:'CHECK DOCKER', checkingDocker:'CHECKING…', checkDockerFailed:'Docker check failed: {error}',
+018880:     installUpdate:'INSTALL UPDATE', updating:'UPDATING…', updateProgress:'UPDATE {progress} %',
+018881:     confirmUpdate:'Install the update for “{name}”? ZimaOS will update the affected containers to the released version or image. Previously stopped containers will be stopped again afterward.',
+018882:     updateSuccess:'Update completed. This app is being rechecked.', updateFailed:'Update failed: {error}',
+018883:     uninstallTitle:'Uninstall', uninstallDeleteFolder:'Delete app folder too', uninstallFolderHelp:'If unchecked, the ZimaOS app folder is kept.',
+018884:     uninstallButton:'UNINSTALL', uninstalling:'UNINSTALLING…', uninstallProgress:'UNINSTALL {progress} %',
+
+[INSTALL_LITERAL] line 18881
+018877:     policyLegendTitle:'Symbol legend', policyLegendSubtitle:'Overview of the available update options.', legendFixedTitle:'Fixed', legendFixedText:'Keep the current version unchanged.', legendUpgradeTitle:'New version', legendUpgradeText:'Release a specific available version.', legendFollowTitle:'Follow', legendFollowText:'Automatically recognize newer versions as updates.', legendNotifyTitle:'Notify', legendNotifyText:'Only inform about available updates.', legendAutoTitle:'Auto update', legendAutoText:'Download and install updates automatically.', policyTipTitle:'Tip', policyTipText:'Automatic updates keep your container current and secure with almost no manual work.',
+018878:     autoLastSuccess:'Last automatic update succeeded', autoLastError:'Last automatic update failed',
+018879:     checkDocker:'CHECK DOCKER', checkingDocker:'CHECKING…', checkDockerFailed:'Docker check failed: {error}',
+018880:     installUpdate:'INSTALL UPDATE', updating:'UPDATING…', updateProgress:'UPDATE {progress} %',
+018881:     confirmUpdate:'Install the update for “{name}”? ZimaOS will update the affected containers to the released version or image. Previously stopped containers will be stopped again afterward.',
+018882:     updateSuccess:'Update completed. This app is being rechecked.', updateFailed:'Update failed: {error}',
+018883:     uninstallTitle:'Uninstall', uninstallDeleteFolder:'Delete app folder too', uninstallFolderHelp:'If unchecked, the ZimaOS app folder is kept.',
+018884:     uninstallButton:'UNINSTALL', uninstalling:'UNINSTALLING…', uninstallProgress:'UNINSTALL {progress} %',
+018885:     uninstallConfirmKeep:'Uninstall “{name}”? The ZimaOS app folder will be kept.',
+
+[UNINSTALL] line 18883
+018879:     checkDocker:'CHECK DOCKER', checkingDocker:'CHECKING…', checkDockerFailed:'Docker check failed: {error}',
+018880:     installUpdate:'INSTALL UPDATE', updating:'UPDATING…', updateProgress:'UPDATE {progress} %',
+018881:     confirmUpdate:'Install the update for “{name}”? ZimaOS will update the affected containers to the released version or image. Previously stopped containers will be stopped again afterward.',
+018882:     updateSuccess:'Update completed. This app is being rechecked.', updateFailed:'Update failed: {error}',
+018883:     uninstallTitle:'Uninstall', uninstallDeleteFolder:'Delete app folder too', uninstallFolderHelp:'If unchecked, the ZimaOS app folder is kept.',
+018884:     uninstallButton:'UNINSTALL', uninstalling:'UNINSTALLING…', uninstallProgress:'UNINSTALL {progress} %',
+018885:     uninstallConfirmKeep:'Uninstall “{name}”? The ZimaOS app folder will be kept.',
+018886:     uninstallConfirmDelete:'Uninstall “{name}” and delete the ZimaOS app folder too?',
+018887:     uninstallStarted:'Uninstall completed.', uninstallFailed:'Uninstall failed: {error}', uninstallConfirmShort:'Uninstall?'
+
+[UNINSTALL] line 18884
+018880:     installUpdate:'INSTALL UPDATE', updating:'UPDATING…', updateProgress:'UPDATE {progress} %',
+018881:     confirmUpdate:'Install the update for “{name}”? ZimaOS will update the affected containers to the released version or image. Previously stopped containers will be stopped again afterward.',
+018882:     updateSuccess:'Update completed. This app is being rechecked.', updateFailed:'Update failed: {error}',
+018883:     uninstallTitle:'Uninstall', uninstallDeleteFolder:'Delete app folder too', uninstallFolderHelp:'If unchecked, the ZimaOS app folder is kept.',
+018884:     uninstallButton:'UNINSTALL', uninstalling:'UNINSTALLING…', uninstallProgress:'UNINSTALL {progress} %',
+018885:     uninstallConfirmKeep:'Uninstall “{name}”? The ZimaOS app folder will be kept.',
+018886:     uninstallConfirmDelete:'Uninstall “{name}” and delete the ZimaOS app folder too?',
+018887:     uninstallStarted:'Uninstall completed.', uninstallFailed:'Uninstall failed: {error}', uninstallConfirmShort:'Uninstall?'
+018888:   }
+
+[UNINSTALL] line 18885
+018881:     confirmUpdate:'Install the update for “{name}”? ZimaOS will update the affected containers to the released version or image. Previously stopped containers will be stopped again afterward.',
+018882:     updateSuccess:'Update completed. This app is being rechecked.', updateFailed:'Update failed: {error}',
+018883:     uninstallTitle:'Uninstall', uninstallDeleteFolder:'Delete app folder too', uninstallFolderHelp:'If unchecked, the ZimaOS app folder is kept.',
+018884:     uninstallButton:'UNINSTALL', uninstalling:'UNINSTALLING…', uninstallProgress:'UNINSTALL {progress} %',
+018885:     uninstallConfirmKeep:'Uninstall “{name}”? The ZimaOS app folder will be kept.',
+018886:     uninstallConfirmDelete:'Uninstall “{name}” and delete the ZimaOS app folder too?',
+018887:     uninstallStarted:'Uninstall completed.', uninstallFailed:'Uninstall failed: {error}', uninstallConfirmShort:'Uninstall?'
+018888:   }
+018889: };
+
+UI hits written: 140
