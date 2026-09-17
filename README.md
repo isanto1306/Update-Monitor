@@ -90,6 +90,8 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 Current release: **v0.3.345**
 
+The Port Conflict view now keeps configured conflicts visible and colors runtime status clearly: running is green and stopped is red.
+
 Gateway errors such as HTTP 502, 503 or 504 during a long running update are now treated as an interrupted response first. Update Monitor waits for the existing targeted verification and only reports a failure if the installed result cannot be confirmed.
 
 Self updates now trigger a browser reload as soon as the replacement Update Monitor backend is detected. The browser also compares its loaded frontend version with the backend version during runtime polling and reloads with cache busting when they differ.
