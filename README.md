@@ -88,7 +88,7 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.344**
+Current release: **v0.3.345**
 
 Gateway errors such as HTTP 502, 503 or 504 during a long running update are now treated as an interrupted response first. Update Monitor waits for the existing targeted verification and only reports a failure if the installed result cannot be confirmed.
 
