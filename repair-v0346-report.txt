@@ -1,373 +1,2067 @@
-UPDATE MONITOR v0.3.346 UI REPAIR HANDLERS
+UPDATE MONITOR v0.3.346 REPAIR TARGETS
 
-========================================================================
-APP_NORMALIZATION 19290-19470
-========================================================================
-019290:   app.style.display='';
-019291:   app.classList.add('visible');
-019292:   startRuntimeRefresh();
-019293:   requestAnimationFrame(()=>{
-019294:     ensureUpdateMonitorHeaderHeightSync();
-019295:     requestAnimationFrame(()=>{
-019296:       syncUpdateMonitorHeaderHeight();
-019297:       if(typeof umSchedulePageScrollbarV21==='function')umSchedulePageScrollbarV21();
-019298:     });
-019299:   });
-019300: }
-019301: function badgeClass(s){return 'update-badge update-badge-'+String(s||'CURRENT').toLowerCase();}
-019302: function statusTextValue(status){
-019303:   if(status==='IMAGE_UPDATE')return t('imageUpdate');
-019304:   if(status==='VERSION_UPDATE')return t('versionUpdate');
-019305:   if(status==='PINNED')return t('pinnedStatus');
-019306:   if(status==='LOCAL')return t('localStatus');
-019307:   if(status==='ERROR')return t('errorStatus');
-019308:   return t('current');
-019309: }
-019310: function policyText(item){
-019311:   if(item.update_policy==='fixed_version')return t('fixedVersion');
-019312:   if(item.update_policy==='digest_pinned')return t('digestPinned');
-019313:   if(item.update_policy==='local')return t('localImage');
-019314:   return t('follow');
-019315: }
-019316: function legacyAppsFromResults(results){
-019317:   return (results||[]).map((item,index)=>({
-019318:     stack_key:'legacy:'+index+':'+(item.image_ref||''), name:item.display_name||item.image_ref, status:item.status,
-019319:     update_count:['IMAGE_UPDATE','VERSION_UPDATE'].includes(item.status)?1:0,
-019320:     image_update_count:item.status==='IMAGE_UPDATE'?1:0, version_update_count:item.status==='VERSION_UPDATE'?1:0,
-019321:     error_count:item.status==='ERROR'?1:0, pinned_count:item.status==='PINNED'?1:0, local_count:item.status==='LOCAL'?1:0,
-019322:     fixed_count:item.update_policy==='fixed_version'?1:0, held_update_count:(item.update_policy==='fixed_version'&&item.newer_tag)?1:0,
-019323:     image_count:1,
-019324:     container_count:(item.containers||[]).length,
-019325:     ports:Array.from(new Set((item.containers||[]).flatMap(c=>Array.isArray(c.ports)?c.ports:[]))),
-019326:     containers:item.containers||[],
-019327:     items:[item]
-019328:   }));
-019329: }
-019330: 
-019331: function appHasManualTargetUpdate(app){
-019332:   if(!app)return false;
-019333:   const policy=appPolicy(app);
-019334:   if(policy.mode!=='upgrade'||!policy.target_tag)return false;
-019335: 
-019336:   // The backend exposes can_version_update once the selected target is
-019337:   // installable. During the short interval between saving the policy and
-019338:   // the following status refresh, keep the card classified consistently.
-019339:   return !!(app.can_version_update||app._frontend_manual_target_pending);
-019340: }
-019341: function appHasFollowTagSwitch(app){
-019342:   if(!app)return false;
-019343:   const policy=appPolicy(app);
-019344:   return policy.mode==='follow'&&!!app.can_version_update;
-019345: }
-019346: function appHasEffectiveVersionUpdate(app){
-019347:   return appHasManualTargetUpdate(app)||appHasFollowTagSwitch(app);
-019348: }
-019349: function appEffectiveUpdateCount(app){
-019350:   const backend=Number(app&&app.effective_update_count);
-019351:   if(Number.isFinite(backend)&&backend>=0)return backend;
-019352: 
-019353:   const policy=appPolicy(app);
-019354:   const rawImage=Number(app&&app.image_update_count);
-019355:   const imageCount=Number.isFinite(rawImage)&&rawImage>0?rawImage:0;
-019356:   const rawVersion=Number(app&&app.version_update_count);
-019357:   let versionCount=Number.isFinite(rawVersion)&&rawVersion>0?rawVersion:0;
-019358: 
-019359:   // A newer VERSION is only informational while "Version fixiert" is active.
-019360:   // Same-tag image refreshes remain updates because the configured version does
-019361:   // not change.
-019362:   if(policy.mode==='fixed')versionCount=0;
-019363:   else if(appHasEffectiveVersionUpdate(app))versionCount=Math.max(1,versionCount);
-019364: 
-019365:   return imageCount+versionCount;
-019366: }
-019367: function appEffectiveVersionUpdateCount(app){
-019368:   const backend=Number(app&&app.effective_version_update_count);
-019369:   if(Number.isFinite(backend)&&backend>=0)return backend;
-019370:   if(appPolicy(app).mode==='fixed')return 0;
-019371:   const raw=Number(app&&app.version_update_count);
-019372:   const base=Number.isFinite(raw)&&raw>0?raw:0;
-019373:   return appHasEffectiveVersionUpdate(app)?Math.max(1,base):base;
-019374: }
-019375: function appIsEffectivelyCurrent(app){
-019376:   return appEffectiveUpdateCount(app)===0
-019377:     &&Number(app&&app.error_count||0)===0
-019378:     &&Number(app&&app.pinned_count||0)===0
-019379:     &&Number(app&&app.local_count||0)===0;
-019380: }
-019381: function appEffectiveStatus(app){
-019382:   const backend=String(app&&app.effective_status||'').trim();
-019383:   if(backend)return backend;
-019384: 
-019385:   const rawStatus=String(app&&app.status||'CURRENT');
-019386:   const policy=appPolicy(app);
-019387:   if(policy.mode==='fixed'&&rawStatus==='VERSION_UPDATE')return 'CURRENT';
-019388:   if(
-019389:     appHasEffectiveVersionUpdate(app)
-019390:     &&!['ERROR','PINNED','LOCAL'].includes(rawStatus)
-019391:   ){
-019392:     return 'VERSION_UPDATE';
-019393:   }
-019394:   return rawStatus;
-019395: }
-019396: 
-019397: /* A completed targeted scan is authoritative for the update action itself.
-019398:    If the app is CURRENT and no update remains, an earlier browser/network
-019399:    failure must not stay visible as "Update fehlgeschlagen". Other scan errors
-019400:    can still be shown by their own status/details. */
-019401: function appUpdateVerifiedCurrent(app){
-019402:   if(!app)return false;
-019403:   return (
-019404:     appEffectiveUpdateCount(app)===0
-019405:     &&String(appEffectiveStatus(app)||'')==='CURRENT'
-019406:     &&!app.can_image_update
-019407:     &&!app.can_version_update
-019408:   );
-019409: }
-019410: 
-019411: function isUpdateTransportFailure(err){
-019412:   const message=String(err&&err.message?err.message:'').trim().toLowerCase();
-019413:   // ZimaOS/reverse proxies can return a gateway error while the backend update
-019414:   // request continues and finishes successfully. Treat these responses like a
-019415:   // transport interruption and let the existing targeted verification decide
-019416:   // whether the update really succeeded before showing an error.
-019417:   const gatewayHttpFailure=/(?:^|\s)http\s+(502|503|504)(?:\b|$)/.test(message);
-019418:   return (
-019419:     message==='failed to fetch'
-019420:     ||message.includes('networkerror')
-019421:     ||message.includes('network error')
-019422:     ||message.includes('network request failed')
-019423:     ||message.includes('load failed')
-019424:     ||gatewayHttpFailure
-019425:     ||message.includes('bad gateway')
-019426:     ||message.includes('gateway timeout')
-019427:     ||message.includes('service unavailable')
-019428:   );
-019429: }
-019430: 
-019431: function appSummaryFromApps(apps){
-019432:   return {
-019433:     UPDATES:apps.filter(a=>appEffectiveUpdateCount(a)>0).length,
-019434:     CURRENT:apps.filter(appIsEffectivelyCurrent).length,
-019435:     RUNNING:apps.filter(a=>String(a.runtime_state||'')==='running').length,
-019436:     STOPPED:apps.filter(a=>String(a.runtime_state||'')==='stopped').length,
-019437:     FIXED:apps.filter(a=>a.fixed_count>0).length,
-019438:     PINNED:apps.filter(a=>a.pinned_count>0).length,
-019439:     LOCAL:apps.filter(a=>a.local_count>0).length,
-019440:     ERROR:apps.filter(a=>a.error_count>0).length,
-019441:     AUTO_UPDATE:apps.filter(a=>appPolicy(a).auto_enabled).length
-019442:   };
-019443: }
-019444: function summaryCountForKey(summary,key){
-019445:   const value=Number((summary||{})[key]);
-019446:   return Number.isFinite(value)&&value>0?value:0;
-019447: }
-019448: const alwaysVisibleSummaryKeys=new Set(['CURRENT','RUNNING','STOPPED']);
-019449: const optionalSummaryKeys=new Set(['UPDATES','FIXED','PINNED','LOCAL','ERROR','AUTO_UPDATE','PORT_CONFLICT']);
-019450: 
-019451: function updateDynamicSummaryGeometry(){
-019452:   const summary=document.querySelector('.update-monitor-summary');
-019453:   if(!summary)return;
-019454: 
-019455:   const allCards=Array.from(
-019456:     summary.querySelectorAll('[data-summary-filter]')
-019457:   );
-019458:   const visibleCards=allCards.filter(card=>!card.hidden);
-019459: 
-019460:   const visibleCount=Math.max(1,visibleCards.length);
-019461:   const requestedColumns=Number(
-019462:     document.documentElement.dataset.umSummaryCols||9
-019463:   );
-019464:   const maxColumns=Number.isFinite(requestedColumns)&&requestedColumns>0
-019465:     ?requestedColumns
-019466:     :9;
-019467:   /* Wide summary mode is a single dynamic row. Optional fields such as
-019468:      Fehler / Port Konflikt / Auto Updates must append to that row instead of
-019469:      pushing the last field onto a second line. Compact/tablet/phone modes keep
-019470:      their existing 5/2-column responsive wrapping. */
+==============================================================================
+schedule_app_scan
+==============================================================================
+010024: 
+010025: 
+010026: def schedule_app_scan(
+010027:     stack_key,
+010028:     delay=8.0,
+010029:     max_wait_seconds=900,
+010030:     verification_result=None,
+010031: ):
+010032:     """
+010033:     Queue exactly one authoritative post-action scan for an app.
+010034: 
+010035:     v0.3.117 could create multiple waiter threads for the same app. After the
+010036:     operation lock became free those waiters ran the same targeted scan one
+010037:     after another, which looked like an endless update check and could starve
+010038:     automatic installation.
+010039:     """
+010040:     stack_key = str(stack_key or "").strip()
+010041:     if not stack_key:
+010042:         return False
+010043:     if self_update_handoff_owned_by_current_process(stack_key):
+010044:         return False
+010045: 
+010046:     requested_at = utc_now()
+010047:     verified_targets = _post_update_verified_targets(verification_result)
+010048: 
+010049:     with post_scan_lock:
+010050:         if stack_key in post_scan_pending:
+010051:             # One pending authoritative scan is sufficient. If a successful
+010052:             # update supplied stronger verification evidence, preserve it.
+010053:             if verified_targets:
+010054:                 current = post_scan_pending.get(stack_key) or {}
+010055:                 merged = dict(current.get("verified_targets") or {})
+010056:                 merged.update(verified_targets)
+010057:                 current["verified_targets"] = merged
+010058:                 post_scan_pending[stack_key] = current
+010059:             return False
+010060:         post_scan_pending[stack_key] = {
+010061:             "requested_at": requested_at,
+010062:             "created_at": requested_at,
+010063:             "verified_targets": verified_targets,
+010064:         }
+010065: 
+010066:     def waiter():
+010067:         try:
+010068:             time.sleep(max(0.0, float(delay)))
+010069:             deadline = time.time() + max(5.0, float(max_wait_seconds))
+010070: 
+010071:             while time.time() < deadline:
+010072:                 # A newer full/targeted scan may already have refreshed this app
+010073:                 # (for example because the user explicitly started a full scan).
+010074:                 if _scan_result_is_newer_than_request(stack_key, requested_at):
+010075:                     return
+010076: 
+010077:                 if start_app_scan(stack_key):
+010078:                     # Keep the pending marker until the scan thread really ends.
+010079:                     # This blocks stale-state automation decisions in between.
+010080:                     while True:
+010081:                         with scan_lock:
+010082:                             thread = scan_thread
+010083:                             scanning = scan_state.get("state") == "scanning"
+010084:                         if not scanning and (not thread or not thread.is_alive()):
+010085:                             break
+010086:                         time.sleep(0.25)
+010087:                     return
+010088: 
+010089:                 # If the app disappeared and no scan/update is active, there is
+010090:                 # nothing left to verify.
+010091:                 if not app_update_lock.locked():
+010092:                     with scan_lock:
+010093:                         exists = any(
+010094:                             app_item.get("stack_key") == stack_key
+010095:                             for app_item in (scan_state.get("apps") or [])
+010096:                         )
+010097:                     if not exists:
+010098:                         return
+010099: 
+010100:                 time.sleep(1.0)
+010101:         finally:
+010102:             with post_scan_lock:
+010103:                 post_scan_pending.pop(stack_key, None)
+010104: 
+010105:     thread = threading.Thread(
+010106:         target=waiter,
+010107:         name="update-monitor-post-update-scan-waiter",
+010108:         daemon=True,
+010109:     )
+010110:     thread.start()
+010111:     return True
+010112: 
+010113: 
 
-========================================================================
-POLICY_DIALOG 19920-20095
-========================================================================
-019920:       });
-019921:       const detected=appInstalledVersionLabel(app);
-019922:       if(detected&&detected!=='-')app.installed_version=detected;
-019923:     }
-019924: 
-019925:     state.policyVersionCache.set(key,{at:Date.now(),versions,result});
-019926:     applyPolicyVersions(app,card,versions,result);
-019927:     return versions;
-019928:   }catch(err){
-019929:     if(err.message!=='auth'){
-019930:       const rawDetail=String(err&&err.message?err.message:'').replace(/\s+/g,' ').trim();
-019931:       const detail=localizeVersionDetail(rawDetail);
-019932:       const shortDetail=detail.length>110?detail.slice(0,107)+'…':detail;
-019933:       const label=shortDetail?`${t('policyVersionsFailed')} · ${shortDetail}`:t('policyVersionsFailed');
-019934:       select.innerHTML=`<option value="">${esc(label)}</option>`;
-019935:       select.title=detail;
-019936:       select.disabled=true;
-019937:       syncPolicyVersionMenu(card);
-019938:     }
-019939:     return [];
-019940:   }finally{
-019941:     if(state.policyVersionLoads.get(key)===request)state.policyVersionLoads.delete(key);
-019942:     setPolicyVersionLoading(card,false);
-019943:     syncPolicyVersionMenu(card);
-019944:   }
-019945: }
-019946: function uiLockIcon(open=false){
-019947:   return `<span class="ui-lock-icon${open?' is-open':''}" aria-hidden="true"></span>`;
-019948: }
-019949: function uiBellIcon(){
-019950:   return `<span class="ui-bell-icon" aria-hidden="true"></span>`;
-019951: }
-019952: function uiAutoUpdateIcon(){
-019953:   return `<span class="ui-auto-icon" aria-hidden="true"></span>`;
-019954: }
-019955: /* Canonical policy symbol mapping used everywhere in the program. */
-019956: function uiPolicyIcon(mode){
-019957:   if(mode==='upgrade')return uiLockIcon(true);
-019958:   if(mode==='follow')return uiAutoUpdateIcon();
-019959:   if(mode==='notify')return uiBellIcon();
-019960:   return uiLockIcon(false);
-019961: }
-019962: /* Legacy alias kept only so older call sites cannot render a different follow symbol. */
-019963: function actionProgressView(stackKey,kind){
-019964:   const info=state.actionProgress.get(String(stackKey||''));
-019965:   if(!info||info.kind!==kind){
-019966:     return {hasPercent:false,progress:null,phase:null};
-019967:   }
-019968:   const value=Number(info.progress);
-019969:   const hasPercent=!!info.determinate&&Number.isFinite(value);
-019970:   const progress=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
-019971:   return {hasPercent,progress,phase:String(info.phase||'')};
-019972: }
-019973: 
-019974: function actionProgressLabel(kind,progress,phase=''){
-019975:   const p=String(phase||'');
-019976:   if(kind==='update'){
-019977:     if(p.startsWith('backup')){
-019978:       return progress===null
-019979:         ?t('backupPhase')
-019980:         :t('backupPhaseProgress').replace('{progress}',progress);
-019981:     }
-019982:     return progress===null
-019983:       ?t('installPhase')
-019984:       :t('installPhaseProgress').replace('{progress}',progress);
-019985:   }
-019986:   if(kind==='restore'){
-019987:     return progress===null
-019988:       ?t('backupRestoring')
-019989:       :t('backupRestoreProgress').replace('{progress}',progress);
-019990:   }
-019991:   return progress===null?t('uninstalling'):t('uninstallProgress').replace('{progress}',progress);
-019992: }
-019993: 
-019994: function safeUninstallButtonLabel(){
-019995:   return ({
-019996:     de:'DEINSTALLIEREN',
-019997:     en:'UNINSTALL',
-019998:     fr:'DÉSINSTALLER',
-019999:     pt:'DESINSTALAR',
-020000:     es:'DESINSTALAR'
-020001:   }[state.language]||'UNINSTALL');
-020002: }
-020003: 
-020004: 
-020005: function renderUninstallPanel(app,index){
-020006:   // Folder-preservation semantics are provided by the official ZimaOS
-020007:   // delete_config_folder parameter. Local/non-ZimaOS containers do not expose
-020008:   // that app-folder concept, so the control is shown only for ZimaOS apps.
-020009:   if(!app.compose_project)return '';
-020010: 
-020011:   const busy=state.uninstallingApps.has(app.stack_key);
-020012:   const selfProtected=appSelfProtected(app);
-020013:   const blocked=busy||selfProtected;
-020014:   const progressView=actionProgressView(app.stack_key,'uninstall');
-020015:   const progressClass=busy&&progressView.hasPercent?' has-percent':'';
-020016:   const progressStyle=busy&&progressView.hasPercent?` style="--action-progress:${progressView.progress}%"`:'';
-020017:   const buttonLabel=busy?actionProgressLabel('uninstall',progressView.progress,progressView.phase):safeUninstallButtonLabel();
-020018:   const helpText=selfProtected?t('selfProtectionUninstall'):t('uninstallFolderHelp');
-020019:   const protectionTitle=selfProtected?` title="${esc(selfProtectionTitle())}"`:'';
-020020: 
-020021:   return `<section class="uninstall-panel">
-020022:     <div class="uninstall-panel-title">${esc(t('uninstallTitle'))}</div>
-020023:     <label class="uninstall-folder-option">
-020024:       <input type="checkbox" data-uninstall-folder-index="${index}" ${blocked?'disabled':''}>
-020025:       <span>${esc(t('uninstallDeleteFolder'))}</span>
-020026:     </label>
-020027:     <div class="uninstall-folder-help">${esc(helpText)}</div>
-020028:     <button class="uninstall-button ${busy?'action-progress':''}${progressClass}"${progressStyle}${protectionTitle} type="button" data-uninstall-index="${index}" data-progress-stack="${esc(app.stack_key)}" data-progress-kind="uninstall" ${blocked?'disabled':''}>${esc(buttonLabel)}</button>
-020029:   </section>`;
-020030: }
-020031: 
-020032: function renderPolicyPanel(app,index){
-020033:   return '';
-020034: }
-020035: 
-020036: function policyVisualMode(policy){
-020037:   return policy.mode;
-020038: }
-020039: 
-020040: function policyQuickButton(mode,icon,title,visualMode){
-020041:   return `<button class="policy-modal-quick ${visualMode===mode?'selected':''}" type="button" data-policy-choice-quick="${mode}" title="${esc(title)}" aria-label="${esc(title)}">${icon}</button>`;
-020042: }
-020043: 
-020044: function backupModeLabel(mode){
-020045:   const value=['quick','full','none'].includes(String(mode||''))?String(mode):'none';
-020046:   if(value==='quick')return t('backupQuick');
-020047:   if(value==='full')return t('backupFull');
-020048:   return t('backupNone');
-020049: }
-020050: 
-020051: function renderPolicyWorkbench(app,index){
-020052:   if(!app)return '';
-020053: 
-020054:   const policy=appPolicy(app);
-020055:   const visualMode=policyVisualMode(policy);
-020056:   const versions=appPolicyVersions(app);
-020057:   const selectedTarget=policy.target_tag&&versions.includes(policy.target_tag)?policy.target_tag:'';
-020058:   const timezone=policy.auto_timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
-020059:   const dayLabels=policyDayLabels();
-020060:   const dayButtons=dayLabels.map((label,day)=>`<button class="policy-day ${policy.auto_days.includes(day)?'selected':''}" type="button" data-auto-day="${day}" ${policy.auto_immediate?'disabled':''}>${label}</button>`).join('');
-020061:   const versionOptions=`<option value="" ${selectedTarget?'':'selected'} disabled>${esc(t('policyVersionSelect'))}</option>`+versions.map(tag=>`<option value="${esc(tag)}" ${tag===selectedTarget?'selected':''}>${esc(tag)}</option>`).join('');
-020062:   const versionMenuOptions=versions.map(tag=>`<button class="policy-version-menu-option ${tag===selectedTarget?'active':''}" type="button" data-policy-version-option="${esc(tag)}">${esc(tag)}</button>`).join('');
-020063:   const autoAllowed=visualMode==='follow';
-020064:   const autoEnabled=autoAllowed&&!!policy.auto_enabled;
-020065:   const autoBackupMode=['quick','full','none'].includes(policy.auto_backup_mode)?policy.auto_backup_mode:'none';
-020066: 
-020067:   const option=(mode,icon,title,help,extra='')=>`<button class="policy-modal-option ${visualMode===mode?'selected':''}" type="button" data-policy-choice="${mode}">
-020068:     <span class="policy-modal-option-icon">${icon}</span>
-020069:     <span class="policy-modal-option-copy"><strong>${esc(title)}</strong><small>${esc(help)}</small>${extra}</span>
-020070:   </button>`;
-020071: 
-020072:   const ports=appPublishedPorts(app);
-020073:   const portText=ports.length?ports.slice(0,3).join(', '):'–';
-020074:   const imageCount=Array.isArray(app.items)?app.items.length:0;
-020075: 
-020076:   return `<div class="policy-modal-backdrop visible" data-policy-modal-backdrop>
-020077:     <section class="policy-modal-shell policy-modal-shell-v108"
-020078:       role="dialog"
-020079:       aria-modal="true"
-020080:       data-auto-enabled="${autoEnabled?'true':'false'}">
-020081: 
-020082:       <button class="policy-modal-close" type="button" data-policy-modal-close aria-label="×">×</button>
-020083: 
-020084:       <div class="policy-modal-main">
-020085:         <div class="policy-modal-app-head">
-020086:           <div class="policy-modal-app-title">
-020087:             ${renderAppIcon(app)}
-020088:             <div class="policy-modal-title-copy">
-020089:               <div class="policy-modal-name">${esc(app.name||'-')}</div>
-020090:               <div class="policy-modal-subtitle">${esc((app.containers||[])[0]?.name||'')}</div>
-020091:             </div>
-020092:           </div>
-020093: 
-020094:           <div class="policy-modal-head-actions">
-020095:             ${policyQuickButton('fixed',uiPolicyIcon('fixed'),t('policyFixedShort'),visualMode)}
+==============================================================================
+perform_image_update
+==============================================================================
+015655: 
+015656: 
+015657: def perform_image_update(app_item):
+015658:     """
+015659:     Install same-tag updates such as :latest -> newer :latest.
+015660: 
+015661:     The old path accepted a changed container/image ID as success. This path
+015662:     instead verifies the actual remote digest before and after recreation.
+015663:     """
+015664:     if is_update_monitor_self_app(app_item):
+015665:         return perform_self_image_update_handoff(app_item)
+015666: 
+015667:     project = app_item.get("compose_project")
+015668:     if not project:
+015669:         raise RuntimeError("ZimaOS Compose app ID is missing")
+015670: 
+015671:     targets = [
+015672:         item for item in (app_item.get("items") or [])
+015673:         if item.get("status") == "IMAGE_UPDATE"
+015674:         and item.get("update_policy") == "follow_tag"
+015675:     ]
+015676:     if not targets:
+015677:         raise RuntimeError("No eligible same-tag image update found")
+015678: 
+015679:     with scan_lock:
+015680:         update_platform = str(scan_state.get("platform") or "").strip()
+015681: 
+015682:     if not update_platform:
+015683:         rc, platform_raw, platform_error = run(
+015684:             ["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"],
+015685:             timeout=20,
+015686:         )
+015687:         if rc != 0:
+015688:             raise RuntimeError(
+015689:                 platform_error or "Could not determine Docker platform"
+015690:             )
+015691:         platform_map = {
+015692:             "linux/x86_64": "linux/amd64",
+015693:             "linux/amd64": "linux/amd64",
+015694:             "linux/aarch64": "linux/arm64",
+015695:             "linux/arm64": "linux/arm64",
+015696:             "linux/armv7l": "linux/arm/v7",
+015697:         }
+015698:         update_platform = platform_map.get(
+015699:             platform_raw.strip(),
+015700:             platform_raw.strip(),
+015701:         )
+015702: 
+015703:     stack_key = str(app_item.get("stack_key") or "").strip()
+015704:     update_action_progress(stack_key, phase="pulling")
+015705: 
+015706:     # Pull and verify every unique target before asking ZimaOS to recreate.
+015707:     target_verification = {}
+015708:     for item in targets:
+015709:         image_ref = str(
+015710:             item.get("tracking_image_ref")
+015711:             or item.get("image_ref")
+015712:             or ""
+015713:         ).strip()
+015714:         if not image_ref:
+015715:             raise RuntimeError("Could not determine same-tag target image")
+015716:         if image_ref in target_verification:
+015717:             continue
+015718:         pulled = docker_pull_verified(image_ref, update_platform)
+015719:         pulled["method"] = "verified-docker-pull"
+015720:         target_verification[image_ref] = pulled
+015721: 
+015722:     target_containers = []
+015723:     seen_names = set()
+015724:     restore_pin_targets = []
+015725: 
+015726:     for item in targets:
+015727:         image_ref = str(
+015728:             item.get("tracking_image_ref")
+015729:             or item.get("image_ref")
+015730:             or ""
+015731:         ).strip()
+015732:         verification = target_verification.get(image_ref) or {}
+015733:         expected_digests = list(verification.get("expected_digests") or [])
+015734:         if not expected_digests:
+015735:             raise RuntimeError(
+015736:                 f"No verified remote digest available for {image_ref}"
+015737:             )
+015738: 
+015739:         item_services = [
+015740:             str(container.get("compose_service") or "").strip()
+015741:             for container in (item.get("containers") or [])
+015742:             if str(container.get("compose_service") or "").strip()
+015743:         ]
+015744:         if item.get("restore_generated_digest_pin"):
+015745:             restore_pin_targets.append({
+015746:                 "image_ref": image_ref,
+015747:                 "services": sorted(set(item_services)),
+015748:             })
+015749: 
+015750:         for container in item.get("containers") or []:
+015751:             name = str(container.get("name") or "").strip()
+015752:             state = str(container.get("state") or "unknown").strip()
+015753:             if not name or name in seen_names:
+015754:                 continue
+015755:             if state not in {"running", "exited", "created", "dead"}:
+015756:                 raise RuntimeError(
+015757:                     f"Unsupported container state for safe update: {name} ({state})"
+015758:                 )
+015759:             seen_names.add(name)
+015760:             target_containers.append({
+015761:                 "name": name,
+015762:                 "state": state,
+015763:                 "image_ref": image_ref,
+015764:                 "expected_digests": expected_digests,
+015765:             })
+015766: 
+015767:     if not target_containers:
+015768:         raise RuntimeError("No Docker containers found for this update")
+015769: 
+015770:     before_image_ids = {}
+015771:     after_image_ids = {}
+015772:     verified_runtime = {}
+015773:     restored_states = {}
+015774: 
+015775:     restore_pin_applied = False
+015776:     if restore_pin_targets:
+015777:         yaml_text = casaos_compose_yaml(project)
+015778:         updated_yaml = yaml_text
+015779:         changed = 0
+015780: 
+015781:         for restore_target in restore_pin_targets:
+015782:             updated_yaml, count, _ = replace_compose_service_images(
+015783:                 updated_yaml,
+015784:                 restore_target.get("services") or [],
+015785:                 restore_target.get("image_ref"),
+015786:             )
+015787:             changed += int(count or 0)
+015788: 
+015789:         if changed < 1 or updated_yaml == yaml_text:
+015790:             raise RuntimeError(
+015791:                 "Backup restore source could not be returned to its original "
+015792:                 "tracking tag before the update"
+015793:             )
+015794: 
+015795:         # This mutation happens only because the user explicitly requested the
+015796:         # available update. The target image was pulled and digest-verified above.
+015797:         casaos_apply_compose(project, updated_yaml, dry_run=True)
+015798:         casaos_apply_compose(project, updated_yaml, dry_run=False)
+015799:         restore_pin_applied = True
+015800: 
+015801:     for target in target_containers:
+015802:         name = target["name"]
+015803:         previous_state = target["state"]
+015804:         image_ref = target["image_ref"]
+015805:         expected_digests = target["expected_digests"]
+015806: 
+015807:         old_container_id = docker_container_id(name)
+015808:         old_image_id = docker_container_image_id(name)
+015809:         if not old_container_id or not old_image_id:
+015810:             raise RuntimeError(
+015811:                 f"Could not read current Docker container/image ID for {name}"
+015812:             )
+015813:         before_image_ids[name] = old_image_id
+015814: 
+015815:         update_action_progress(stack_key, phase="verifying")
+015816: 
+015817:         if restore_pin_applied:
+015818:             # ZimaOS already recreated the stack when the Compose source was
+015819:             # returned from our internal backup digest to the user's tracking
+015820:             # tag. Verify the running container directly against the pulled
+015821:             # target digest instead of forcing a second recreation.
+015822:             deadline = time.time() + 180
+015823:             verified = None
+015824:             while time.time() < deadline:
+015825:                 runtime = docker_container_runtime_snapshot(name) or {}
+015826:                 current_id = docker_container_id(name)
+015827:                 image_id = docker_container_image_id(name)
+015828:                 local_digests = set(
+015829:                     docker_image_repo_digests(
+015830:                         image_id,
+015831:                         parse_image_ref(image_ref).get("normalized_repo"),
+015832:                     )
+015833:                 ) if image_id else set()
+015834:                 expected = {
+015835:                     str(value or "").strip().lower()
+015836:                     for value in expected_digests
+015837:                     if str(value or "").strip()
+015838:                 }
+015839:                 if (
+015840:                     current_id
+015841:                     and image_id
+015842:                     and local_digests.intersection(expected)
+015843:                     and str(runtime.get("status") or "") == "running"
+015844:                     and not runtime.get("restarting")
+015845:                     and runtime.get("health") != "unhealthy"
+015846:                 ):
+015847:                     verified = {
+015848:                         "container_id": current_id,
+015849:                         "image_id": image_id,
+015850:                         "local_digests": sorted(local_digests),
+015851:                         "config_image": str(
+015852:                             (runtime or {}).get("config_image") or image_ref
+015853:                         ),
+015854:                     }
+015855:                     break
+015856:                 time.sleep(2)
+015857: 
+015858:             if verified is None:
+015859:                 raise RuntimeError(
+015860:                     f"ZimaOS returned {name} to the tracking tag, but the "
+015861:                     "container did not reach the verified update digest"
+015862:                 )
+015863:         else:
+015864:             update_action_progress(stack_key, phase="recreating")
+015865:             casaos_recreate_container(old_container_id, project)
+015866: 
+015867:             verified = wait_for_container_recreate_target_digest(
+015868:                 name,
+015869:                 old_container_id,
+015870:                 image_ref,
+015871:                 expected_digests,
+015872:                 timeout=600,
+015873:             )
+015874: 
+015875:         new_image_id = str(verified.get("image_id") or "").strip()
+015876:         if new_image_id:
+015877:             after_image_ids[name] = new_image_id
+015878:         verified_runtime[name] = verified
+015879: 
+015880:         if previous_state != "running":
+015881:             docker_stop_container(name)
+015882:             final_state = docker_container_state(name)
+015883:             if final_state not in {"exited", "dead", "created"}:
+015884:                 raise RuntimeError(
+015885:                     f"Update succeeded, but {name} did not return to a stopped state"
+015886:                 )
+015887:             restored_states[name] = final_state
+015888:         else:
+015889:             final_state = docker_container_state(name)
+015890:             if final_state != "running":
+015891:                 raise RuntimeError(
+015892:                     f"Update reached the target image, but {name} is not running "
+015893:                     f"(state={final_state or 'unknown'})"
+015894:                 )
+015895:             restored_states[name] = final_state
+015896: 
+015897:     return {
+015898:         "project": project,
+015899:         "containers": [item["name"] for item in target_containers],
+015900:         "before_image_ids": before_image_ids,
+015901:         "after_image_ids": after_image_ids,
+015902:         "target_verification": target_verification,
+015903:         "verified_runtime": verified_runtime,
+015904:         "restored_stopped_state": any(
+015905:             item["state"] != "running" for item in target_containers
+015906:         ),
+015907:         "final_states": restored_states,
+015908:         "engine": "verified-pull+zimaos-container-recreate",
+015909:     }
+015910: 
+015911: 
 
-========================================================================
-CARD_RENDER 20830-21035
-========================================================================
+==============================================================================
+perform_version_update
+==============================================================================
+015235:             shutil.rmtree(temporary_root, ignore_errors=True)
+015236: 
+015237: def perform_version_update(app_item):
+015238:     project = app_item.get("compose_project")
+015239:     if not project:
+015240:         raise RuntimeError("ZimaOS Compose app ID is missing")
+015241: 
+015242:     policy = get_monitor_policy(app_item.get("stack_key"))
+015243:     mode = policy.get("mode")
+015244:     if mode not in {"upgrade", "follow"}:
+015245:         raise RuntimeError("This version is not released for installation")
+015246: 
+015247:     group = select_primary_version_group(app_item)
+015248:     if not group:
+015249:         if len(build_version_groups(app_item)) > 1:
+015250:             raise RuntimeError(
+015251:                 "Multiple independent version groups were detected; "
+015252:                 "no safe primary version group could be selected"
+015253:             )
+015254:         raise RuntimeError("No selectable version group is available")
+015255: 
+015256:     group_items = list(group.get("items") or [])
+015257:     if not group_items:
+015258:         raise RuntimeError("The selected version group contains no images")
+015259: 
+015260:     if mode == "upgrade":
+015261:         target_tag = str(policy.get("target_tag") or "").strip()
+015262:         available_tags = list((group.get("available") or {}).get("display_tags") or [])
+015263:         if not target_tag or target_tag not in available_tags:
+015264:             raise RuntimeError("The selected version is no longer available")
+015265:         target_map = _version_group_target_map(group, target_tag, "available")
+015266:     else:
+015267:         target_tag = FOLLOW_POLICY_TAG
+015268:         target_map = {
+015269:             str(item.get("image_ref") or "").strip(): FOLLOW_POLICY_TAG
+015270:             for item in group_items
+015271:             if str(item.get("image_ref") or "").strip()
+015272:         }
+015273: 
+015274:     if len(target_map) != len(group_items):
+015275:         raise RuntimeError(
+015276:             "The selected version is not available for every image in the version group"
+015277:         )
+015278: 
+015279:     current_aliases = {
+015280:         _version_alias(_version_item_current_tag(item))
+015281:         for item in group_items
+015282:         if _version_alias(_version_item_current_tag(item))
+015283:     }
+015284:     if _version_alias(target_tag) in current_aliases and len(current_aliases) == 1:
+015285:         raise RuntimeError("The selected version is already configured")
+015286: 
+015287:     yaml_text = casaos_compose_yaml(project)
+015288:     updated_yaml = yaml_text
+015289: 
+015290:     plans = []
+015291:     changed_services = []
+015292:     expected_by_container = {}
+015293:     old_refs = []
+015294:     new_refs = []
+015295: 
+015296:     for item in group_items:
+015297:         old_ref = str(item.get("image_ref") or "").strip()
+015298:         parsed = parse_image_ref(old_ref)
+015299:         if parsed.get("pinned_digest"):
+015300:             raise RuntimeError("Digest-pinned images cannot be changed by this path")
+015301:         if not old_ref or not parsed.get("repo"):
+015302:             raise RuntimeError("Could not determine the configured image reference")
+015303: 
+015304:         exact_target_tag = str(target_map.get(old_ref) or "").strip()
+015305:         if not exact_target_tag:
+015306:             raise RuntimeError(
+015307:                 f"No installable target tag was found for version-group image {old_ref}"
+015308:             )
+015309: 
+015310:         new_ref = f"{parsed['repo']}:{exact_target_tag}"
+015311: 
+015312:         # Do not probe the registry a second time here.  docker_pull_verified()
+015313:         # is the authoritative installability check and avoids an extra Docker
+015314:         # Hub HEAD/manifest request immediately after the scan.
+015315:         services = []
+015316:         container_names = []
+015317: 
+015318:         for container in item.get("containers") or []:
+015319:             service_name = str(container.get("compose_service") or "").strip()
+015320:             if service_name and service_name not in services:
+015321:                 services.append(service_name)
+015322: 
+015323:             container_name = str(container.get("name") or "").strip()
+015324:             if container_name and container_name not in container_names:
+015325:                 container_names.append(container_name)
+015326: 
+015327:         before_yaml = updated_yaml
+015328:         replacements = 0
+015329:         item_changed_services = []
+015330: 
+015331:         if services:
+015332:             updated_yaml, replacements, item_changed_services = replace_compose_service_images(
+015333:                 updated_yaml,
+015334:                 services,
+015335:                 new_ref,
+015336:             )
+015337:             expected_services = set(services)
+015338:             changed_service_set = set(item_changed_services)
+015339:             if replacements != len(expected_services) or changed_service_set != expected_services:
+015340:                 missing_services = sorted(expected_services - changed_service_set)
+015341:                 raise RuntimeError(
+015342:                     "Safe version change aborted: not every Compose service in the "
+015343:                     f"version group could be rewritten (image={old_ref}, "
+015344:                     f"changed={sorted(changed_service_set)}, missing={missing_services}). "
+015345:                     "The configuration was left unchanged."
+015346:                 )
+015347:         else:
+015348:             # Fallback only for older/non-standard stacks that expose no Compose
+015349:             # service labels at all. Never use a global text replacement after a
+015350:             # partial service rewrite, because that can leave one stack mixed.
+015351:             updated_yaml, replacements = replace_compose_image_ref(
+015352:                 updated_yaml,
+015353:                 old_ref,
+015354:                 new_ref,
+015355:             )
+015356:             item_changed_services = []
+015357: 
+015358:         if replacements < 1 or updated_yaml == before_yaml:
+015359:             service_text = ", ".join(services) if services else "unknown"
+015360:             raise RuntimeError(
+015361:                 "The image entry for a version-group service could not be found "
+015362:                 f"(image: {old_ref}, service: {service_text}). "
+015363:                 "The configuration was left unchanged."
+015364:             )
+015365: 
+015366:         for service in item_changed_services:
+015367:             if service not in changed_services:
+015368:                 changed_services.append(service)
+015369: 
+015370:         for container_name in container_names:
+015371:             expected_by_container[container_name] = new_ref
+015372: 
+015373:         old_refs.append(old_ref)
+015374:         new_refs.append(new_ref)
+015375:         # Preserve a concrete human-readable version only when it is already
+015376:         # authoritative for the currently installed image. This is especially
+015377:         # useful for fixed-version -> :latest transitions where the scan already
+015378:         # proved that both tags point to the exact same digest. In that case the
+015379:         # post-update verification can keep the known version without crawling
+015380:         # hundreds of registry tags again.
+015381:         source_version_hint = str(item.get("resolved_installed_tag") or "").strip()
+015382:         if not parse_version(source_version_hint):
+015383:             current_tag_hint = str(_version_item_current_tag(item) or "").strip()
+015384:             source_version_hint = current_tag_hint if parse_version(current_tag_hint) else ""
+015385: 
+015386:         plans.append({
+015387:             "old_image_ref": old_ref,
+015388:             "new_image_ref": new_ref,
+015389:             "target_tag": exact_target_tag,
+015390:             "services": services,
+015391:             "containers": container_names,
+015392:             "follow_target_digests": list(item.get("follow_target_digests") or []),
+015393:             "source_version_hint": source_version_hint or None,
+015394:         })
+015395: 
+015396:     if not expected_by_container:
+015397:         raise RuntimeError("No Docker containers found for this version-group update")
+015398: 
+015399:     # Validate the complete multi-service Compose change before touching the app.
+015400:     casaos_apply_compose(project, updated_yaml, dry_run=True)
+015401: 
+015402:     with scan_lock:
+015403:         update_platform = str(scan_state.get("platform") or "").strip()
+015404: 
+015405:     if not update_platform:
+015406:         rc, platform_raw, platform_error = run(
+015407:             ["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"],
+015408:             timeout=20,
+015409:         )
+015410:         if rc != 0:
+015411:             raise RuntimeError(platform_error or "Could not determine Docker platform")
+015412: 
+015413:         platform_map = {
+015414:             "linux/x86_64": "linux/amd64",
+015415:             "linux/amd64": "linux/amd64",
+015416:             "linux/aarch64": "linux/arm64",
+015417:             "linux/arm64": "linux/arm64",
+015418:             "linux/armv7l": "linux/arm/v7",
+015419:         }
+015420:         update_platform = platform_map.get(
+015421:             platform_raw.strip(),
+015422:             platform_raw.strip(),
+015423:         )
+015424: 
+015425:     # Establish and verify the exact target image before changing the app.
+015426:     target_verification = {}
+015427:     tag_only_switch = bool(app_item.get("follow_tag_switch_only"))
+015428: 
+015429:     for plan in plans:
+015430:         old_ref = str(plan.get("old_image_ref") or "").strip()
+015431:         new_ref = str(plan.get("new_image_ref") or "").strip()
+015432: 
+015433:         if not new_ref or new_ref in target_verification:
+015434:             continue
+015435: 
+015436:         if tag_only_switch:
+015437:             parsed_new = parse_image_ref(new_ref)
+015438:             repo_key = str(parsed_new.get("normalized_repo") or "").strip()
+015439:             expected = {
+015440:                 str(value or "").strip().lower()
+015441:                 for value in (plan.get("follow_target_digests") or [])
+015442:                 if str(value or "").strip()
+015443:             }
+015444:             if not repo_key or not expected:
+015445:                 raise RuntimeError(
+015446:                     f"The scan did not preserve a verified :latest digest for {new_ref}"
+015447:                 )
+015448: 
+015449:             # Same digest was already proven by the scan, so only add the
+015450:             # rolling tag locally; no duplicate registry request/download.
+015451:             docker_tag_same_image(old_ref, new_ref)
+015452: 
+015453:             local = {
+015454:                 str(value or "").strip().lower()
+015455:                 for value in docker_image_repo_digests(new_ref, repo_key)
+015456:                 if str(value or "").strip()
+015457:             }
+015458:             if not local.intersection(expected):
+015459:                 raise RuntimeError(
+015460:                     f"Tag-only normalization verification failed for {new_ref}: "
+015461:                     f"local={sorted(local)}, scan={sorted(expected)}"
+015462:                 )
+015463: 
+015464:             version_hint = str(plan.get("source_version_hint") or "").strip()
+015465:             if version_hint and parse_version(version_hint):
+015466:                 # The old concrete tag and :latest were already proven to be the
+015467:                 # same image. Persist that exact digest -> version mapping now so
+015468:                 # the targeted post-update scan can display the version instantly.
+015469:                 installed_version_cache_put(repo_key, sorted(local), version_hint)
+015470: 
+015471:             target_verification[new_ref] = {
+015472:                 "image_ref": new_ref,
+015473:                 "repo": repo_key,
+015474:                 "expected_digests": sorted(expected),
+015475:                 "local_digests": sorted(local),
+015476:                 "method": "local-tag-only-scan-digest",
+015477:                 "resolved_version_hint": version_hint if parse_version(version_hint) else None,
+015478:             }
+015479:         else:
+015480:             scan_expected = (
+015481:                 plan.get("follow_target_digests") or None
+015482:                 if mode == "follow"
+015483:                 else None
+015484:             )
+015485:             pulled = docker_pull_verified(
+015486:                 new_ref,
+015487:                 update_platform,
+015488:                 expected_digests=scan_expected,
+015489:             )
+015490:             pulled["method"] = "verified-docker-pull"
+015491:             target_verification[new_ref] = pulled
+015492: 
+015493:     original_states = {}
+015494:     original_one_shots = set()
+015495:     for container in app_item.get("containers") or []:
+015496:         name = str(container.get("name") or "").strip()
+015497:         state = str(container.get("state") or "unknown").strip()
+015498:         if not name:
+015499:             continue
+015500:         if state not in {"running", "exited", "created", "dead"}:
+015501:             raise RuntimeError(
+015502:                 f"Unsupported container state for safe version update: {name} ({state})"
+015503:             )
+015504:         original_states[name] = state
+015505:         snapshot = docker_container_runtime_snapshot(name) or {}
+015506:         try:
+015507:             exit_code = int(snapshot.get("exit_code"))
+015508:         except Exception:
+015509:             exit_code = None
+015510:         if (
+015511:             state == "exited"
+015512:             and exit_code == 0
+015513:             and str(snapshot.get("restart_policy") or "").strip().lower() == "on-failure"
+015514:         ):
+015515:             original_one_shots.add(name)
+015516: 
+015517:     # Apply all services in the version family through ZimaOS. From this point on,
+015518:     # any failure must restore the complete original Compose YAML; partial stacks
+015519:     # are never accepted as a valid result.
+015520:     apply_attempted = False
+015521:     try:
+015522:         apply_attempted = True
+015523:         casaos_apply_compose(project, updated_yaml, dry_run=False)
+015524: 
+015525:         # Verify the persisted Compose source itself before waiting for containers.
+015526:         persisted_yaml = casaos_compose_yaml(project)
+015527:         persisted_images = compose_service_image_map_from_yaml(persisted_yaml)
+015528:         for plan in plans:
+015529:             target_ref = str(plan.get("new_image_ref") or "").strip()
+015530:             for service in plan.get("services") or []:
+015531:                 actual_ref = str(persisted_images.get(str(service)) or "").strip()
+015532:                 if actual_ref != target_ref:
+015533:                     raise RuntimeError(
+015534:                         "ZimaOS persisted an incomplete version-group change: "
+015535:                         f"service={service}, expected={target_ref}, actual={actual_ref or '-'}"
+015536:                     )
+015537: 
+015538:         # Wait until ZimaOS activates the requested image reference.
+015539:         active_images = wait_for_version_group_compose_update(
+015540:             project,
+015541:             expected_by_container,
+015542:             timeout=600,
+015543:         )
+015544: 
+015545:         verified_runtime = {}
+015546: 
+015547:         for container_name, expected_ref in expected_by_container.items():
+015548:             verification = target_verification.get(expected_ref) or {}
+015549:             expected_digests = set(verification.get("expected_digests") or [])
+015550: 
+015551:             if not expected_digests:
+015552:                 raise RuntimeError(
+015553:                     f"No verified target digest is available for {expected_ref}"
+015554:                 )
+015555: 
+015556:             matched, _ = container_matches_target_digest(
+015557:                 container_name,
+015558:                 expected_ref,
+015559:                 expected_digests,
+015560:             )
+015561: 
+015562:             if not matched:
+015563:                 current_container_id = docker_container_id(container_name)
+015564:                 if not current_container_id:
+015565:                     raise RuntimeError(
+015566:                         f"Could not resolve current container ID for {container_name}"
+015567:                     )
+015568:                 casaos_recreate_container(current_container_id, project)
+015569: 
+015570:             verified_runtime[container_name] = wait_for_container_target_digest(
+015571:                 container_name,
+015572:                 expected_ref,
+015573:                 expected_digests,
+015574:                 timeout=600,
+015575:             )
+015576: 
+015577:         # Restore ordinary stopped containers, but never stop a successful
+015578:         # on-failure one-shot job. Those jobs must be allowed to finish naturally.
+015579:         restored_states = {}
+015580:         for name, previous_state in original_states.items():
+015581:             if name in original_one_shots:
+015582:                 deadline = time.time() + 600
+015583:                 while time.time() < deadline:
+015584:                     snapshot = docker_container_runtime_snapshot(name) or {}
+015585:                     status = str(snapshot.get("status") or "").strip().lower()
+015586:                     if status == "exited":
+015587:                         try:
+015588:                             exit_code = int(snapshot.get("exit_code"))
+015589:                         except Exception:
+015590:                             exit_code = None
+015591:                         if exit_code != 0:
+015592:                             raise RuntimeError(
+015593:                                 f"One-shot container {name} failed after the update "
+015594:                                 f"(exit_code={exit_code})"
+015595:                             )
+015596:                         restored_states[name] = "completed"
+015597:                         break
+015598:                     if status in {"dead", "removing"} or bool(snapshot.get("restarting")):
+015599:                         raise RuntimeError(
+015600:                             f"One-shot container {name} did not complete cleanly "
+015601:                             f"(state={status or 'unknown'})"
+015602:                         )
+015603:                     time.sleep(2)
+015604:                 else:
+015605:                     raise RuntimeError(
+015606:                         f"One-shot container {name} did not finish within 600 seconds"
+015607:                     )
+015608:                 continue
+015609: 
+015610:             current_state = docker_container_state(name)
+015611:             if previous_state != "running" and current_state == "running":
+015612:                 docker_stop_container(name)
+015613:                 current_state = docker_container_state(name)
+015614:             restored_states[name] = current_state
+015615: 
+015616:     except Exception as update_exc:
+015617:         rollback_error = None
+015618:         if apply_attempted:
+015619:             try:
+015620:                 casaos_apply_compose(project, yaml_text, dry_run=False)
+015621:             except Exception as rollback_exc:
+015622:                 rollback_error = str(rollback_exc)
+015623:         if rollback_error:
+015624:             raise RuntimeError(
+015625:                 f"Version update failed: {update_exc}. Automatic Compose rollback also failed: {rollback_error}"
+015626:             ) from update_exc
+015627:         raise RuntimeError(
+015628:             f"Version update failed and the original Compose configuration was restored: {update_exc}"
+015629:         ) from update_exc
+015630: 
+015631:     # Manual "switch version" remains a one-shot action. Once the complete
+015632:     # family is updated, pin the new state again.
+015633:     if mode == "upgrade":
+015634:         save_monitor_policy(app_item.get("stack_key"), "fixed", None, auto_enabled=False)
+015635: 
+015636:     return {
+015637:         "project": project,
+015638:         # Compatibility fields for callers that previously expected one image.
+015639:         "old_image_ref": old_refs[0] if old_refs else None,
+015640:         "new_image_ref": new_refs[0] if new_refs else None,
+015641:         "old_image_refs": old_refs,
+015642:         "new_image_refs": new_refs,
+015643:         "target_tag": target_tag,
+015644:         "version_group": _public_version_group(group),
+015645:         "version_group_plans": plans,
+015646:         "compose_services": changed_services,
+015647:         "containers": list(expected_by_container),
+015648:         "active_images": active_images,
+015649:         "verified_runtime": verified_runtime,
+015650:         "target_verification": target_verification,
+015651:         "final_states": restored_states,
+015652:         "policy_after_update": get_monitor_policy(app_item.get("stack_key")),
+015653:         "engine": "verified-pull+zimaos-compose-version-group-update",
+015654:     }
+015655: 
+015656: 
+
+==============================================================================
+restore_app_backup
+==============================================================================
+015112: 
+015113: 
+015114: def restore_app_backup(app_item, backup_id=None, stack_key=None):
+015115:     stack_key = str(stack_key or (app_item or {}).get("stack_key") or "").strip()
+015116:     project = str((app_item or {}).get("compose_project") or "").strip()
+015117:     if not stack_key or not project:
+015118:         raise RuntimeError("Backup restore requires a ZimaOS Compose app")
+015119: 
+015120:     record = _select_backup_record(app_item, backup_id)
+015121:     meta = record["metadata"]
+015122:     mode = _normalize_backup_mode(meta.get("mode"), "quick")
+015123:     payload_root = None
+015124:     temporary_root = None
+015125:     data_restored = False
+015126: 
+015127:     try:
+015128:         restore_safe, restore_warning = _quick_restore_safety(app_item, meta)
+015129:         if not restore_safe:
+015130:             raise RuntimeError(restore_warning or "Quick backup is not safe for this rollback")
+015131: 
+015132:         payload_root, temporary_root = _materialize_backup_payload(
+015133:             record["path"],
+015134:             meta,
+015135:         )
+015136:         restore_yaml, pinned_images, restore_pin_mappings = _restore_compose_yaml(
+015137:             payload_root,
+015138:             meta,
+015139:         )
+015140: 
+015141:         # Validate the saved Compose through ZimaOS before touching application data.
+015142:         update_action_progress(stack_key, 5, determinate=True, phase="restore_prepare")
+015143:         casaos_apply_compose(project, restore_yaml, dry_run=True)
+015144: 
+015145:         names = _backup_container_names(meta)
+015146:         current_names = _current_app_container_names(app_item)
+015147:         all_names = list(dict.fromkeys(current_names + names))
+015148:         restored_mounts = 0
+015149: 
+015150:         if mode == "full":
+015151:             # Critical order for downgrade safety:
+015152:             #   stop NEW app -> restore OLD AppData exactly -> remove OLD container
+015153:             #   -> apply/recreate OLD image.
+015154:             # The old image must never get a chance to open a database that was
+015155:             # already migrated by the newer image.
+015156:             update_action_progress(stack_key, 10, determinate=True, phase="restore_stop")
+015157:             _stop_restore_containers(all_names)
+015158:             update_action_progress(stack_key, 15, determinate=True, phase="restore_data")
+015159:             restored_mounts = _restore_full_backup_data(
+015160:                 payload_root,
+015161:                 meta,
+015162:                 progress_stack_key=stack_key,
+015163:             )
+015164:             data_restored = restored_mounts > 0
+015165: 
+015166:             # The previous implementation left the stopped pre-restore container
+015167:             # in place. Because ZimaOS applies Compose asynchronously, our wait could
+015168:             # see that old container immediately and start it again before ZimaOS had
+015169:             # recreated the backup image. Force exact recreation after AppData is safe.
+015170:             update_action_progress(stack_key, 50, determinate=True, phase="restore_recreate")
+015171:             _remove_restore_containers_for_recreate(all_names)
+015172: 
+015173:         update_action_progress(stack_key, 58, determinate=True, phase="restore_compose")
+015174:         casaos_apply_compose(project, restore_yaml, dry_run=False)
+015175: 
+015176:         update_action_progress(stack_key, 68, determinate=True, phase="restore_activate")
+015177:         if mode == "full":
+015178:             _wait_for_restore_image_activation(meta, names, timeout=180)
+015179:         else:
+015180:             _wait_for_restore_containers(names, timeout=180)
+015181: 
+015182:         # Let backed-up one-shot migration/job containers finish naturally before
+015183:         # restoring the exact running/stopped state. Stopping them immediately can
+015184:         # turn a successful code-0 job into a false code-137 failure.
+015185:         update_action_progress(stack_key, 78, determinate=True, phase="restore_jobs")
+015186:         _wait_for_completed_restore_jobs(meta, timeout=180)
+015187: 
+015188:         update_action_progress(stack_key, 84, determinate=True, phase="restore_runtime")
+015189:         _restore_container_runtime_states(meta, names)
+015190: 
+015191:         update_action_progress(stack_key, 92, determinate=True, phase="restore_verify")
+015192:         verified_images = _verify_restored_images(meta)
+015193:         verified_runtime = _verify_restore_runtime(meta, names)
+015194:         update_action_progress(stack_key, 99, determinate=True, phase="restore_verify")
+015195: 
+015196:         remember_restore_pin_assignments(
+015197:             project,
+015198:             stack_key,
+015199:             restore_pin_mappings,
+015200:             backup_id=record.get("backup_id"),
+015201:             source="backup-restore",
+015202:         )
+015203: 
+015204:         return {
+015205:             "backup_id": record["backup_id"],
+015206:             "mode": mode,
+015207:             "encrypted": bool(
+015208:                 isinstance(meta.get("encryption"), dict)
+015209:                 and meta.get("encryption", {}).get("encrypted")
+015210:             ),
+015211:             "restored_containers": len(names),
+015212:             "restored_data_mounts": restored_mounts,
+015213:             "verified_images": verified_images,
+015214:             "verified_runtime": verified_runtime,
+015215:             "digest_pinned_images": pinned_images,
+015216:             "project": project,
+015217:         }
+015218:     except Exception as exc:
+015219:         # Once old AppData has been put back, never restart the newer application
+015220:         # automatically on top of it. Keep the app stopped if a later Compose or
+015221:         # verification stage fails; the selected full backup remains available for retry.
+015222:         if data_restored:
+015223:             try:
+015224:                 _stop_restore_containers(_current_app_container_names(app_item) + _backup_container_names(meta))
+015225:             except Exception:
+015226:                 pass
+015227:             raise RuntimeError(
+015228:                 f"{exc} | Restored AppData was protected by keeping the app stopped."
+015229:             ) from exc
+015230:         if isinstance(exc, RuntimeError):
+015231:             raise
+015232:         raise RuntimeError(str(exc)) from exc
+015233:     finally:
+015234:         if temporary_root is not None:
+015235:             shutil.rmtree(temporary_root, ignore_errors=True)
+015236: 
+015237: def perform_version_update(app_item):
+
+==============================================================================
+_verify_restore_runtime
+==============================================================================
+014942: 
+014943: 
+014944: def _verify_restore_runtime(meta, container_names):
+014945:     snapshots = _backup_container_runtime_map(meta)
+014946:     verified = 0
+014947:     for name in container_names:
+014948:         expected = snapshots.get(name) or {}
+014949:         expected_state = str(expected.get("state") or "").strip().lower()
+014950:         if not expected_state:
+014951:             expected_state = (
+014952:                 "running"
+014953:                 if name in set(meta.get("running_containers_before_backup") or [])
+014954:                 else "exited"
+014955:             )
+014956:         try:
+014957:             baseline_restarts = int(expected.get("restart_count") or 0)
+014958:         except Exception:
+014959:             baseline_restarts = 0
+014960:         try:
+014961:             expected_exit = expected.get("exit_code")
+014962:             expected_exit = None if expected_exit is None else int(expected_exit)
+014963:         except Exception:
+014964:             expected_exit = None
+014965: 
+014966:         try:
+014967:             wait_for_image_source_runtime_stable(
+014968:                 name,
+014969:                 timeout=120,
+014970:                 stable_seconds=12,
+014971:                 baseline_restart_count=baseline_restarts,
+014972:                 expected_state=expected_state,
+014973:                 expected_exit_code=expected_exit,
+014974:                 expected_runtime_snapshot={
+014975:                     "health": expected.get("health"),
+014976:                     "restart_count": baseline_restarts,
+014977:                     "restart_policy": expected.get("restart_policy"),
+014978:                 },
+014979:             )
+014980:         except RuntimeError as exc:
+014981:             message = str(exc).replace("New image source", "Restored app").replace(
+014982:                 "source switch", "restore"
+014983:             )
+014984:             raise RuntimeError(message) from exc
+014985:         verified += 1
+014986:     return verified
+014987: 
+014988: 
+
+==============================================================================
+collect_containers
+==============================================================================
+[MISSING FUNCTION collect_containers]
+
+==============================================================================
+container_stack_metadata
+==============================================================================
+003524: 
+003525: 
+003526: def container_stack_metadata(container):
+003527:     config = container.get("Config", {}) or {}
+003528:     labels = config.get("Labels", {}) or {}
+003529:     name = container.get("Name", "").lstrip("/")
+003530:     project = (labels.get("com.docker.compose.project") or "").strip()
+003531:     service = (labels.get("com.docker.compose.service") or "").strip()
+003532:     container_number = (
+003533:         labels.get("com.docker.compose.container-number") or ""
+003534:     ).strip()
+003535:     working_dir = (labels.get("com.docker.compose.project.working_dir") or "").strip()
+003536:     config_files = (labels.get("com.docker.compose.project.config_files") or "").strip()
+003537:     icon_url = (
+003538:         labels.get("icon")
+003539:         or labels.get("casaos.icon")
+003540:         or labels.get("net.unraid.docker.icon")
+003541:         or ""
+003542:     ).strip()
+003543: 
+003544:     project_link = project_link_from_labels(labels)
+003545:     project_url = (project_link or {}).get("url") or ""
+003546:     project_provider = (project_link or {}).get("provider")
+003547:     project_url_source = (project_link or {}).get("source")
+003548: 
+003549:     if config_files:
+003550:         stack_key = "config:" + config_files
+003551:     elif working_dir:
+003552:         stack_key = "workdir:" + working_dir
+003553:     elif project:
+003554:         stack_key = "project:" + project
+003555:     else:
+003556:         stack_key = "container:" + name
+003557: 
+003558:     path_name = _path_stack_name(working_dir) or _path_stack_name(config_files)
+003559:     if path_name and not _looks_generated_stack_name(path_name):
+003560:         stack_name = path_name
+003561:     elif project and not _looks_generated_stack_name(project):
+003562:         stack_name = project
+003563:     else:
+003564:         stack_name = name
+003565: 
+003566:     return {
+003567:         "stack_key": stack_key,
+003568:         "stack_name": stack_name,
+003569:         "compose_project": project or None,
+003570:         "compose_service": service or None,
+003571:         "compose_container_number": container_number or None,
+003572:         "compose_working_dir": working_dir or None,
+003573:         "compose_config_files": config_files or None,
+003574:         "icon_url": icon_url or None,
+003575:         "project_url": project_url or None,
+003576:         "project_provider": project_provider,
+003577:         "project_url_source": project_url_source,
+003578:     }
+003579: 
+003580: 
+
+==============================================================================
+scan_all
+==============================================================================
+008706: 
+008707: 
+008708: def scan_all(stack_key=None):
+008709:     global scan_state
+008710: 
+008711:     post_update_verified_targets = {}
+008712:     if stack_key:
+008713:         with post_scan_lock:
+008714:             pending_context = dict(post_scan_pending.get(str(stack_key)) or {})
+008715:         post_update_verified_targets = dict(
+008716:             pending_context.get("verified_targets") or {}
+008717:         )
+008718: 
+008719:     previous_results = []
+008720:     previous_result_map = {}
+008721:     target_container_names = []
+008722:     target_compose_project = None
+008723: 
+008724:     with scan_lock:
+008725:         if scan_state.get("state") == "scanning":
+008726:             return
+008727: 
+008728:         previous_results = list(scan_state.get("results") or [])
+008729:         previous_result_map = {
+008730:             (
+008731:                 str(previous.get("stack_key") or ""),
+008732:                 str(previous.get("image_ref") or ""),
+008733:             ): previous
+008734:             for previous in previous_results
+008735:             if isinstance(previous, dict)
+008736:         }
+008737: 
+008738:         if stack_key:
+008739:             target_app = next(
+008740:                 (
+008741:                     app_item
+008742:                     for app_item in (scan_state.get("apps") or [])
+008743:                     if app_item.get("stack_key") == stack_key
+008744:                 ),
+008745:                 None,
+008746:             )
+008747:             if not target_app:
+008748:                 return
+008749: 
+008750:             target_compose_project = str(
+008751:                 target_app.get("compose_project") or ""
+008752:             ).strip() or None
+008753: 
+008754:             for container in target_app.get("containers") or []:
+008755:                 name = str(container.get("name") or "").strip()
+008756:                 if name and name not in target_container_names:
+008757:                     target_container_names.append(name)
+008758: 
+008759:             if not target_compose_project and not target_container_names:
+008760:                 return
+008761: 
+008762:         previous_last_full_scan_at = (
+008763:             scan_state.get("last_full_scan_at")
+008764:             or scan_state.get("finished_at")
+008765:         )
+008766:         previous_local_cache_snapshot = copy.deepcopy(
+008767:             scan_state.get("local_cache_snapshot")
+008768:             if isinstance(scan_state.get("local_cache_snapshot"), dict)
+008769:             else {}
+008770:         )
+008771: 
+008772:         scan_state = {
+008773:             "state": "scanning",
+008774:             "scan_scope": "app" if stack_key else "all",
+008775:             "scan_stack_key": stack_key,
+008776:             "started_at": utc_now(),
+008777:             "finished_at": None,
+008778:             "last_full_scan_at": previous_last_full_scan_at,
+008779:             "local_cache_snapshot": previous_local_cache_snapshot,
+008780:             "progress_step": "starting",
+008781:             "progress_percent": 2,
+008782:             "progress_current": 0,
+008783:             "progress_total": 0,
+008784:             "results": previous_results,
+008785:             "apps": scan_state.get("apps", []),
+008786:             "summary": scan_state.get("summary", {}),
+008787:             "app_summary": scan_state.get("app_summary", {}),
+008788:         }
+008789:         save_json(SCAN_FILE, scan_state)
+008790: 
+008791:     try:
+008792:         update_scan_progress("docker", 5)
+008793:         rc, platform_raw, err = run(["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"])
+008794:         if rc != 0:
+008795:             raise RuntimeError(err or "docker info failed")
+008796:         platform_map = {
+008797:             "linux/x86_64": "linux/amd64",
+008798:             "linux/amd64": "linux/amd64",
+008799:             "linux/aarch64": "linux/arm64",
+008800:             "linux/arm64": "linux/arm64",
+008801:             "linux/armv7l": "linux/arm/v7",
+008802:         }
+008803:         platform = platform_map.get(platform_raw.strip(), platform_raw.strip())
+008804: 
+008805:         update_scan_progress("containers", 10)
+008806:         if stack_key:
+008807:             if target_compose_project:
+008808:                 # IMPORTANT:
+008809:                 # Re-discover CURRENT containers from Docker. Do not trust names
+008810:                 # stored by the previous scan because ZimaOS may have recreated
+008811:                 # or replaced the containers during the update.
+008812:                 rc, ids_raw, err = run([
+008813:                     "docker",
+008814:                     "ps",
+008815:                     "-aq",
+008816:                     "--filter",
+008817:                     f"label=com.docker.compose.project={target_compose_project}",
+008818:                 ])
+008819:                 if rc != 0:
+008820:                     raise RuntimeError(err or "docker ps project filter failed")
+008821:                 ids = [x for x in ids_raw.splitlines() if x.strip()]
+008822: 
+008823:                 # Very short recreate windows can temporarily contain no match.
+008824:                 # Fall back to known names only for this one attempt.
+008825:                 if not ids:
+008826:                     ids = list(target_container_names)
+008827:             else:
+008828:                 ids = list(target_container_names)
+008829:         else:
+008830:             rc, ids_raw, err = run(["docker", "ps", "-aq"])
+008831:             if rc != 0:
+008832:                 raise RuntimeError(err or "docker ps failed")
+008833:             ids = [x for x in ids_raw.splitlines() if x.strip()]
+008834: 
+008835:         if not ids:
+008836:             update_scan_progress("results", 92)
+008837:             results = []
+008838:         else:
+008839:             update_scan_progress("inspect", 16, 0, len(ids))
+008840:             rc, raw, err = run(["docker", "inspect"] + ids, 60)
+008841:             if rc != 0:
+008842:                 raise RuntimeError(err or "docker inspect failed")
+008843:             containers_raw = select_current_compose_containers(
+008844:                 json.loads(raw)
+008845:             )
+008846: 
+008847:             # Keep the proven v0.3.0 logo path unchanged.
+008848:             # Titles are a separate display-only concern: use ZimaOS' own custom
+008849:             # app title where available, without changing stack keys or update logic.
+008850:             zima_title_catalog = casaos_title_catalog()
+008851: 
+008852:             # One deployment record per image + Compose stack. This prevents a shared
+008853:             # image (for example redis:alpine) from merging two unrelated apps.
+008854:             #
+008855:             # v0.3.155: ZimaOS Compose is the canonical source for Compose apps.
+008856:             # Docker Config.Image may legally keep an old registry alias after a
+008857:             # cross-registry source switch where both refs resolve to the same
+008858:             # image digest.
+008859:             deployments = {}
+008860:             compose_image_map_cache = {}
+008861:             compose_literal_image_map_cache = {}
+008862:             compose_image_catalog = casaos_compose_service_image_catalog()
+008863:             for c in containers_raw:
+008864:                 name = c.get("Name", "").lstrip("/")
+008865:                 runtime_ref = (c.get("Config", {}) or {}).get("Image", "")
+008866:                 image_id = c.get("Image", "")
+008867:                 state_name = (c.get("State", {}) or {}).get("Status", "unknown")
+008868:                 if not runtime_ref:
+008869:                     continue
+008870:                 meta = container_stack_metadata(c)
+008871: 
+008872:                 literal_compose_ref = compose_literal_image_ref(
+008873:                     meta.get("compose_project"),
+008874:                     meta.get("compose_service"),
+008875:                     compose_literal_image_map_cache,
+008876:                 )
+008877: 
+008878:                 ref = compose_configured_image_ref(
+008879:                     meta.get("compose_project"),
+008880:                     meta.get("compose_service"),
+008881:                     runtime_ref,
+008882:                     compose_image_map_cache,
+008883:                     compose_image_catalog,
+008884:                     stack_key=meta.get("stack_key"),
+008885:                 )
+008886: 
+008887:                 # The literal Compose YAML is the source of truth whenever it
+008888:                 # contains a concrete image value. Structured ZimaOS/Docker
+008889:                 # metadata may append an internally resolved @sha256 digest.
+008890:                 if literal_compose_ref:
+008891:                     ref = literal_compose_ref
+008892: 
+008893:                 if not ref:
+008894:                     continue
+008895: 
+008896:                 display_title = None
+008897:                 for alias in (
+008898:                     meta.get("compose_project"),
+008899:                     meta.get("stack_name"),
+008900:                     meta.get("compose_service"),
+008901:                     name,
+008902:                 ):
+008903:                     alias_key = str(alias or "").strip().casefold()
+008904:                     if alias_key and zima_title_catalog.get(alias_key):
+008905:                         display_title = zima_title_catalog[alias_key]
+008906:                         break
+008907: 
+008908:                 key = (ref, meta["stack_key"])
+008909:                 entry = deployments.setdefault(key, {
+008910:                     "image_ref": ref,
+008911:                     "stack_key": meta["stack_key"],
+008912:                     "stack_name": meta["stack_name"],
+008913:                     "compose_project": meta["compose_project"],
+008914:                     "compose_working_dir": meta["compose_working_dir"],
+008915:                     "compose_config_files": meta["compose_config_files"],
+008916:                     "icon_url": meta.get("icon_url"),
+008917:                     "project_url": meta.get("project_url"),
+008918:                     "project_provider": meta.get("project_provider"),
+008919:                     "project_url_source": meta.get("project_url_source"),
+008920:                     "display_title": display_title,
+008921:                     "containers": [],
+008922:                     "image_ids": set(),
+008923:                     "runtime_image_refs": set(),
+008924:                     "compose_literal_refs": {},
+008925:                 })
+008926:                 if not entry.get("icon_url") and meta.get("icon_url"):
+008927:                     entry["icon_url"] = meta.get("icon_url")
+008928:                 if not entry.get("project_url") and meta.get("project_url"):
+008929:                     entry["project_url"] = meta.get("project_url")
+008930:                     entry["project_provider"] = meta.get("project_provider")
+008931:                     entry["project_url_source"] = meta.get("project_url_source")
+008932:                 if not entry.get("display_title") and display_title:
+008933:                     entry["display_title"] = display_title
+008934:                 state_payload = c.get("State") or {}
+008935:                 restart_payload = ((c.get("HostConfig") or {}).get("RestartPolicy") or {})
+008936:                 restart_policy = str(restart_payload.get("Name") or "").strip().lower()
+008937:                 try:
+008938:                     exit_code = int(state_payload.get("ExitCode"))
+008939:                 except Exception:
+008940:                     exit_code = None
+008941:                 one_shot_completed = bool(
+008942:                     state_name == "exited"
+008943:                     and exit_code == 0
+008944:                     and restart_policy == "on-failure"
+008945:                 )
+008946:                 entry["containers"].append({
+008947:                     "name": name,
+008948:                     "state": state_name,
+008949:                     "exit_code": exit_code,
+008950:                     "restart_policy": restart_policy or None,
+008951:                     "one_shot_completed": one_shot_completed,
+008952:                     "compose_service": meta["compose_service"],
+008953:                     "compose_container_number": meta.get("compose_container_number"),
+008954:                     "created_at": c.get("Created"),
+008955:                     "ports": container_published_ports(c),
+008956:                     "port_bindings": container_published_port_bindings(c),
+008957:                     "network_mode": str((c.get("HostConfig") or {}).get("NetworkMode") or ""),
+008958:                     "runtime_image_ref": runtime_ref,
+008959:                 })
+008960:                 entry["image_ids"].add(image_id)
+008961:                 if runtime_ref:
+008962:                     entry["runtime_image_refs"].add(str(runtime_ref))
+008963:                 if literal_compose_ref and meta.get("compose_service"):
+008964:                     entry["compose_literal_refs"][
+008965:                         str(meta.get("compose_service"))
+008966:                     ] = str(literal_compose_ref)
+008967: 
+008968:             image_cache = {}
+008969:             remote_cache = {}
+008970:             tags_cache = {}
+008971:             github_scan_cache = {}
+008972:             results = []
+008973: 
+008974:             ordered_deployments = sorted(
+008975:                 deployments.items(),
+008976:                 key=lambda kv: (
+008977:                     str(kv[1]["stack_name"]).lower(),
+008978:                     str(kv[1]["image_ref"]).lower(),
+008979:                 ),
+008980:             )
+008981:             deployment_total = len(ordered_deployments)
+008982:             update_scan_progress("images", 22, 0, deployment_total)
+008983: 
+008984:             for deployment_index, (_, group) in enumerate(ordered_deployments, start=1):
+008985:                 before_percent = 22 + int(((deployment_index - 1) / max(1, deployment_total)) * 68)
+008986:                 update_scan_progress(
+008987:                     "images",
+008988:                     before_percent,
+008989:                     deployment_index - 1,
+008990:                     deployment_total,
+008991:                 )
+008992:                 image_ref = group["image_ref"]
+008993: 
+008994:                 item_services = {
+008995:                     str(container.get("compose_service") or "").strip()
+008996:                     for container in (group.get("containers") or [])
+008997:                     if str(container.get("compose_service") or "").strip()
+008998:                 }
+008999:                 literal_refs = dict(group.get("compose_literal_refs") or {})
+009000: 
+009001:                 explicit_pin_values = [
+009002:                     compose_literal_digest_pin(literal_refs.get(service))
+009003:                     for service in sorted(item_services)
+009004:                 ]
+009005:                 explicit_digest_pin = bool(
+009006:                     item_services
+009007:                     and all(service in literal_refs for service in item_services)
+009008:                     and explicit_pin_values
+009009:                     and all(explicit_pin_values)
+009010:                 )
+009011:                 explicit_pinned_digest = (
+009012:                     str(explicit_pin_values[0]).strip()
+009013:                     if explicit_digest_pin
+009014:                     else None
+009015:                 )
+009016: 
+009017:                 restore_pin_info = (
+009018:                     restore_generated_digest_pin_info(
+009019:                         group.get("stack_key"),
+009020:                         group.get("compose_project"),
+009021:                         item_services,
+009022:                         literal_refs,
+009023:                     )
+009024:                     if explicit_digest_pin
+009025:                     else None
+009026:                 )
+009027: 
+009028:                 # Initial parse is corrected after Docker runtime/local tag
+009029:                 # evidence has been collected below.
+009030:                 tracking_image_ref = str(
+009031:                     (restore_pin_info or {}).get("tracking_ref")
+009032:                     or image_ref
+009033:                 ).strip()
+009034:                 parsed = parse_image_ref(tracking_image_ref)
+009035:                 local = set()
+009036:                 local_all_digests = set()
+009037:                 local_digest_groups = []
+009038:                 local_repo_tags = set()
+009039:                 local_image_labels = {}
+009040:                 local_image_created = None
+009041: 
+009042:                 for image_id in group["image_ids"]:
+009043:                     if image_id not in image_cache:
+009044:                         inspect_template = (
+009045:                             '{"repo_digests":{{json .RepoDigests}},'
+009046:                             '"repo_tags":{{json .RepoTags}},'
+009047:                             '"labels":{{json .Config.Labels}},'
+009048:                             '"created":{{json .Created}}}'
+009049:                         )
+009050:                         rc, out, _ = run(
+009051:                             ["docker", "image", "inspect", image_id, "--format", inspect_template],
+009052:                             20,
+009053:                         )
+009054:                         try:
+009055:                             payload = json.loads(out) if rc == 0 and out else {}
+009056:                             image_cache[image_id] = payload if isinstance(payload, dict) else {}
+009057:                         except Exception:
+009058:                             image_cache[image_id] = {}
+009059: 
+009060:                     image_meta = image_cache.get(image_id) or {}
+009061:                     image_repo_digests = set()
+009062: 
+009063:                     for rd in image_meta.get("repo_digests") or []:
+009064:                         repo, digest = parse_repo_digest(rd)
+009065:                         if digest:
+009066:                             local_all_digests.add(
+009067:                                 str(digest).strip().lower()
+009068:                             )
+009069:                         if repo == parsed["normalized_repo"] and digest:
+009070:                             normalized_digest = str(digest).strip().lower()
+009071:                             local.add(normalized_digest)
+009072:                             image_repo_digests.add(normalized_digest)
+009073: 
+009074:                     # Keep one digest set per active Docker image ID.  An empty set
+009075:                     # is retained deliberately: an unverified active image must not
+009076:                     # be hidden by another container that happens to match remote.
+009077:                     local_digest_groups.append(sorted(image_repo_digests))
+009078: 
+009079:                     for repo_tag in image_meta.get("repo_tags") or []:
+009080:                         repo_tag = str(repo_tag or "").strip()
+009081:                         if repo_tag:
+009082:                             local_repo_tags.add(repo_tag)
+009083: 
+009084:                     labels = image_meta.get("labels") or {}
+009085:                     if isinstance(labels, dict):
+009086:                         for key, value in labels.items():
+009087:                             if key not in local_image_labels and value is not None:
+009088:                                 local_image_labels[str(key)] = value
+009089: 
+009090:                     created = str(image_meta.get("created") or "").strip()
+009091:                     if created and (not local_image_created or created > local_image_created):
+009092:                         local_image_created = created
+009093: 
+009094:                 # Supplement local evidence from the canonical tag itself.
+009095:                 canonical_local_digests = docker_image_repo_digests(
+009096:                     image_ref,
+009097:                     parsed["normalized_repo"],
+009098:                 )
+009099:                 if canonical_local_digests:
+009100:                     local.update(canonical_local_digests)
+009101:                     local_all_digests.update(canonical_local_digests)
+009102:                     if len(local_digest_groups) == 1:
+009103:                         local_digest_groups[0] = sorted(
+009104:                             set(local_digest_groups[0]).union(canonical_local_digests)
+009105:                         )
+009106: 
+009107:                 zimaos_latest_tracking_ref = None
+009108:                 if explicit_digest_pin and not restore_pin_info:
+009109:                     zimaos_latest_tracking_ref = zimaos_managed_latest_digest_ref(
+009110:                         image_ref,
+009111:                         runtime_refs=group.get("runtime_image_refs") or [],
+009112:                         local_repo_tags=local_repo_tags,
+009113:                     )
+009114: 
+009115:                 if zimaos_latest_tracking_ref:
+009116:                     tracking_image_ref = zimaos_latest_tracking_ref
+009117:                     parsed = parse_image_ref(tracking_image_ref)
+009118: 
+009119:                 # Immediate post-source verification may legitimately see the
+009120:                 # target digest only under the old registry alias. The digest
+009121:                 # hash identifies the image content independently of that alias.
+009122:                 post_target_seed = _post_update_target_for_image(
+009123:                     post_update_verified_targets,
+009124:                     image_ref,
+009125:                 )
+009126:                 post_expected_seed = {
+009127:                     str(value or "").strip().lower()
+009128:                     for value in ((post_target_seed or {}).get("digests") or [])
+009129:                     if str(value or "").strip()
+009130:                 }
+009131:                 if (
+009132:                     post_target_seed
+009133:                     and not local
+009134:                     and local_all_digests.intersection(post_expected_seed)
+009135:                 ):
+009136:                     local.update(
+009137:                         local_all_digests.intersection(post_expected_seed)
+009138:                     )
+009139: 
+009140:                 resolved_project_link = resolve_project_link(
+009141:                     tracking_image_ref,
+009142:                     metadata_url=group.get("project_url"),
+009143:                     metadata_source=group.get("project_url_source"),
+009144:                 )
+009145: 
+009146:                 item = {
+009147:                     "image_ref": image_ref,
+009148:                     "tracking_image_ref": (
+009149:                         tracking_image_ref
+009150:                         if tracking_image_ref != image_ref
+009151:                         else None
+009152:                     ),
+009153:                     "restore_generated_digest_pin": bool(restore_pin_info),
+009154:                     "zimaos_managed_latest_digest": bool(
+009155:                         zimaos_latest_tracking_ref
+009156:                     ),
+009157:                     "zimaos_managed_latest_tracking_ref": (
+009158:                         zimaos_latest_tracking_ref or None
+009159:                     ),
+009160:                     "restore_pin_source": (
+009161:                         (restore_pin_info or {}).get("source")
+009162:                         if restore_pin_info
+009163:                         else None
+009164:                     ),
+009165:                     "restore_backup_id": (
+009166:                         (restore_pin_info or {}).get("backup_id")
+009167:                         if restore_pin_info
+009168:                         else None
+009169:                     ),
+009170:                     "display_name": display_name(tracking_image_ref, group["containers"]),
+009171:                     "stack_key": group["stack_key"],
+009172:                     "stack_name": group["stack_name"],
+009173:                     "compose_project": group.get("compose_project"),
+009174:                     "compose_working_dir": group.get("compose_working_dir"),
+009175:                     "compose_config_files": group.get("compose_config_files"),
+009176:                     "icon_url": group.get("icon_url"),
+009177:                     "project_url": (resolved_project_link or {}).get("url"),
+009178:                     "project_provider": (resolved_project_link or {}).get("provider"),
+009179:                     "project_url_source": (resolved_project_link or {}).get("source"),
+009180:                     "display_title": group.get("display_title"),
+009181:                     "containers": group["containers"],
+009182:                     "tag": parsed["tag"],
+009183:                     "resolved_installed_tag": None,
+009184:                     "display_installed_version": None,
+009185:                     "installed_version_resolution": None,
+009186:                     "local_digests": sorted(local),
+009187:                     "local_all_digests": sorted(local_all_digests),
+009188:                     "local_digest_groups": [list(values) for values in local_digest_groups],
+009189:                     "local_image_ids": sorted(
+009190:                         str(value or "").strip()
+009191:                         for value in group.get("image_ids") or []
+009192:                         if str(value or "").strip()
+009193:                     ),
+009194:                     "local_repo_tags": sorted(local_repo_tags),
+009195:                     "runtime_image_refs": sorted(
+009196:                         str(value or "").strip()
+009197:                         for value in group.get("runtime_image_refs") or []
+009198:                         if str(value or "").strip()
+009199:                     ),
+009200:                     "compose_literal_refs": dict(
+009201:                         group.get("compose_literal_refs") or {}
+009202:                     ),
+009203:                     "compose_digest_pin_proven": False,
+009204:                     "compose_pinned_digest": None,
+009205:                     "pin_classification_schema": PIN_CLASSIFICATION_SCHEMA,
+009206:                     "local_image_labels": local_image_labels,
+009207:                     "local_image_created": local_image_created,
+009208:                     "remote_digest": None,
+009209:                     "remote_digest_short": None,
+009210:                     "remote_platform_digest": None,
+009211:                     "resolved_available_tag": None,
+009212:                     "available_version_resolution": None,
+009213:                     "newer_tag": None,
+009214:                     "newer_tags": [],
+009215:                     "available_version_tags": [],
+009216:                     "status": None,
+009217:                     "update_policy": None,
+009218:                     "detail": "",
+009219:                     "scan_warning": None,
+009220:                 }
+009221: 
+009222:                 previous = previous_result_map.get(
+009223:                     (str(group["stack_key"]), str(image_ref))
+009224:                 )
+009225:                 previous_local = sorted(
+009226:                     str(value)
+009227:                     for value in ((previous or {}).get("local_digests") or [])
+009228:                     if str(value)
+009229:                 )
+009230:                 current_local = sorted(str(value) for value in local if str(value))
+009231:                 previous_resolved = str(
+009232:                     (previous or {}).get("resolved_installed_tag") or ""
+009233:                 ).strip()
+009234:                 previous_resolution_source = str(
+009235:                     ((previous or {}).get("installed_version_resolution") or {}).get("source")
+009236:                     or ""
+009237:                 ).strip()
+009238: 
+009239:                 previous_is_untrusted_label = previous_resolution_source.startswith(
+009240:                     "local-image-label"
+009241:                 )
+009242: 
+009243:                 if (
+009244:                     previous_resolved
+009245:                     and previous_local == current_local
+009246:                     and not previous_is_untrusted_label
+009247:                 ):
+009248:                     item["resolved_installed_tag"] = previous_resolved
+009249:                 elif not _needs_installed_version_resolution(parsed["tag"]):
+009250:                     item["resolved_installed_tag"] = parsed["tag"]
+009251: 
+009252:                 user_digest_pin = bool(
+009253:                     explicit_digest_pin
+009254:                     and not restore_pin_info
+009255:                     and not zimaos_latest_tracking_ref
+009256:                 )
+009257: 
+009258:                 item["compose_digest_pin_proven"] = user_digest_pin
+009259:                 item["compose_pinned_digest"] = (
+009260:                     explicit_pinned_digest
+009261:                     if user_digest_pin
+009262:                     else None
+009263:                 )
+009264: 
+009265:                 # Backup restore digest locks and ZimaOS-managed `latest@digest`
+009266:                 # refs are tracking mechanics, not user-selected immutable pins.
+009267:                 #
+009268:                 # Some perfectly normal registry images can temporarily have no
+009269:                 # RepoDigests in local Docker metadata (retag/import/recreate).
+009270:                 # Before calling such an image LOCAL, verify it against the
+009271:                 # registry by comparing the active Docker image ID (OCI config
+009272:                 # digest) with the config digest of the remote platform manifest.
+009273:                 remote_config_same = None
+009274:                 remote_registry_exists = False
+009275:                 remote_probe_error = None
+009276:                 remote_config_digest_value = None
+009277:                 if not local and not user_digest_pin:
+009278:                     if parsed["base"] not in remote_cache:
+009279:                         remote_cache[parsed["base"]] = remote_digests(parsed["base"], platform)
+009280:                     probe_top, probe_platform_digest, probe_error = remote_cache[parsed["base"]]
+009281:                     if probe_error:
+009282:                         remote_probe_error = probe_error
+009283:                     else:
+009284:                         remote_registry_exists = True
+009285:                         probe_manifest_digest = probe_platform_digest or probe_top
+009286:                         remote_config_digest_value, remote_config_error = remote_manifest_config_digest(
+009287:                             parsed["base"],
+009288:                             probe_manifest_digest,
+009289:                         )
+009290:                         local_config_ids = {
+009291:                             str(value or "").strip().lower()
+009292:                             for value in (group.get("image_ids") or [])
+009293:                             if str(value or "").strip().lower().startswith("sha256:")
+009294:                         }
+009295:                         if remote_config_digest_value and local_config_ids:
+009296:                             remote_config_same = all(
+009297:                                 value == remote_config_digest_value
+009298:                                 for value in local_config_ids
+009299:                             )
+009300:                             item["local_config_digest_match"] = bool(remote_config_same)
+009301:                             item["remote_config_digest"] = remote_config_digest_value
+009302:                         else:
+009303:                             remote_probe_error = remote_config_error or "Local image ID unavailable"
+009304: 
+009305:                 if user_digest_pin:
+009306:                     item.update(
+009307:                         status="PINNED",
+009308:                         update_policy="digest_pinned",
+009309:                         remote_digest=explicit_pinned_digest,
+009310:                         remote_digest_short=explicit_pinned_digest.replace("sha256:", "")[:12],
+009311:                         detail="Image is explicitly pinned by digest in Compose",
+009312:                     )
+009313:                 elif not local and remote_config_same is None:
+009314:                     # A genuine registry image must never be labeled "LOCAL"
+009315:                     # merely because its local RepoDigests field is empty.  If
+009316:                     # the registry exists but we cannot complete config-digest
+009317:                     # verification, report a check error instead.  Only a real
+009318:                     # registry miss is classified as LOCAL.
+009319:                     if remote_registry_exists:
+009320:                         item.update(
+009321:                             status="ERROR",
+009322:                             update_policy=(
+009323:                                 "fixed_version"
+009324:                                 if parse_version(parsed["tag"])
+009325:                                 else "follow_tag"
+009326:                             ),
+009327:                             detail=(
+009328:                                 "Registry image found, but local image could not be verified: "
+009329:                                 + str(remote_probe_error or "missing config digest").splitlines()[0][:180]
+009330:                             ),
+009331:                         )
+009332:                     elif remote_probe_error and _remote_digest_error_is_transient(remote_probe_error):
+009333:                         item.update(
+009334:                             status="ERROR",
+009335:                             update_policy=(
+009336:                                 "fixed_version"
+009337:                                 if parse_version(parsed["tag"])
+009338:                                 else "follow_tag"
+009339:                             ),
+009340:                             detail=str(remote_probe_error).splitlines()[0][:180],
+009341:                         )
+009342:                     else:
+009343:                         item.update(
+009344:                             status="LOCAL",
+009345:                             update_policy="local",
+009346:                             detail="No registry digest and no matching local RepoDigest",
+009347:                         )
+009348:                 else:
+009349:                     post_target = _post_update_target_for_image(
+009350:                         post_update_verified_targets,
+009351:                         image_ref,
+009352:                     )
+009353:                     post_expected = {
+009354:                         str(value or "").strip().lower()
+009355:                         for value in ((post_target or {}).get("digests") or [])
+009356:                         if str(value or "").strip()
+009357:                     }
+009358: 
+009359:                     if post_target:
+009360:                         # Immediate post-update verification is deliberately
+009361:                         # registry-independent. The update path already pulled and
+009362:                         # verified the exact target digest, so prove that the newly
+009363:                         # scanned local image still matches that target instead of
+009364:                         # asking Docker Hub/GHCR again and risking a false 429 ERROR.
+009365:                         if not post_expected or not local.intersection(post_expected):
+009366:                             item.update(
+009367:                                 status="ERROR",
+009368:                                 update_policy=(
+009369:                                     "fixed_version"
+009370:                                     if parse_version(parsed["tag"])
+009371:                                     else "follow_tag"
+009372:                                 ),
+009373:                                 detail=(
+009374:                                     "Post-update local verification failed: "
+009375:                                     f"local={sorted(local)}, expected={sorted(post_expected)}"
+009376:                                 )[:500],
+009377:                             )
+009378:                         else:
+009379:                             verified_digest = sorted(local.intersection(post_expected))[0]
+009380:                             item["remote_digest"] = verified_digest
+009381:                             item["remote_digest_short"] = verified_digest.replace("sha256:", "")[:12]
+009382:                             item["post_update_verified"] = True
+009383:                             item["scan_warning"] = None
+009384:                             if parse_version(parsed["tag"]):
+009385:                                 item["update_policy"] = "fixed_version"
+009386:                                 item["status"] = "CURRENT"
+009387:                                 item["resolved_installed_tag"] = parsed["tag"]
+009388:                                 item["detail"] = "Post-update local digest verified"
+009389:                             else:
+009390:                                 item["update_policy"] = "follow_tag"
+009391:                                 item["status"] = "CURRENT"
+009392: 
+009393:                                 # If this was a fixed-version -> :latest tag-only
+009394:                                 # transition, the update path already knew the
+009395:                                 # concrete version and proved the digest identical.
+009396:                                 # Carry that version forward and cache it by digest.
+009397:                                 # If :latest actually changed to a different image,
+009398:                                 # no hint exists and the targeted resolver below is
+009399:                                 # intentionally allowed to determine the new version
+009400:                                 # for this one app only.
+009401:                                 version_hint = str(
+009402:                                     (post_target or {}).get("resolved_version_hint") or ""
+009403:                                 ).strip()
+009404:                                 if version_hint and parse_version(version_hint):
+009405:                                     item["resolved_installed_tag"] = version_hint
+009406:                                     installed_version_cache_put(
+009407:                                         str(parsed.get("normalized_repo") or "").strip(),
+009408:                                         sorted(local.intersection(post_expected)),
+009409:                                         version_hint,
+009410:                                     )
+009411:                                     _installed_version_resolution_record(
+009412:                                         item,
+009413:                                         "resolved",
+009414:                                         "post-update-known-version",
+009415:                                         version_hint,
+009416:                                     )
+009417:                                     item["detail"] = (
+009418:                                         "Post-update local digest and known version verified"
+009419:                                     )
+009420:                                 else:
+009421:                                     item["detail"] = "Post-update local digest verified"
+009422:                     else:
+009423:                         if parsed["base"] not in remote_cache:
+009424:                             remote_cache[parsed["base"]] = remote_digests(parsed["base"], platform)
+009425:                         top, platform_digest, error = remote_cache[parsed["base"]]
+009426:                         if error:
+009427:                             previous = previous_result_map.get(
+009428:                                 (str(group["stack_key"]), str(image_ref))
+009429:                             )
+009430:                             previous_local = sorted(
+009431:                                 str(value)
+009432:                                 for value in ((previous or {}).get("local_digests") or [])
+009433:                                 if str(value)
+009434:                             )
+009435:                             current_local = sorted(str(value) for value in local if str(value))
+009436:                             can_keep_previous = bool(
+009437:                                 previous
+009438:                                 and previous.get("status") not in {None, "ERROR", "PINNED"}
+009439:                                 and previous.get("update_policy") != "digest_pinned"
+009440:                                 and previous.get("remote_digest")
+009441:                                 and previous_local == current_local
+009442:                             )
+009443: 
+009444:                             if can_keep_previous:
+009445:                                 item["status"] = previous.get("status")
+009446:                                 item["update_policy"] = previous.get("update_policy")
+009447:                                 item["remote_digest"] = previous.get("remote_digest")
+009448:                                 item["remote_digest_short"] = previous.get("remote_digest_short")
+009449:                                 item["remote_platform_digest"] = previous.get("remote_platform_digest")
+009450:                                 item["resolved_available_tag"] = previous.get("resolved_available_tag")
+009451:                                 if previous.get("available_version_resolution"):
+009452:                                     item["available_version_resolution"] = dict(previous.get("available_version_resolution") or {})
+009453:                                 item["newer_tag"] = previous.get("newer_tag")
+009454:                                 item["newer_tags"] = list(previous.get("newer_tags") or [])
+009455:                                 item["available_version_tags"] = list(
+009456:                                     previous.get("available_version_tags") or []
+009457:                                 )
+009458:                                 if previous.get("resolved_installed_tag"):
+009459:                                     item["resolved_installed_tag"] = previous.get("resolved_installed_tag")
+009460:                                 if previous.get("installed_version_resolution"):
+009461:                                     item["installed_version_resolution"] = dict(
+009462:                                         previous.get("installed_version_resolution") or {}
+009463:                                     )
+009464:                                 short_error = str(error).splitlines()[0][:140]
+009465:                                 item["scan_warning"] = short_error
+009466:                                 item["detail"] = (
+009467:                                     "Remote check temporarily failed; "
+009468:                                     "previous successful result retained: "
+009469:                                     + short_error
+009470:                                 )
+009471:                             else:
+009472:                                 item.update(
+009473:                                     status="ERROR",
+009474:                                     update_policy="follow_tag",
+009475:                                     detail=str(error).splitlines()[0][:180],
+009476:                                 )
+009477:                         else:
+009478:                             item["remote_digest"] = top
+009479:                             item["remote_digest_short"] = top.replace("sha256:", "")[:12]
+009480:                             item["remote_platform_digest"] = platform_digest
+009481:                             candidates = {top}
+009482:                             if platform_digest:
+009483:                                 candidates.add(platform_digest)
+009484:                             same = (
+009485:                                 bool(remote_config_same)
+009486:                                 if remote_config_same is not None
+009487:                                 else _all_local_digest_groups_match_remote(
+009488:                                     local_digest_groups,
+009489:                                     candidates,
+009490:                                 )
+009491:                             )
+009492:                             version = parse_version(parsed["tag"])
+009493:                             if version:
+009494:                                 item["update_policy"] = "fixed_version"
+009495:                                 repo_key = parsed["normalized_repo"]
+009496:                                 if repo_key not in tags_cache:
+009497:                                     tags_cache[repo_key] = registry_tags(repo_key)
+009498:                                 tags, tag_error = tags_cache[repo_key]
+009499:                                 if not tag_error:
+009500:                                     item["newer_tags"] = compatible_newer_tags(parsed["tag"], tags)
+009501:                                     item["newer_tag"] = item["newer_tags"][0] if item["newer_tags"] else None
+009502: 
+009503:                                 # v0.3.128: the normal fixed-version scan must use
+009504:                                 # the same GitHub supplement as the version picker.
+009505:                                 # Registry tag-list endpoints can omit a new release
+009506:                                 # because of pagination/order.  Never trust GitHub
+009507:                                 # alone, though: verify the exact Docker tag before
+009508:                                 # advertising it as an installable update.
+009509:                                 if not item["newer_tag"] and same:
+009510:                                     project_url = str(item.get("project_url") or "").strip()
+009511:                                     project_provider = str(item.get("project_provider") or "").strip().lower()
+009512:                                     if not project_url or project_provider != "github":
+009513:                                         inferred_url = github_url_from_image_ref(tracking_image_ref)
+009514:                                         if inferred_url and github_repo_from_url(inferred_url):
+009515:                                             project_url = inferred_url
+009516:                                             project_provider = "github"
+009517:                                     if project_url and project_provider == "github":
+009518:                                         if project_url not in github_scan_cache:
+009519:                                             try:
+009520:                                                 github_scan_cache[project_url] = github_project_tags(project_url)
+009521:                                             except Exception as exc:
+009522:                                                 github_scan_cache[project_url] = ([], "github_error", str(exc))
+009523:                                         github_values, github_source, github_error = github_scan_cache[project_url]
+009524:                                         github_values = github_values or []
+009525:                                         if github_values:
+009526:                                             verified_newer = github_verified_newer_registry_tags(
+009527:                                                 parsed["tag"],
+009528:                                                 repo_key,
+009529:                                                 tags or [],
+009530:                                                 github_values,
+009531:                                                 platform=platform,
+009532:                                                 limit=30,
+009533:                                                 verify_limit=8,
+009534:                                             )
+009535:                                             if verified_newer:
+009536:                                                 item["newer_tags"] = verified_newer
+009537:                                                 item["newer_tag"] = verified_newer[0]
+009538:                                                 item["version_source"] = (
+009539:                                                     "registry+" + str(github_source or "github")
+009540:                                                 )
+009541:                                         elif github_error:
+009542:                                             item["scan_warning"] = (
+009543:                                                 "GitHub version supplement failed: "
+009544:                                                 + str(github_error).splitlines()[0][:140]
+009545:                                             )
+009546: 
+009547:                                 if item["newer_tag"]:
+009548:                                     item["status"] = "VERSION_UPDATE"
+009549:                                     item["detail"] = f"Newer version tag available: {parsed['tag']} -> {item['newer_tag']}"
+009550:                                 elif same:
+009551:                                     item["status"] = "CURRENT"
+009552:                                     item["detail"] = "Configured fixed version is current"
+009553:                                 else:
+009554:                                     item["status"] = "IMAGE_UPDATE"
+009555:                                     item["detail"] = "Configured tag points to a different remote image"
+009556:                             else:
+009557:                                 item["update_policy"] = "follow_tag"
+009558:                                 item["status"] = "CURRENT" if same else "IMAGE_UPDATE"
+009559:                                 if remote_config_same is not None:
+009560:                                     item["detail"] = (
+009561:                                         "Remote config digest matches local image"
+009562:                                         if same
+009563:                                         else "Configured tag points to a different remote image"
+009564:                                     )
+009565:                                 else:
+009566:                                     item["detail"] = "Remote digest matches local image" if same else "Configured tag points to a different remote image"
+009567: 
+009568:                 results.append(item)
+009569: 
+009570:                 checked_percent = 22 + int((deployment_index / max(1, deployment_total)) * 68)
+009571:                 update_scan_progress(
+009572:                     "images",
+009573:                     checked_percent,
+009574:                     deployment_index,
+009575:                     deployment_total,
+009576:                 )
+009577: 
+009578:         # Targeted post-update scans stay targeted. Preserve the existing
+009579:         # repository-level parallel resolver while publishing real progress from
+009580:         # its completed image groups. The later version stages keep advancing the
+009581:         # percentage instead of leaving the UI frozen at 93%.
+009582:         if stack_key:
+009583:             fresh_results = list(results)
+009584:             version_results = fresh_results
+009585:         else:
+009586:             version_results = results
+009587: 
+009588:         version_total = len(version_results)
+009589:         update_scan_progress("versions", 91, 0, version_total)
+009590: 
+009591:         def installed_version_progress(current, total):
+009592:             current = max(0, min(int(current or 0), int(total or version_total or 0)))
+009593:             total = max(0, int(total or version_total or 0))
+009594:             fraction = (current / total) if total else 1.0
+009595:             update_scan_progress(
+009596:                 "versions",
+009597:                 min(94, 91 + round(fraction * 3)),
+009598:                 current,
+009599:                 total,
+009600:             )
+009601: 
+009602:         enrich_scan_installed_versions(
+009603:             version_results,
+009604:             platform,
+009605:             progress_callback=installed_version_progress,
+009606:         )
+009607:         update_scan_progress("versions", 95, version_total, version_total)
+009608:         enrich_scan_available_versions(version_results, platform)
+009609:         update_scan_progress("versions", 96, version_total, version_total)
+009610:         enrich_follow_policy_targets(version_results, platform)
+009611:         update_scan_progress("versions", 97, version_total, version_total)
+009612: 
+009613:         if stack_key:
+009614:             # Replace the old app completely. Match both the historical
+009615:             # stack_key and Compose project so stale pre-update results cannot
+009616:             # survive when ZimaOS changed container metadata during recreation.
+009617:             results = [
+009618:                 item
+009619:                 for item in previous_results
+009620:                 if (
+009621:                     item.get("stack_key") != stack_key
+009622:                     and (
+009623:                         not target_compose_project
+009624:                         or str(item.get("compose_project") or "").strip()
+009625:                         != target_compose_project
+009626:                     )
+009627:                 )
+009628:             ] + fresh_results
+009629: 
+009630:         update_scan_progress("results", 98)
+009631:         counter = Counter(x["status"] for x in results)
+009632:         fixed = sum(1 for x in results if x.get("update_policy") == "fixed_version")
+009633:         summary = {
+009634:             "CURRENT": counter["CURRENT"],
+009635:             "IMAGE_UPDATE": counter["IMAGE_UPDATE"],
+009636:             "VERSION_UPDATE": counter["VERSION_UPDATE"],
+009637:             "PINNED": counter["PINNED"],
+009638:             "LOCAL": counter["LOCAL"],
+009639:             "ERROR": counter["ERROR"],
+009640:             "FIXED": fixed,
+009641:         }
+009642:         update_scan_progress("results", 98)
+009643:         apps, app_summary = build_apps(results)
+009644:         update_scan_progress("results", 99)
+009645:         finished_at = utc_now()
+009646: 
+009647:         try:
+009648:             local_cache_snapshot = collect_current_local_scan_cache_snapshot()
+009649:             local_cache_error = None
+009650:         except Exception as cache_exc:
+009651:             local_cache_snapshot = copy.deepcopy(
+009652:                 scan_state.get("local_cache_snapshot")
+009653:                 if isinstance(scan_state.get("local_cache_snapshot"), dict)
+009654:                 else local_scan_cache_snapshot_from_results(results)
+009655:             )
+009656:             local_cache_error = str(cache_exc).splitlines()[0][:220]
+009657: 
+009658:         final = {
+009659:             "state": "idle",
+009660:             "scan_scope": "app" if stack_key else "all",
+009661:             "scan_stack_key": stack_key,
+009662:             "started_at": scan_state.get("started_at"),
+009663:             "finished_at": finished_at,
+009664:             # Targeted verification must NOT reset the configured 1/6/12/24 h
+009665:             # clock. Only a real full scan advances this timestamp.
+009666:             "last_full_scan_at": (
+009667:                 scan_state.get("last_full_scan_at")
+009668:                 if stack_key
+009669:                 else finished_at
+009670:             ),
+009671:             "local_cache_snapshot": local_cache_snapshot,
+009672:             "local_cache_error": local_cache_error,
+009673:             "progress_step": "done",
+009674:             "progress_percent": 100,
+009675:             "progress_current": scan_state.get("progress_total", 0),
+009676:             "progress_total": scan_state.get("progress_total", 0),
+009677:             "platform": platform,
+009678:             "results": results,
+009679:             "apps": apps,
+009680:             "summary": summary,
+009681:             "app_summary": app_summary,
+009682:         }
+009683:     except Exception as exc:
+009684:         final = {
+009685:             "state": "idle" if stack_key else "error",
+009686:             "scan_scope": "app" if stack_key else "all",
+009687:             "scan_stack_key": stack_key,
+009688:             "started_at": scan_state.get("started_at"),
+009689:             "finished_at": utc_now(),
+009690:             "progress_step": "error",
+009691:             "progress_percent": scan_state.get("progress_percent", 0),
+009692:             "progress_current": scan_state.get("progress_current", 0),
+009693:             "progress_total": scan_state.get("progress_total", 0),
+009694:             "last_full_scan_at": scan_state.get("last_full_scan_at"),
+009695:             "local_cache_snapshot": copy.deepcopy(
+009696:                 scan_state.get("local_cache_snapshot")
+009697:                 if isinstance(scan_state.get("local_cache_snapshot"), dict)
+009698:                 else {}
+009699:             ),
+009700:             "results": scan_state.get("results", []),
+009701:             "apps": scan_state.get("apps", []),
+009702:             "summary": scan_state.get("summary", {}),
+009703:             "app_summary": scan_state.get("app_summary", {}),
+009704:             "error": str(exc),
+009705:         }
+009706: 
+009707:     with scan_lock:
+009708:         scan_state = final
+009709:         save_json(SCAN_FILE, scan_state)
+009710: 
+009711: 
+
+==============================================================================
+status
+==============================================================================
+016339: 
+016340: @app.get("/api/status")
+016341: def status(request: Request):
+016342:     require_auth(request)
+016343:     refresh_scan_policy_fields()
+016344:     with scan_lock:
+016345:         scan_payload = copy.deepcopy(scan_state)
+016346:     annotate_self_protection(scan_payload)
+016347:     annotate_version_confirmations(scan_payload)
+016348:     return {"version": VERSION, "docker_version": docker_version(), "zimaos_app_management_detected": casaos_detected(), "settings": dict(settings), "github": github_token_public_status(), "backup_encryption": backup_encryption_public_status(), "project_links": {"cache_file": str(PROJECT_LINK_CACHE_FILE), "cached_repositories": len(PROJECT_LINK_CACHE)}, "resource_usage": container_resource_usage(), "service_runtime": {"started_at": SERVICE_STARTED_AT}, "automation": {"pending_post_scans": pending_app_scan_keys()}, "scan": scan_payload}
+016349: 
+016350: 
+
+==============================================================================
+automation_status
+==============================================================================
+[MISSING FUNCTION automation_status]
+
+==============================================================================
+UI_CARD
+==============================================================================
 020830:     Array.isArray(app.version_group&&app.version_group.image_refs)
 020831:       ? app.version_group.image_refs.map(value=>String(value||'').trim()).filter(Boolean)
 020832:       : []
@@ -574,300 +2268,25 @@ CARD_RENDER 20830-21035
 021033:         <div class="card-head-actions"><span class="${badgeClass(effectiveStatus)}">${esc(statusTextValue(effectiveStatus))}</span></div>
 021034:       </div>
 021035:       ${renderCardToolbar(app,index)}
+021036:       <div class="update-card-stats">
+021037:         <div class="update-card-stat">
+021038:           <div class="update-card-stat-label">${esc(t('containers'))}</div>
+021039:           <div class="update-card-stat-value">${Number.isFinite(Number(app.container_count))?Number(app.container_count):'–'}</div>
+021040:         </div>
 
-========================================================================
-RESTORE_UI 21795-21870
-========================================================================
-021795: function showTransientRestoreSuccess(stackKey){
-021796:   const key=String(stackKey||'');
-021797:   if(!key)return;
-021798:   const message={ok:true,kind:'restore_done',text:t('backupRestoreSuccess')};
-021799:   state.updateMessages.set(key,message);
-021800:   setTimeout(()=>{
-021801:     if(state.updateMessages.get(key)===message){
-021802:       state.updateMessages.delete(key);
-021803:       render();
-021804:     }
-021805:   },5000);
-021806: }
-021807: 
-021808: async function executeBackupRestore(app,backupId){
-021809:   if(!app||!backupId||state.restoringApps.has(app.stack_key))return;
-021810:   const stackKey=String(app.stack_key||'');
-021811:   const baselineFinishedAt=verificationBaseline();
-021812:   closeBackupRestore();
-021813:   state.restoringApps.add(stackKey);
-021814:   state.updateMessages.delete(stackKey);
-021815:   render();
-021816:   startActionProgressPolling(stackKey,'restore','restore_prepare');
-021817: 
-021818:   try{
-021819:     await api('/api/app-restore',{
-021820:       method:'POST',
-021821:       body:JSON.stringify({stack_key:stackKey,backup_id:backupId})
-021822:     });
-021823:     state.restoreVerificationApps.add(stackKey);
-021824:     beginVerificationState(stackKey,baselineFinishedAt);
-021825:   }catch(err){
-021826:     state.restoreVerificationApps.delete(stackKey);
-021827:     if(err.message!=='auth'){
-021828:       state.updateMessages.set(stackKey,{ok:false,kind:'restore',text:t('backupRestoreFailed').replace('{error}',err.message||'-')});
-021829:     }
-021830:   }finally{
-021831:     await finishActionProgressPolling(stackKey);
-021832:     state.restoringApps.delete(stackKey);
-021833:     state.actionProgress.delete(stackKey);
-021834:     await loadStatus();
-021835:     render();
-021836:   }
-021837: }
-021838: 
-021839: function render(){
-021840:   renderFilters();
-021841:   const d=state.data;
-021842:   const grid=document.getElementById('updateGrid');
-021843:   if(!d||(!d.results&&!d.apps)){
-021844:     updateSummaryAvailability({
-021845:       UPDATES:0,
-021846:       CURRENT:0,
-021847:       RUNNING:0,
-021848:       STOPPED:0,
-021849:       FIXED:0,
-021850:       PINNED:0,
-021851:       LOCAL:0,
-021852:       ERROR:0,
-021853:       AUTO_UPDATE:0,
-021854:       PORT_CONFLICT:0
-021855:     });
-021856:     grid.innerHTML=`<div class="update-empty">${esc(t('noData'))}</div>`;
-021857:     return;
-021858:   }
-021859:   const apps=getApps();
-021860:   state.portConflicts=detectPortConflicts(apps);
-021861:   renderPortConflictBanner();
-021862:   const scanSummary=(d.app_summary&&Object.keys(d.app_summary).length)?d.app_summary:appSummaryFromApps(apps);
-021863:   const runtimeSummary=appSummaryFromApps(apps);
-021864:   const s={
-021865:     ...scanSummary,
-021866:     UPDATES:runtimeSummary.UPDATES,
-021867:     CURRENT:runtimeSummary.CURRENT,
-021868:     RUNNING:runtimeSummary.RUNNING,
-021869:     STOPPED:runtimeSummary.STOPPED
-021870:   };
-
-========================================================================
-ACTION_BUTTONS 22340-22440
-========================================================================
-022340: 
-022341:   document.querySelectorAll('[data-policy-modal-backdrop]').forEach(backdrop=>{
-022342:     backdrop.onclick=event=>{
-022343:       if(event.target!==backdrop)return;
-022344:       const shell=backdrop.querySelector('.policy-modal-shell');
-022345:       const apply=shell&&shell.querySelector('[data-policy-apply-index]');
-022346:       const app=apply?visible[Number(apply.dataset.policyApplyIndex)]:null;
-022347:       if(app)state.policyOpenApps.delete(app.stack_key);
-022348:       render();
-022349:     };
-022350:   });
-022351: 
-022352:   document.querySelectorAll('[data-policy-cancel]').forEach(button=>{
-022353:     button.onclick=()=>{
-022354:       const card=button.closest('.policy-modal-shell');
-022355:       const apply=card&&card.querySelector('[data-policy-apply-index]');
-022356:       const app=apply?visible[Number(apply.dataset.policyApplyIndex)]:null;
-022357:       if(app)state.policyOpenApps.delete(app.stack_key);
-022358:       render();
-022359:     };
-022360:   });
-022361: 
-022362:   document.querySelectorAll('[data-policy-apply-index]').forEach(button=>{
-022363:     button.onclick=()=>{
-022364:       const app=visible[Number(button.dataset.policyApplyIndex)];
-022365:       const card=button.closest('.policy-modal-shell');
-022366:       if(app&&card)saveAppPolicy(app,card);
-022367:     };
-022368:   });
-022369: 
-022370:   document.querySelectorAll('[data-check-index]').forEach(button=>{
-022371:     button.onclick=()=>{
-022372:       const app=visible[Number(button.dataset.checkIndex)];
-022373:       if(app)checkSingleApp(app);
-022374:     };
-022375:   });
-022376: 
-022377:   document.querySelectorAll('[data-update-index]').forEach(button=>{
-022378:     button.onclick=()=>{
-022379:       const app=visible[Number(button.dataset.updateIndex)];
-022380:       if(!app)return;
-022381:       const savedMode=savedAutoBackupMode(app);
-022382:       if(savedMode!==null){
-022383:         installImageUpdate(app,savedMode);
-022384:       }else{
-022385:         openBackupPreview(app);
-022386:       }
-022387:     };
-022388:   });
-022389: 
-022390:   document.querySelectorAll('[data-backup-restore-stack]').forEach(button=>{
-022391:     button.onclick=()=>{
-022392:       const key=String(button.dataset.backupRestoreStack||'');
-022393:       const app=visible.find(item=>String(item.stack_key||'')===key);
-022394:       if(app)openBackupRestore(app);
-022395:     };
-022396:   });
-022397: 
-022398:   document.querySelectorAll('[data-runtime-stack]').forEach(button=>{
-022399:     button.onclick=()=>{
-022400:       const stackKey=String(button.dataset.runtimeStack||'');
-022401:       const app=(state.data&&state.data.apps||[]).find(item=>String(item.stack_key||'')===stackKey);
-022402:       const action=button.dataset.runtimeAction||runtimeControlAction(app||{});
-022403:       if(!app||!action)return;
-022404:       if(appSelfProtected(app)&&(action==='stop'||action==='restart'))return;
-022405:       changeAppRuntime(app,action);
-022406:     };
-022407:   });
-022408: 
-022409:   document.querySelectorAll('[data-uninstall-index]').forEach(button=>{
-022410:     button.onclick=()=>{
-022411:       const appIndex=Number(button.dataset.uninstallIndex);
-022412:       const app=visible[appIndex];
-022413:       if(app)uninstallApp(app,appIndex);
-022414:     };
-022415:   });
-022416: 
-022417:   updateRuntimeDom();
-022418: }
-022419: 
-022420: 
-022421: 
-022422: let imageSourceState={
-022423:   stackKey:'',
-022424:   data:null,
-022425:   imageKey:'',
-022426:   choice:'',
-022427:   busy:false,
-022428:   error:''
-022429: };
-022430: 
-022431: let imageSourceProgressTimer=null;
-022432: let imageSourceProgressInfo=null;
-022433: 
-022434: function stopImageSourceProgressPolling(){
-022435:   if(imageSourceProgressTimer){
-022436:     clearInterval(imageSourceProgressTimer);
-022437:     imageSourceProgressTimer=null;
-022438:   }
-022439: }
-022440: 
-
-========================================================================
-DOCKER_DETAILS 22530-22630
-========================================================================
-022530:   }
-022531: 
-022532:   // Backward compatibility for the previous single image API schema.
-022533:   // Without this, an older still-running backend produced a successful
-022534:   // response but the UI silently rendered zero images.
-022535:   if(Array.isArray(data.options)){
-022536:     const options=data.options;
-022537:     const current=
-022538:       options.find(option=>option&&option.current)||
-022539:       options[0]||
-022540:       null;
-022541: 
-022542:     const preview=(current&&current.compose_preview)||{};
-022543:     const imageRef=String(
-022544:       preview.current_image||
-022545:       (current&&current.image_ref)||
-022546:       '-'
-022547:     );
-022548:     const sourceId=String(
-022549:       data.current_source_id||
-022550:       (current&&current.source_id)||
-022551:       ''
-022552:     );
-022553:     const syntheticKey=`legacy:${String(stackKey||data.stack_key||'stack')}`;
-022554: 
-022555:     return {
-022556:       schema_version:1,
-022557:       backend_version:'',
-022558:       legacy_single_image:true,
-022559:       stack_key:String(data.stack_key||stackKey||''),
-022560:       app:String(data.app||''),
-022561:       image_count:1,
-022562:       alternative_count:Number(data.alternative_count||options.filter(option=>option&&!option.current).length||0),
-022563:       warning_count:0,
-022564:       error_count:0,
-022565:       backup:data.backup||{required:true,default_mode:'full'},
-022566:       images:[{
-022567:         image_key:String((current&&current.image_key)||syntheticKey),
-022568:         image_ref:imageRef,
-022569:         services:Array.isArray(preview.services)?preview.services:[],
-022570:         containers:[],
-022571:         service_label:String(
-022572:           (Array.isArray(preview.services)&&preview.services.length)
-022573:             ?preview.services.join(', ')
-022574:             :imageSourceText('Docker Image','Docker image')
-022575:         ),
-022576:         current_version:String((current&&current.version)||'-'),
-022577:         current_source_id:sourceId,
-022578:         options,
-022579:         alternative_count:options.filter(option=>option&&!option.current).length,
-022580:         discovery_message_de:String(data.discovery_message_de||''),
-022581:         discovery_message_en:String(data.discovery_message_en||''),
-022582:         warning_de:null,
-022583:         warning_en:null,
-022584:         error_de:null,
-022585:         error_en:null
-022586:       }]
-022587:     };
-022588:   }
-022589: 
-022590:   throw new Error(
-022591:     imageSourceText(
-022592:       'Ungültige Antwort der Image Quellen API.',
-022593:       'Invalid response from the image source API.'
-022594:     )
-022595:   );
-022596: }
-022597: 
-022598: function imageSourceImages(){
-022599:   return Array.isArray(imageSourceState.data&&imageSourceState.data.images)
-022600:     ?imageSourceState.data.images
-022601:     :[];
-022602: }
-022603: 
-022604: function imageSourceSelectedImage(){
-022605:   const images=imageSourceImages();
-022606:   return images.find(image=>String(image.image_key||'')===String(imageSourceState.imageKey||''))
-022607:     ||images[0]
-022608:     ||null;
-022609: }
-022610: 
-022611: function imageSourceOptionById(sourceId){
-022612:   const image=imageSourceSelectedImage();
-022613:   const options=Array.isArray(image&&image.options)?image.options:[];
-022614:   return options.find(option=>String(option.source_id||'')===String(sourceId||''))||null;
-022615: }
-022616: 
-022617: function imageSourceStatusText(level){
-022618:   if(level==='error')return imageSourceText('✕ Nicht kompatibel','✕ Not compatible');
-022619:   if(level==='warn')return imageSourceText('! Wechsel mit Warnung','! Switch with warning');
-022620:   return imageSourceText('✓ Kompatibel','✓ Compatible');
-022621: }
-022622: 
-022623: function imageSourceCheckText(check,field){
-022624:   return localizedBackendPair(check,field,'-');
-022625: }
-022626: 
-022627: function closeImageSourceDialog(force=false){
-022628:   if(imageSourceState.busy&&!force)return;
-022629:   stopImageSourceProgressPolling();
-022630:   imageSourceProgressInfo=null;
-
-========================================================================
-CHECK_VERIFY_START 23430-23595
-========================================================================
+==============================================================================
+UI_VERIFY
+==============================================================================
+023420:     state.uninstallingApps.delete(app.stack_key);
+023421:     state.actionProgress.delete(app.stack_key);
+023422:     render();
+023423:   }
+023424: }
+023425: 
+023426: function uninstallApp(app,index){
+023427:   requestUninstall(app,index);
+023428: }
+023429: 
 023430: function appCheckBaseline(){
 023431:   return String((state.data&&state.data.finished_at)||'');
 023432: }
@@ -1029,15 +2448,25 @@ CHECK_VERIFY_START 23430-23595
 023588: function setBackupPreviewChoice(choice){
 023589:   backupPreviewChoice=['quick','full','none'].includes(choice)?choice:'full';
 023590:   document.querySelectorAll('[data-backup-preview-choice]').forEach(button=>{
-023591:     button.classList.toggle('selected',button.dataset.backupPreviewChoice===backupPreviewChoice);
-023592:   });
-023593:   const continueButton=document.getElementById('backupPreviewContinue');
-023594:   if(continueButton){
-023595:     // v0.3.162: keep one neutral action label; the selected backup option already states what will happen.
 
-========================================================================
-POLL_STATE 23715-23870
-========================================================================
+==============================================================================
+UI_UPDATE
+==============================================================================
+023700:   const cont=document.getElementById('backupPreviewContinue');
+023701:   if(cont){
+023702:     cont.onclick=()=>{
+023703:       const app=backupPreviewApp;
+023704:       if(!app)return;
+023705:       const mode=backupPreviewChoice;
+023706:       closeBackupPreview();
+023707:       installImageUpdate(app,mode);
+023708:     };
+023709:   }
+023710: }
+023711: 
+023712: async function waitForSelfUpdateRestart(stackKey,previousStartedAt,timeoutMs=6*60*1000){
+023713:   const key=String(stackKey||'');
+023714:   if(!key)return false;
 023715:   const previous=String(previousStartedAt||'');
 023716:   const deadline=Date.now()+Math.max(30000,Number(timeoutMs)||0);
 023717:   let sawOffline=false;
@@ -1194,255 +2623,240 @@ POLL_STATE 23715-23870
 023868:   const value=Number(bytes);
 023869:   if(!Number.isFinite(value)||value<0)return '-';
 023870:   if(value>=1024**3)return (value/(1024**3)).toFixed(value>=10*1024**3?1:2)+' GB';
+023871:   if(value>=1024**2)return Math.round(value/(1024**2))+' MB';
+023872:   if(value>=1024)return Math.round(value/1024)+' KB';
+023873:   return Math.round(value)+' B';
+023874: }
+023875: function formatClockTime(value){
+023876:   const match=String(value||'').match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+023877:   if(!match)return String(value||'');
+023878:   const hour=Number(match[1]);
+023879:   const minute=match[2];
+023880:   if(state.timeFormat!=='12')return match[1]+':'+minute;
+023881:   const hour12=hour%12||12;
+023882:   const suffix=hour>=12?'PM':'AM';
+023883:   return String(hour12).padStart(2,'0')+':'+minute+' '+suffix;
+023884: }
+023885: 
+023886: function formatDateTime(isoValue){
+023887:   if(!isoValue)return '-';
+023888:   const date=new Date(isoValue);
+023889:   if(Number.isNaN(date.getTime()))return '-';
+023890:   return date.toLocaleString(getUiLocale(),{
+023891:     year:'numeric',
+023892:     month:'2-digit',
+023893:     day:'2-digit',
+023894:     hour:'2-digit',
+023895:     minute:'2-digit',
+023896:     hour12:state.timeFormat==='12'
+023897:   });
+023898: }
+023899: function formatOnlineSince(isoValue){
+023900:   return formatDateTime(isoValue);
 
-========================================================================
-VERIFY_CLEANUP 24115-24355
-========================================================================
-024115:       if(settingsIntervalLockedScrollTop!==null){
-024116:         settingsScrollArea.scrollTop=settingsIntervalLockedScrollTop;
-024117:       }
-024118:       repositionOpenSettingsIntervalSelect();
-024119:     },
-024120:     {passive:true}
-024121:   );
-024122: }
-024123: 
-024124: 
-024125: let runtimeRefreshTimer=null;
-024126: let runtimeRefreshBusy=false;
-024127: 
-024128: function updateRuntimeDom(){
-024129:   if(!state.data)return;
-024130:   const apps=Array.isArray(state.data.apps)?state.data.apps:[];
-024131:   const byKey=new Map(apps.map(app=>[String(app.stack_key||''),app]));
-024132: 
-024133:   document.querySelectorAll('[data-runtime-stack]').forEach(node=>{
-024134:     const app=byKey.get(String(node.dataset.runtimeStack||''));
-024135:     if(!app)return;
-024136: 
-024137:     const action=runtimeControlAction(app);
-024138:     const pending=runtimePendingAction(app);
-024139:     const changing=state.runtimeChangingApps.has(app.stack_key);
-024140:     if(node.dataset.cardRuntime){
-024141:       const restart=node.dataset.cardRuntime==='restart';
-024142:       const enabled=restart?['running','mixed'].includes(String(app.runtime_state)):Boolean(action);
-024143:       const selfProtected=appSelfProtected(app);
-024144:       const protectedAction=selfProtected&&(restart||action==='stop');
-024145:       node.dataset.runtimeAction=restart?'restart':action||'';
-024146:       node.disabled=!enabled||changing||protectedAction||scanMutationIsLocked()||state.updatingApps.has(app.stack_key)||state.checkingApps.has(app.stack_key)||state.verifyingApps.has(app.stack_key);
-024147:       const policyButton=node.closest('.um-card-toolbar')?.querySelector('[data-policy-toggle-index]');
-024148:       if(policyButton)policyButton.disabled=changing||scanMutationIsLocked()||state.updatingApps.has(app.stack_key)||state.checkingApps.has(app.stack_key)||state.verifyingApps.has(app.stack_key);
-024149:       node.innerHTML=cardRuntimeButtonContent(app,restart);
-024150:       const normalTitle=restart?node.textContent.trim():runtimeControlTitle(app);
-024151:       const controlTitle=protectedAction?selfProtectionTitle():normalTitle;
-024152:       node.title=controlTitle;
-024153:       node.setAttribute('aria-label',controlTitle);
-024154:       return;
-024155:     }
-024156: 
-024157: 
-024158:     // While ZimaOS performs an asynchronous action, keep one stable visual
-024159:     // transition state. Live polling may still update the data underneath,
-024160:     // but it must not make the button oscillate.
-024161:     const visualClass=pending?'restarting':runtimeStatusClass(app);
-024162:     // Keep the compact title-runtime class during live polling. previous revision
-024163:     // replaced className wholesale, so after the first runtime refresh the
-024164:     // small state text fell back to the large generic runtime-control style.
-024165:     const titleRuntime=
-024166:       node.classList.contains('update-card-title-runtime')
-024167:       ||!!node.closest('.update-card-title-text');
-024168:     node.className=`runtime-status runtime-control-button${titleRuntime?' update-card-title-runtime':''} runtime-${visualClass}`;
-024169:     node.dataset.runtimeAction=pending||action||'';
-024170:     node.title=runtimeControlTitle(app);
-024171:     node.disabled=!action||changing;
-024172:     node.innerHTML=`<span class="runtime-dot"></span>${esc(runtimeControlLabel(app))}`;
-024173:   });
-024174: 
-024175:   document.querySelectorAll('[data-runtime-card-stack]').forEach(card=>{
-024176:     const app=byKey.get(String(card.dataset.runtimeCardStack||''));
-024177:     if(!app)return;
-024178:     card.classList.remove(
-024179:       'runtime-card-running',
-024180:       'runtime-card-stopped',
-024181:       'runtime-card-mixed',
-024182:       'runtime-card-restarting',
-024183:       'runtime-card-error',
-024184:       'runtime-card-unknown'
-024185:     );
-024186:     card.classList.add(`runtime-card-${runtimeStatusClass(app)}`);
-024187:   });
-024188: 
-024189:   updateBackupCountdownDom();
-024190: }
-024191: 
-024192: function setAutomaticUpdateButtonBusy(stackKey,busy){
-024193:   const key=String(stackKey||'');
-024194:   document.querySelectorAll('[data-progress-stack][data-progress-kind="update"]').forEach(button=>{
-024195:     if(String(button.dataset.progressStack||'')!==key)return;
-024196:     button.classList.toggle('action-progress',!!busy);
-024197:     button.disabled=!!busy;
-024198:     if(!busy){
-024199:       button.classList.remove('has-percent');
-024200:       button.style.removeProperty('--action-progress');
-024201:     }
-024202:   });
-024203: }
-024204: 
-024205: function syncAutomaticLiveActionsNoRender(actions){
-024206:   const records=(actions&&typeof actions==='object')?actions:{};
-024207: 
-024208:   Object.entries(records).forEach(([rawKey,rawInfo])=>{
-024209:     const key=String(rawKey||'');
-024210:     const info=rawInfo&&typeof rawInfo==='object'?rawInfo:null;
-024211:     if(!key||!info||info.kind!=='update'||!info.automatic)return;
-024212: 
-024213:     state.actionProgress.set(key,info);
-024214: 
-024215:     if(!info.finished){
-024216:       if(!state.autoLiveActions.has(key)){
-024217:         state.autoLiveActions.add(key);
-024218:         state.updatingApps.add(key);
-024219:         if(!state.verificationBaselines.has(key)){
-024220:           state.verificationBaselines.set(key,verificationBaseline());
-024221:         }
-024222:         setAutomaticUpdateButtonBusy(key,true);
-024223:         startActionProgressPolling(key,'update',String(info.phase||''));
-024224:       }else{
-024225:         setAutomaticUpdateButtonBusy(key,true);
-024226:         applyActionProgressToDom(key);
-024227:       }
-024228:       return;
-024229:     }
-024230: 
-024231:     if(state.autoLiveActions.has(key)){
-024232:       state.actionProgress.set(key,info);
-024233:       applyActionProgressToDom(key);
-024234:       stopActionProgressPolling(key);
-024235:       state.autoLiveActions.delete(key);
-024236:       state.updatingApps.delete(key);
-024237:       beginVerificationState(key,state.verificationBaselines.get(key));
-024238: 
-024239:       // Installation is finished, but the authoritative app recheck is not.
-024240:       // Keep the stale install button disabled as PRÜFUNG… until that recheck ends.
-024241:       document.querySelectorAll('[data-progress-stack][data-progress-kind="update"]').forEach(button=>{
-024242:         if(String(button.dataset.progressStack||'')!==key)return;
-024243:         button.classList.remove('action-progress','has-percent');
-024244:         button.style.removeProperty('--action-progress');
-024245:         button.disabled=true;
-024246:         button.textContent=t('verificationPhase');
-024247:       });
-024248: 
-024249:       if(info.success===false){
-024250:         const detail=localizeVersionDetail(String(info.error||'-').trim());
-024251:         state.updateMessages.set(
-024252:           key,
-024253:           {ok:false,kind:'update',text:t('updateFailed').replace('{error}',detail||'-')}
-024254:         );
-024255:       }else if(info.success===true){
-024256:         // The orange PRÜFUNG… state already communicates successful install +
-024257:         // pending verification. Keep the card quiet on success; only errors need
-024258:         // an extra message below the card.
-024259:         state.updateMessages.delete(key);
-024260:       }
-024261: 
-024262:       state.actionProgress.delete(key);
-024263:     }
-024264:   });
-024265: }
-024266: 
-024267: async function syncAutomaticScanNoRender(liveScan){
-024268:   if(!liveScan||typeof liveScan!=='object'||!state.data)return false;
-024269: 
-024270:   const current=state.data||{};
-024271:   const liveState=String(liveScan.state||'idle');
-024272:   const currentState=String(current.state||'idle');
-024273:   const startedChanged=String(liveScan.started_at||'')!==String(current.started_at||'');
-024274:   const finishedChanged=String(liveScan.finished_at||'')!==String(current.finished_at||'');
-024275: 
-024276:   if(liveState==='scanning'){
-024277:     state.data={
-024278:       ...current,
-024279:       state:'scanning',
-024280:       started_at:liveScan.started_at||current.started_at,
-024281:       progress_step:liveScan.progress_step,
-024282:       progress_percent:liveScan.progress_percent,
-024283:       progress_current:liveScan.progress_current,
-024284:       progress_total:liveScan.progress_total
-024285:     };
-024286:     updateScanProgressUi(state.data);
-024287:     return false;
-024288:   }
-024289: 
-024290:   if(currentState==='scanning'||startedChanged||finishedChanged){
-024291:     await loadStatus();
-024292:     return true;
-024293:   }
-024294: 
-024295:   return false;
-024296: }
-024297: 
-024298: async function refreshRuntimeStatus(force=false){
-024299:   if((runtimeRefreshBusy&&!force)||document.hidden||!state.data)return;
-024300:   if(!force)runtimeRefreshBusy=true;
-024301: 
-024302:   try{
-024303:     const data=await api('/api/runtime-status');
-024304:     if(reloadForBackendVersion(data&&data.version))return;
-024305:     const updates=Array.isArray(data.apps)?data.apps:[];
-024306:     const byKey=new Map(updates.map(item=>[String(item.stack_key||''),item]));
-024307:     const removedKeys=new Set(
-024308:       (Array.isArray(data.removed_stack_keys)?data.removed_stack_keys:[])
-024309:         .map(value=>String(value||''))
-024310:         .filter(Boolean)
-024311:     );
-024312: 
-024313:     if(removedKeys.size){
-024314:       for(const key of removedKeys){
-024315:         state.runtimeChangingApps.delete(key);
-024316:         state.updatingApps.delete(key);
-024317:         state.checkingApps.delete(key);
-024318:         state.checkBaselines.delete(key);
-024319:         state.verifyingApps.delete(key);
-024320:         state.pendingPostScans.delete(key);
-024321:         state.updateMessages.delete(key);
-024322:       }
-024323:       await loadStatus();
-024324:       return;
-024325:     }
-024326: 
-024327:     let runtimeChanged=false;
-024328:     for(const app of (state.data.apps||[])){
-024329:       const live=byKey.get(String(app.stack_key||''));
-024330:       if(!live)continue;
-024331: 
-024332:       const oldState=String(app.runtime_state||'unknown');
-024333:       const newState=String(live.runtime_state||'unknown');
-024334:       if(oldState!==newState)runtimeChanged=true;
-024335: 
-024336:       app.runtime_state=newState;
-024337:       app.running_count=Number(live.running_count||0);
-024338:       app.completed_count=Number(live.completed_count||0);
-024339:       if(Number.isFinite(Number(live.active_container_count))){
-024340:         app.active_container_count=Number(live.active_container_count);
-024341:       }
-024342:       app.self_protected=!!live.self_protected;
-024343:       if(Number.isFinite(Number(live.container_count))){
-024344:         app.container_count=Number(live.container_count);
-024345:       }
-024346:     }
-024347: 
-024348:     const runtimeSummary=appSummaryFromApps(state.data.apps||[]);
-024349:     const runningCount=document.getElementById('runningCount');
-024350:     const stoppedCount=document.getElementById('stoppedCount');
-024351:     const autoUpdateCount=document.getElementById('autoUpdateCount');
-024352:     if(runningCount)runningCount.textContent=runtimeSummary.RUNNING||0;
-024353:     if(stoppedCount)stoppedCount.textContent=runtimeSummary.STOPPED||0;
-024354:     if(autoUpdateCount)autoUpdateCount.textContent=runtimeSummary.AUTO_UPDATE||0;
-024355: 
+==============================================================================
+UI_POLICY
+==============================================================================
+023140:       timeWrap?.classList.remove('keypad-open');
+023141:       timeButton?.setAttribute('aria-expanded','false');
+023142:     }else if(inlineKeypad){
+023143:       timeKeypad.hidden=false;
+023144:       timeButton?.setAttribute('aria-expanded','true');
+023145:     }
+023146:   }
+023147: 
+023148:   const immediateLabel=card.querySelector('.policy-auto-immediate');
+023149:   if(immediateLabel)immediateLabel.classList.toggle('selected',immediateEnabled);
+023150: }
+023151: 
+023152: function refreshPolicyEditor(card,resetAutoWhenBlocked=true){
+023153:   if(!card)return;
+023154: 
+023155:   const visualMode=currentPolicyVisualChoice(card);
+023156:   const upgradeWrap=card.querySelector('[data-policy-upgrade-wrap]');
+023157:   if(upgradeWrap){
+023158:     upgradeWrap.classList.toggle('selected',visualMode==='upgrade');
+023159:     if(visualMode!=='upgrade'){
+023160:       upgradeWrap.classList.remove('open');
+023161:       const toggle=upgradeWrap.querySelector('[data-policy-version-toggle]');
+023162:       if(toggle)toggle.setAttribute('aria-expanded','false');
+023163:     }
+023164:     syncPolicyVersionMenu(card);
+023165:   }
+023166: 
+023167:   const autoAllowed=visualMode==='follow';
+023168:   if(!autoAllowed){
+023169:     card.dataset.autoEnabled='false';
+023170:   }
+023171: 
+023172:   const autoEnabled=autoAllowed&&card.dataset.autoEnabled==='true';
+023173:   const section=card.querySelector('[data-auto-section]');
+023174:   const toggle=card.querySelector('[data-auto-toggle]');
+023175:   const schedule=card.querySelector('[data-auto-schedule]');
+023176: 
+023177:   if(section){
+023178:     section.classList.toggle('available',autoAllowed);
+023179:     section.classList.toggle('disabled',!autoAllowed);
+023180:   }
+023181: 
+023182:   setPolicyAutoToggleState(toggle,autoEnabled,!autoAllowed);
+023183:   if(schedule)schedule.classList.toggle('show',autoEnabled);
+023184: 
+023185:   refreshPolicyImmediateState(card);
+023186: }
+023187: 
+023188: async function saveAppPolicy(app,card){
+023189:   if(!app||!card||state.savingPolicies.has(app.stack_key))return;
+023190: 
+023191:   const mode=currentPolicyVisualChoice(card);
+023192: 
+023193:   const versionSelect=card.querySelector('[data-policy-version]');
+023194:   const targetTag=mode==='upgrade'&&versionSelect?versionSelect.value:null;
+023195:   if(mode==='upgrade'&&!String(targetTag||'').trim()){
+023196:     state.updateMessages.set(app.stack_key,{ok:false,text:t('policyVersionSelect')});
+023197:     render();
+023198:     return;
+023199:   }
+023200:   const autoEnabled=mode==='follow'&&card.dataset.autoEnabled==='true';
+023201:   const autoImmediateInput=card.querySelector('[data-auto-immediate]');
+023202:   const autoImmediate=!!(autoEnabled&&autoImmediateInput&&autoImmediateInput.checked);
+023203:   const autoTimeInput=card.querySelector('[data-auto-time]');
+023204:   const autoTime=autoTimeInput&&autoTimeInput.value?autoTimeInput.value:'03:00';
+023205:   const autoDays=[...card.querySelectorAll('.policy-day.selected')].map(button=>Number(button.dataset.autoDay)).filter(day=>day>=0&&day<=6);
+023206:   const autoTimezone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
+023207:   const backupWrap=card.querySelector('[data-backup-policy-select-wrap]');
+023208:   const autoBackupMode=backupWrap&&['quick','full','none'].includes(String(backupWrap.dataset.backupPolicyValue||''))
+023209:     ?String(backupWrap.dataset.backupPolicyValue)
+023210:     :'none';
+023211: 
+023212:   state.savingPolicies.add(app.stack_key);
+023213:   render();
+023214: 
+023215:   try{
+023216:     const result=await api('/api/app-policy',{
+023217:       method:'PUT',
+023218:       body:JSON.stringify({
+023219:         stack_key:app.stack_key,
+023220:         mode,
+023221:         target_tag:targetTag,
+023222:         auto_enabled:autoEnabled,
+023223:         auto_immediate:autoImmediate,
+023224:         auto_time:autoTime,
+023225:         auto_days:autoDays,
+023226:         auto_timezone:autoTimezone,
+023227:         auto_backup_mode:autoBackupMode
+023228:       })
+023229:     });
+023230: 
+023231:     // Reflect the successfully saved target immediately on the card. The
+023232:     // following status refresh remains authoritative and reconciles all fields.
+023233:     const savedPolicy=(result&&result.policy)||{};
+023234:     app.monitor_policy={
+023235:       ...(app.monitor_policy||{}),
+023236:       ...savedPolicy,
+023237:       mode,
+023238:       target_tag:mode==='upgrade'?targetTag:null,
+023239:       auto_enabled:autoEnabled,
+023240:       auto_immediate:autoImmediate,
+023241:       auto_time:autoTime,
+023242:       auto_days:autoDays,
+023243:       auto_timezone:autoTimezone,
+023244:       auto_backup_mode:autoBackupMode
+023245:     };
+023246: 
+023247:     app._frontend_manual_target_pending=mode==='upgrade'&&!!targetTag;
+023248: 
+023249:     // If the user selected a manual target while viewing Auto-Updates or
+023250:     // Current, move to Updates. The app no longer belongs to those groups.
+023251:     if(
+023252:       app._frontend_manual_target_pending
+023253:       &&(state.filter==='AUTO_UPDATE'||state.filter==='CURRENT')
+023254:     ){
+023255:       state.filter='UPDATES';
+023256:     }
+023257: 
+023258:     state.policyOpenApps.delete(app.stack_key);
+023259:     render();
+023260:     await loadStatus();
+023261:   }catch(err){
+023262:     if(err.message!=='auth'){
+023263:       state.updateMessages.set(
+023264:         app.stack_key,
+023265:         {ok:false,text:t('policySaveFailed').replace('{error}',err.message||'-')}
+023266:       );
+023267:     }
+023268:   }finally{
+023269:     state.savingPolicies.delete(app.stack_key);
+023270:     render();
+023271:   }
+023272: }
+023273: 
+023274: let pendingUninstallAction=null;
+023275: 
+023276: function closeUninstallConfirm(){
+023277:   const backdrop=document.getElementById('uninstallConfirmBackdrop');
+023278:   if(!backdrop)return;
+023279:   backdrop.classList.remove('visible');
+023280:   backdrop.setAttribute('aria-hidden','true');
+023281:   pendingUninstallAction=null;
+023282: }
+023283: 
+023284: function requestUninstall(app,index){
+023285:   if(!app||!app.compose_project||appSelfProtected(app)||state.uninstallingApps.has(app.stack_key))return;
+023286: 
+023287:   const checkbox=document.querySelector(`[data-uninstall-folder-index="${index}"]`);
+023288:   const deleteFolder=!!(checkbox&&checkbox.checked);
+023289: 
+023290:   pendingUninstallAction={app,deleteFolder};
+023291: 
+023292:   const backdrop=document.getElementById('uninstallConfirmBackdrop');
+023293:   document.getElementById('uninstallConfirmTitle').textContent=t('uninstallConfirmShort');
+023294:   document.getElementById('uninstallConfirmCancel').textContent=t('policyCancel');
+023295:   document.getElementById('uninstallConfirmOk').textContent='OK';
+023296: 
+023297:   backdrop.classList.add('visible');
+023298:   backdrop.setAttribute('aria-hidden','false');
+023299:   setTimeout(()=>document.getElementById('uninstallConfirmOk').focus(),0);
+023300: }
+023301: 
+023302: const actionProgressTimers=new Map();
+023303: 
+023304: function stopActionProgressPolling(stackKey){
+023305:   const key=String(stackKey||'');
+023306:   const timer=actionProgressTimers.get(key);
+023307:   if(timer){
+023308:     clearInterval(timer);
+023309:     actionProgressTimers.delete(key);
+023310:   }
+023311: }
+023312: 
+023313: function applyActionProgressToDom(stackKey){
+023314:   const key=String(stackKey||'');
+023315:   const info=state.actionProgress.get(key);
+023316: 
+023317:   document.querySelectorAll('[data-progress-stack]').forEach(button=>{
+023318:     if(String(button.dataset.progressStack||'')!==key)return;
+023319: 
+023320:     const kind=String(button.dataset.progressKind||'');
 
-========================================================================
-WARNINGS 24635-24795
-========================================================================
+==============================================================================
+UI_WARNINGS
+==============================================================================
+024620:       const confirmation=(item&&item.version_confirmation)||{};
+024621:       if(confirmation.confirmed===true)return;
+024622: 
+024623:       const appName=String(app.name||app.compose_project||'Docker');
+024624:       const image=String(item.image_ref||'').trim();
+024625:       const projectUrl=String(item.project_url||app.project_url||'').trim();
+024626:       const displayed=String(
+024627:         item.resolved_installed_tag
+024628:         ||item.display_installed_version
+024629:         ||item.tag
+024630:         ||''
+024631:       ).trim();
+024632: 
+024633:       warnings.push({
+024634:         kind:'docker-version',
 024635:         title:t('dockerVersionWarningTitle'),
 024636:         text:t('dockerVersionWarningText'),
 024637:         appName,
@@ -1539,173 +2953,248 @@ WARNINGS 24635-24795
 024728: 
 024729:   button.disabled=true;
 024730:   const original=button.textContent;
-024731:   try{
-024732:     const result=await api('/api/version-confirmation',{
-024733:       method:'POST',
-024734:       body:JSON.stringify({stack_key:stackKey,image_ref:imageRef})
-024735:     });
-024736:     button.textContent=t('dockerVersionConfirmed');
-024737:     const app=(state.data&&Array.isArray(state.data.apps))
-024738:       ?state.data.apps.find(row=>String(row.stack_key||'')===stackKey)
-024739:       :null;
-024740:     const item=app&&Array.isArray(app.items)
-024741:       ?app.items.find(row=>String(row.image_ref||'')===imageRef)
-024742:       :null;
-024743:     if(item)item.version_confirmation=(result&&result.confirmation)||{confirmed:true};
-024744:     updateHeaderWarningState();
-024745:   }catch(err){
-024746:     button.disabled=false;
-024747:     button.textContent=original;
-024748:     if(err.message!=='auth')button.title=t('dockerVersionConfirmFailed').replace('{error}',err.message||'-');
-024749:   }
-024750: }
-024751: 
-024752: function updateHeaderWarningState(){
-024753:   const button=document.getElementById('headerWarningButton');
-024754:   const popover=document.getElementById('headerWarningPopover');
-024755:   if(!button||!popover)return;
-024756: 
-024757:   const warnings=currentHeaderWarnings();
-024758:   const visible=warnings.length>0;
-024759: 
-024760:   button.hidden=!visible;
-024761:   button.textContent='!';
-024762:   button.setAttribute('aria-label',t('warningButton'));
-024763:   button.title=t('warningButton');
-024764: 
-024765:   if(!visible){
-024766:     closeHeaderWarningPopover();
-024767:     return;
-024768:   }
-024769: 
-024770:   renderHeaderWarningPopover();
-024771: }
-024772: 
-024773: function toggleHeaderWarningPopover(event){
-024774:   event?.stopPropagation();
-024775:   const button=document.getElementById('headerWarningButton');
-024776:   const popover=document.getElementById('headerWarningPopover');
-024777:   if(!button||!popover||button.hidden)return;
-024778: 
-024779:   const willOpen=popover.hidden;
-024780:   if(willOpen){
-024781:     renderHeaderWarningPopover();
-024782:     popover.hidden=false;
-024783:   }else{
-024784:     popover.hidden=true;
-024785:   }
-024786:   button.setAttribute('aria-expanded',willOpen?'true':'false');
-024787: }
-024788: 
-024789: function setScanUiLocked(locked){
-024790:   const active=!!locked;
-024791:   const body=document.body;
-024792:   const shield=document.getElementById('scanInteractionShield');
-024793: 
-024794:   if(body)body.classList.toggle('scan-ui-locked',active);
-024795: 
 
-========================================================================
-CLICK_HANDLERS 25490-25590
-========================================================================
-025490:   track.addEventListener('pointerdown',event=>{
-025491:     if(event.target===thumb)return;
-025492:     const scroller=umPageScrollElementV21();
-025493:     const viewport=Math.max(1,window.innerHeight||document.documentElement.clientHeight||1);
-025494:     const total=Math.max(viewport,scroller.scrollHeight||viewport);
-025495:     const maxScroll=Math.max(0,total-viewport);
-025496:     if(maxScroll<=0)return;
-025497: 
-025498:     const rect=track.getBoundingClientRect();
-025499:     const ratio=Math.max(0,Math.min(1,(event.clientY-rect.top)/Math.max(1,rect.height)));
-025500:     scroller.scrollTop=ratio*maxScroll;
-025501:     event.preventDefault();
-025502:   });
-025503: 
-025504:   umSchedulePageScrollbarV21();
-025505: }
-025506: umInstallPageScrollbarV21();
-025507: 
-025508: 
-025509: /* v0.3.243 — fallback guard for scan-protected mutating controls.
-025510:    Dynamic cards/dialogs are covered automatically because the selector check
-025511:    runs at event time; no MutationObserver and no DOM-wide disabling is needed. */
-025512: const scanProtectedMutationSelector=[
-025513:   '[data-update-index]',
-025514:   '[data-check-index]',
-025515:   '[data-runtime-stack]',
-025516:   '[data-uninstall-index]',
-025517:   '[data-uninstall-folder-index]',
-025518:   '#uninstallConfirmOk',
-025519:   '[data-policy-choice]',
-025520:   '[data-policy-choice-quick]',
-025521:   '[data-policy-version-toggle]',
-025522:   '[data-policy-version-option]',
-025523:   '[data-policy-apply-index]',
-025524:   '[data-auto-toggle]',
-025525:   '[data-auto-immediate]',
-025526:   '[data-auto-day]',
-025527:   '[data-auto-all-days]',
-025528:   '[data-auto-time-button]',
-025529:   '[data-time-key]',
-025530:   '[data-backup-policy-select-toggle]',
-025531:   '[data-backup-policy-value]',
-025532:   '#backupPreviewContinue',
-025533:   '#backupRestoreDelete',
-025534:   '#backupRestoreConfirm',
-025535:   '[data-backup-retention-select-toggle]',
-025536:   '[data-backup-retention-value]',
-025537:   '[data-backup-count-select-toggle]',
-025538:   '[data-backup-count-value]',
-025539:   '#backupEncryptionPassword',
-025540:   '#backupEncryptionConfirm',
-025541:   '#backupEncryptionEnable',
-025542:   '#backupEncryptionUnlock',
-025543:   '#backupEncryptionDisable',
-025544:   '#githubTokenInput',
-025545:   '#githubTokenSave',
-025546:   '#githubTokenTest',
-025547:   '#githubTokenRemove',
-025548:   '#intervalSelect',
-025549:   '#intervalSelect + .settings-custom-select',
-025550:   '[data-version-confirm]',
-025551:   '#imageSourceApply'
-025552: ].join(',');
-025553: 
-025554: function scanMutationIsLocked(){
-025555:   return state.checkingApps.size>0||!!(state.data&&state.data.state==='scanning');
-025556: }
-025557: 
-025558: function scanProtectedMutationTarget(target){
-025559:   if(!target||typeof target.closest!=='function')return null;
-025560:   return target.closest(scanProtectedMutationSelector);
-025561: }
-025562: 
-025563: document.addEventListener('click',event=>{
-025564:   if(!scanMutationIsLocked())return;
-025565:   if(!scanProtectedMutationTarget(event.target))return;
-025566:   event.preventDefault();
-025567:   event.stopImmediatePropagation();
-025568: },true);
-025569: 
-025570: document.addEventListener('keydown',event=>{
-025571:   if(!scanMutationIsLocked())return;
-025572:   if(event.key!=='Enter'&&event.key!==' ')return;
-025573:   if(!scanProtectedMutationTarget(event.target))return;
-025574:   event.preventDefault();
-025575:   event.stopImmediatePropagation();
-025576: },true);
-025577: 
-025578: 
-025579: 
-025580: document.getElementById('imageSourceClose')?.addEventListener('click',()=>closeImageSourceDialog());
-025581: document.getElementById('imageSourceBackdrop')?.addEventListener('click',event=>{
-025582:   if(event.target===event.currentTarget)closeImageSourceDialog();
-025583: });
-025584: document.addEventListener('keydown',event=>{
-025585:   if(event.key==='Escape'&&document.getElementById('imageSourceBackdrop')?.classList.contains('visible')){
-025586:     closeImageSourceDialog();
-025587:   }
-025588: });
-025589: 
-025590: 
+==============================================================================
+UI_DOCKER_DETAILS
+==============================================================================
+022440: 
+022441: function imageSourceProgressLabel(info){
+022442:   const phase=String(info&&info.phase||'');
+022443:   const value=Number(info&&info.progress);
+022444:   const hasPercent=!!(info&&info.determinate&&Number.isFinite(value));
+022445:   const percent=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
+022446: 
+022447:   let label=imageSourceText('Wechsel läuft','Switching');
+022448:   if(phase==='backup')label=imageSourceText('Backup','Backup');
+022449:   else if(['starting','preparing','compose_check'].includes(phase))label=imageSourceText('Vorbereiten','Preparing');
+022450:   else if(phase==='pulling')label=imageSourceText('Image laden','Pulling image');
+022451:   else if(phase==='pull_complete')label=imageSourceText('Image geladen','Image pulled');
+022452:   else if(phase==='recreating')label=imageSourceText('Container wechseln','Switching container');
+022453:   else if(phase==='force_recreate')label=imageSourceText('Container neu erstellen','Recreating container');
+022454:   else if(phase==='container_ready')label=imageSourceText('Container gestartet','Container started');
+022455:   else if(phase==='verifying')label=imageSourceText('Prüfen','Verifying');
+022456:   else if(phase==='finalizing')label=imageSourceText('Abschließen','Finalizing');
+022457:   else if(phase==='rollback')return imageSourceText('Rollback läuft…','Rolling back…');
+022458:   else if(phase==='complete')label=imageSourceText('Fertig','Complete');
+022459:   else if(phase==='error')return imageSourceText('Fehler','Error');
+022460: 
+022461:   return percent===null
+022462:     ?`${label}…`
+022463:     :`${label} · ${percent} %`;
+022464: }
+022465: 
+022466: function applyImageSourceProgressToButton(){
+022467:   const button=document.getElementById('imageSourceApply');
+022468:   if(!button||!imageSourceState.busy)return;
+022469: 
+022470:   const info=imageSourceProgressInfo;
+022471:   const value=Number(info&&info.progress);
+022472:   const hasPercent=!!(info&&info.determinate&&Number.isFinite(value));
+022473:   const percent=hasPercent?Math.max(0,Math.min(100,Math.round(value))):0;
+022474: 
+022475:   button.classList.toggle('image-source-switch-progress',hasPercent);
+022476:   if(hasPercent){
+022477:     button.style.setProperty('--image-source-progress',percent+'%');
+022478:   }else{
+022479:     button.style.removeProperty('--image-source-progress');
+022480:   }
+022481:   button.textContent=imageSourceProgressLabel(info);
+022482: }
+022483: 
+022484: async function refreshImageSourceProgress(stackKey){
+022485:   const key=String(stackKey||'').trim();
+022486:   if(!key)return null;
+022487:   try{
+022488:     const payload=await api('/api/action-progress?stack_key='+encodeURIComponent(key));
+022489:     const info=payload&&payload.progress;
+022490:     if(info&&info.kind==='update'){
+022491:       imageSourceProgressInfo=info;
+022492:       applyImageSourceProgressToButton();
+022493:     }
+022494:     return info||null;
+022495:   }catch(err){
+022496:     if(err.message!=='auth')console.error('Image source progress:',err);
+022497:     return null;
+022498:   }
+022499: }
+022500: 
+022501: function startImageSourceProgressPolling(stackKey){
+022502:   stopImageSourceProgressPolling();
+022503:   imageSourceProgressInfo={
+022504:     kind:'update',
+022505:     progress:null,
+022506:     determinate:false,
+022507:     phase:'starting',
+022508:     finished:false
+022509:   };
+022510:   applyImageSourceProgressToButton();
+022511:   refreshImageSourceProgress(stackKey);
+022512:   imageSourceProgressTimer=setInterval(
+022513:     ()=>refreshImageSourceProgress(stackKey),
+022514:     500
+022515:   );
+022516: }
+022517: 
+022518: 
+022519: function normalizeImageSourceResponse(raw,stackKey=''){
+022520:   const data=(raw&&typeof raw==='object')?raw:{};
+022521: 
+022522:   // New multi image API schema.
+022523:   if(Array.isArray(data.images)){
+022524:     return {
+022525:       ...data,
+022526:       schema_version:Number(data.schema_version||2),
+022527:       backend_version:String(data.backend_version||''),
+022528:       images:data.images
+022529:     };
+022530:   }
+022531: 
+022532:   // Backward compatibility for the previous single image API schema.
+022533:   // Without this, an older still-running backend produced a successful
+022534:   // response but the UI silently rendered zero images.
+022535:   if(Array.isArray(data.options)){
+022536:     const options=data.options;
+022537:     const current=
+022538:       options.find(option=>option&&option.current)||
+022539:       options[0]||
+022540:       null;
+022541: 
+022542:     const preview=(current&&current.compose_preview)||{};
+022543:     const imageRef=String(
+022544:       preview.current_image||
+022545:       (current&&current.image_ref)||
+022546:       '-'
+022547:     );
+022548:     const sourceId=String(
+022549:       data.current_source_id||
+022550:       (current&&current.source_id)||
+022551:       ''
+022552:     );
+022553:     const syntheticKey=`legacy:${String(stackKey||data.stack_key||'stack')}`;
+022554: 
+022555:     return {
+022556:       schema_version:1,
+022557:       backend_version:'',
+022558:       legacy_single_image:true,
+022559:       stack_key:String(data.stack_key||stackKey||''),
+022560:       app:String(data.app||''),
+022561:       image_count:1,
+022562:       alternative_count:Number(data.alternative_count||options.filter(option=>option&&!option.current).length||0),
+022563:       warning_count:0,
+022564:       error_count:0,
+022565:       backup:data.backup||{required:true,default_mode:'full'},
+022566:       images:[{
+022567:         image_key:String((current&&current.image_key)||syntheticKey),
+022568:         image_ref:imageRef,
+022569:         services:Array.isArray(preview.services)?preview.services:[],
+022570:         containers:[],
+022571:         service_label:String(
+022572:           (Array.isArray(preview.services)&&preview.services.length)
+022573:             ?preview.services.join(', ')
+022574:             :imageSourceText('Docker Image','Docker image')
+022575:         ),
+022576:         current_version:String((current&&current.version)||'-'),
+022577:         current_source_id:sourceId,
+022578:         options,
+022579:         alternative_count:options.filter(option=>option&&!option.current).length,
+022580:         discovery_message_de:String(data.discovery_message_de||''),
+022581:         discovery_message_en:String(data.discovery_message_en||''),
+022582:         warning_de:null,
+022583:         warning_en:null,
+022584:         error_de:null,
+022585:         error_en:null
+022586:       }]
+022587:     };
+022588:   }
+022589: 
+022590:   throw new Error(
+022591:     imageSourceText(
+022592:       'Ungültige Antwort der Image Quellen API.',
+022593:       'Invalid response from the image source API.'
+022594:     )
+022595:   );
+022596: }
+022597: 
+022598: function imageSourceImages(){
+022599:   return Array.isArray(imageSourceState.data&&imageSourceState.data.images)
+022600:     ?imageSourceState.data.images
+022601:     :[];
+022602: }
+022603: 
+022604: function imageSourceSelectedImage(){
+022605:   const images=imageSourceImages();
+022606:   return images.find(image=>String(image.image_key||'')===String(imageSourceState.imageKey||''))
+022607:     ||images[0]
+022608:     ||null;
+022609: }
+022610: 
+022611: function imageSourceOptionById(sourceId){
+022612:   const image=imageSourceSelectedImage();
+022613:   const options=Array.isArray(image&&image.options)?image.options:[];
+022614:   return options.find(option=>String(option.source_id||'')===String(sourceId||''))||null;
+022615: }
+022616: 
+022617: function imageSourceStatusText(level){
+022618:   if(level==='error')return imageSourceText('✕ Nicht kompatibel','✕ Not compatible');
+022619:   if(level==='warn')return imageSourceText('! Wechsel mit Warnung','! Switch with warning');
+022620:   return imageSourceText('✓ Kompatibel','✓ Compatible');
+022621: }
+022622: 
+022623: function imageSourceCheckText(check,field){
+022624:   return localizedBackendPair(check,field,'-');
+022625: }
+022626: 
+022627: function closeImageSourceDialog(force=false){
+022628:   if(imageSourceState.busy&&!force)return;
+022629:   stopImageSourceProgressPolling();
+022630:   imageSourceProgressInfo=null;
+022631:   const backdrop=document.getElementById('imageSourceBackdrop');
+022632:   if(backdrop){
+022633:     backdrop.classList.remove('visible');
+022634:     backdrop.setAttribute('aria-hidden','true');
+022635:   }
+022636:   imageSourceState={
+022637:     stackKey:'',
+022638:     data:null,
+022639:     imageKey:'',
+022640:     choice:'',
+022641:     busy:false,
+022642:     error:''
+022643:   };
+022644: }
+022645: 
+022646: function selectImageSourceImage(imageKey){
+022647:   if(imageSourceState.busy)return;
+022648:   const images=imageSourceImages();
+022649:   const image=images.find(item=>String(item.image_key||'')===String(imageKey||''));
+022650:   if(!image)return;
+022651: 
+022652:   imageSourceState.imageKey=String(image.image_key||'');
+022653:   imageSourceState.choice=String(
+022654:     image.current_source_id||
+022655:     image.options?.[0]?.source_id||
+022656:     ''
+022657:   );
+022658:   imageSourceState.error='';
+022659:   renderImageSourceDialog();
+022660: }
+022661: 
+022662: function renderImageSourceDialog(){
+022663:   const body=document.getElementById('imageSourceBody');
+022664:   const subtitle=document.getElementById('imageSourceSubtitle');
+022665:   const close=document.getElementById('imageSourceClose');
+022666:   if(!body)return;
+022667: 
+022668:   if(close)close.disabled=!!imageSourceState.busy;
+022669: 
+022670:   if(!imageSourceState.data){
+022671:     body.innerHTML=`<div class="image-source-loading">${esc(
+022672:       imageSourceState.error||
+022673:       imageSourceText(
+022674:         'Alle Images des Stacks werden einzeln untersucht…',
+022675:         'Every image in this stack is being inspected separately…'
+022676:       )
+022677:     )}</div>`;
+022678:     return;
+022679:   }
+022680: 
