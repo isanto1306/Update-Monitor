@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.345"
+VERSION = "0.3.346"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -4398,7 +4398,11 @@ def apply_monitor_policy_fields(app_item):
     follow_tag_switch_only = False
     follow_target_state = None
 
-    if app_item.get("compose_project") and group:
+    if (
+        app_item.get("compose_project")
+        and compose_update_supported_for_app(app_item)
+        and group
+    ):
         if mode == "follow":
             # A different tag name does not automatically mean a different image.
             # If all mismatched members already have the exact :latest digest,
@@ -7988,6 +7992,7 @@ def _aggregate_app_runtime(containers):
 
 
 def build_apps(results):
+    managed_compose_projects = casaos_compose_project_names(timeout=5)
     grouped = {}
     for item in results:
         key = item.get("stack_key") or ("image:" + item.get("image_ref", "unknown"))
@@ -8036,12 +8041,32 @@ def build_apps(results):
             1 for x in items
             if x.get("update_policy") == "fixed_version" and x.get("newer_tag")
         )
+        compose_project = str(app_item.get("compose_project") or "").strip()
+        if not compose_project:
+            compose_update_supported = False
+            compose_update_block_reason = (
+                "Compose project metadata is missing; update installation is disabled."
+            )
+        elif managed_compose_projects is None:
+            compose_update_supported = True
+            compose_update_block_reason = None
+        else:
+            compose_update_supported = compose_project in managed_compose_projects
+            compose_update_block_reason = (
+                None
+                if compose_update_supported
+                else (
+                    "Compose app is outside ZimaOS App Management; "
+                    "update installation is disabled."
+                )
+            )
+
         can_image_update = any(
             x.get("status") == "IMAGE_UPDATE"
             and x.get("update_policy") == "follow_tag"
             and x.get("compose_project")
             for x in items
-        )
+        ) and compose_update_supported
 
         if image_update_count:
             aggregate_status = "IMAGE_UPDATE"
@@ -8099,6 +8124,10 @@ def build_apps(results):
             "stack_key": app_item["stack_key"],
             "name": name,
             "compose_project": app_item.get("compose_project"),
+            "compose_working_dir": app_item.get("compose_working_dir"),
+            "compose_config_files": app_item.get("compose_config_files"),
+            "compose_update_supported": compose_update_supported,
+            "compose_update_block_reason": compose_update_block_reason,
             "icon_url": app_item.get("icon_url"),
             "project_url": app_item.get("project_url"),
             "project_provider": app_item.get("project_provider"),
@@ -10077,7 +10106,7 @@ def schedule_app_scan(
                 if start_app_scan(stack_key):
                     # Keep the pending marker until the scan thread really ends.
                     # This blocks stale-state automation decisions in between.
-                    while True:
+                    while time.time() < deadline:
                         with scan_lock:
                             thread = scan_thread
                             scanning = scan_state.get("state") == "scanning"
@@ -10987,6 +11016,54 @@ def casaos_uninstall_compose(compose_project, delete_config_folder=False):
             f"ZimaOS app uninstall failed (HTTP {status})"
         )
     return raw
+
+
+def casaos_compose_project_names(timeout=5):
+    """Return managed ZimaOS Compose project names, or None if unavailable."""
+    try:
+        status, raw = casaos_request(
+            "/v2/app_management/compose",
+            method="GET",
+            accept="application/json",
+            timeout=max(1, int(timeout or 5)),
+        )
+        if status != 200:
+            return None
+        payload = json.loads(raw or "{}")
+        data = payload.get("data") or {}
+        if not isinstance(data, dict):
+            return None
+        return {str(value) for value in data.keys()}
+    except Exception:
+        return None
+
+
+def compose_update_supported_for_app(app_item):
+    """Return whether Update Monitor can safely mutate this Compose project."""
+    app_item = app_item if isinstance(app_item, dict) else {}
+    explicit = app_item.get("compose_update_supported")
+    if isinstance(explicit, bool):
+        return explicit
+    project = str(app_item.get("compose_project") or "").strip()
+    if not project:
+        return False
+    managed = casaos_compose_project_names(timeout=5)
+    # Preserve existing ZimaOS behaviour if App Management is temporarily
+    # unavailable; actual mutations still fail safely through the API.
+    if managed is None:
+        return True
+    return project in managed
+
+
+def compose_update_block_reason_for_app(app_item):
+    if compose_update_supported_for_app(app_item):
+        return None
+    if not str((app_item or {}).get("compose_project") or "").strip():
+        return "Compose project metadata is missing; update installation is disabled."
+    return (
+        "Compose app is outside ZimaOS App Management; "
+        "update installation is disabled."
+    )
 
 
 def casaos_compose_project_exists(compose_project):
@@ -14941,6 +15018,17 @@ def _verify_restored_images(meta):
     return verified
 
 
+def _restore_health_validation_warning(exc):
+    message = str(exc or "").strip()
+    lowered = message.lower()
+    return bool(message) and (
+        "unhealthy" in lowered
+        or "health check" in lowered
+        or "healthcheck" in lowered
+        or "health=" in lowered
+    )
+
+
 def _verify_restore_runtime(meta, container_names):
     snapshots = _backup_container_runtime_map(meta)
     verified = 0
@@ -15190,7 +15278,14 @@ def restore_app_backup(app_item, backup_id=None, stack_key=None):
 
         update_action_progress(stack_key, 92, determinate=True, phase="restore_verify")
         verified_images = _verify_restored_images(meta)
-        verified_runtime = _verify_restore_runtime(meta, names)
+        validation_warning = None
+        try:
+            verified_runtime = _verify_restore_runtime(meta, names)
+        except RuntimeError as exc:
+            if not _restore_health_validation_warning(exc):
+                raise
+            verified_runtime = 0
+            validation_warning = str(exc)
         update_action_progress(stack_key, 99, determinate=True, phase="restore_verify")
 
         remember_restore_pin_assignments(
@@ -15212,6 +15307,7 @@ def restore_app_backup(app_item, backup_id=None, stack_key=None):
             "restored_data_mounts": restored_mounts,
             "verified_images": verified_images,
             "verified_runtime": verified_runtime,
+            "validation_warning": validation_warning,
             "digest_pinned_images": pinned_images,
             "project": project,
         }
@@ -16938,6 +17034,15 @@ def app_policy(data: AppPolicyRequest, request: Request):
     if mode not in {"fixed", "upgrade", "follow", "notify"}:
         raise HTTPException(status_code=400, detail="Unsupported update policy")
 
+    if mode in {"upgrade", "follow"} and not compose_update_supported_for_app(app_item):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                compose_update_block_reason_for_app(app_item)
+                or "Update installation is not supported for this Compose app"
+            ),
+        )
+
     available_tags = policy_available_tags(app_item)
     target_tag = str(data.target_tag or "").strip() or None
 
@@ -16997,10 +17102,10 @@ def app_policy(data: AppPolicyRequest, request: Request):
     )
 
     with scan_lock:
-        for current in scan_state.get("apps") or []:
-            if current.get("stack_key") == data.stack_key:
-                apply_monitor_policy_fields(current)
-                break
+        current_results = list(scan_state.get("results") or [])
+        rebuilt_apps, rebuilt_summary = build_apps(current_results)
+        scan_state["apps"] = rebuilt_apps
+        scan_state["app_summary"] = rebuilt_summary
         save_json(SCAN_FILE, scan_state)
 
     return {
@@ -17430,6 +17535,15 @@ def app_update(data: AppUpdateRequest, request: Request):
     app_item = find_scanned_app(data.stack_key)
     if not app_item:
         raise HTTPException(status_code=404, detail="App not found in current scan")
+
+    if not compose_update_supported_for_app(app_item):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                compose_update_block_reason_for_app(app_item)
+                or "Update installation is not supported for this Compose app"
+            ),
+        )
 
     if not app_item.get("can_image_update") and not app_item.get("can_version_update"):
         raise HTTPException(
