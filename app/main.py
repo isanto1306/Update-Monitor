@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.350"
+VERSION = "0.3.351"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -247,6 +247,13 @@ class ImageSourceSwitchRequest(BaseModel):
     image_key: str
     source_id: str
     accept_warnings: bool = False
+    backup_mode: Optional[str] = "full"
+
+
+class ImageChannelSwitchRequest(BaseModel):
+    stack_key: str
+    image_key: str
+    tag: str
     backup_mode: Optional[str] = "full"
 
 
@@ -2801,6 +2808,63 @@ def _is_arch_specific_tag(tag):
     return value.startswith(_ARCH_TAG_PREFIXES)
 
 
+_UPDATE_CHANNEL_ALIASES = {
+    "latest", "stable", "main", "master", "develop", "development",
+    "nightly", "edge", "testing", "test", "dev",
+    "next", "lts", "current", "release", "rolling",
+    "beta", "alpha", "rc", "preview", "canary",
+    "production", "prod",
+}
+
+
+def _is_update_channel_tag(tag):
+    """Return True for moving Docker channels, never CI/build identity tags."""
+    value = str(tag or "").strip()
+    if not value:
+        return False
+    if _is_build_identity_tag(value) or _is_arch_specific_tag(value):
+        return False
+    if value.lower() in _UPDATE_CHANNEL_ALIASES:
+        return True
+    # A bare major tag such as "2" is a moving release channel. Concrete
+    # releases such as 2.5.5 remain in the normal version selector.
+    return bool(re.fullmatch(r"\d+", value))
+
+
+def registry_update_channel_tags(registry_tags_value, current_tag=None, limit=40):
+    """Return moving registry tags separately from concrete release versions."""
+    values = []
+    seen = set()
+    for raw in registry_tags_value or []:
+        tag = str(raw or "").strip()
+        key = tag.casefold()
+        if not tag or key in seen or not _is_update_channel_tag(tag):
+            continue
+        seen.add(key)
+        values.append(tag)
+
+    current = str(current_tag or "").strip().casefold()
+    priority = {
+        "stable": 0, "latest": 1, "lts": 2, "current": 3,
+        "release": 4, "production": 5, "prod": 6,
+        "next": 20, "beta": 21, "rc": 22, "preview": 23,
+        "edge": 24, "testing": 25, "nightly": 26,
+        "develop": 27, "development": 28, "dev": 29,
+        "canary": 30, "main": 31, "master": 32, "rolling": 33,
+    }
+
+    def sort_key(tag):
+        low = tag.casefold()
+        if low == current:
+            return (-2, 0, "")
+        if re.fullmatch(r"\d+", tag):
+            return (-1, -int(tag), "")
+        return (0, priority.get(low, 100), low)
+
+    values.sort(key=sort_key)
+    return values[:max(1, int(limit or 40))]
+
+
 _LINUXSERVER_REPO_PREFIXES = (
     "docker.io/linuxserver/",
     "lscr.io/linuxserver/",
@@ -2902,7 +2966,9 @@ def registry_selectable_version_tags(registry_tags_value, repo_key=None, limit=1
             continue
 
         lower = tag.lower()
-        if lower in _DYNAMIC_REGISTRY_TAGS:
+        if _is_update_channel_tag(tag):
+            # Moving channels such as latest/stable/2 belong in the Update
+            # Kanal selector, never in the concrete version list.
             continue
         if _is_build_identity_tag(tag):
             # GitHub Actions publishes sha-<commit> aliases for traceability.
@@ -7244,6 +7310,383 @@ def image_source_options_for_app(app_item):
         },
     }
 
+
+def image_channel_options_for_app(app_item):
+    raw_items = _image_source_items(app_item)
+    if not raw_items:
+        raise RuntimeError("This app has no registry-backed Compose images")
+
+    compose_catalog = casaos_compose_service_image_catalog()
+    compose_map_cache = {}
+    items = [
+        _image_source_live_item(
+            app_item,
+            item,
+            compose_catalog=compose_catalog,
+            compose_map_cache=compose_map_cache,
+        )
+        for item in raw_items
+    ]
+
+    images = []
+    total_available = 0
+    for item in items:
+        image_key = _image_source_item_key(item)
+        current_ref = str(
+            _image_source_compose_configured_ref(app_item, item)
+            or item.get("image_ref")
+            or ""
+        ).strip()
+        parsed = parse_image_ref(current_ref)
+        repo_key = str(parsed.get("normalized_repo") or "").strip()
+        repo_text = str(parsed.get("repo") or "").strip()
+        current_tag = str(parsed.get("tag") or "latest").strip() or "latest"
+        services = _image_source_service_names(item)
+        containers = _image_source_container_names(item)
+        current_version = str(
+            item.get("resolved_installed_tag")
+            or item.get("display_installed_version")
+            or ""
+        ).strip() or None
+
+        registry_values = []
+        registry_error = None
+        try:
+            registry_values, registry_error = registry_tags(repo_key, max_pages=5)
+        except Exception as exc:
+            registry_error = str(exc)
+
+        registry_values = [
+            str(value or "").strip()
+            for value in (registry_values or [])
+            if str(value or "").strip()
+        ]
+        registry_lookup = {value.casefold(): value for value in registry_values}
+        channels = registry_update_channel_tags(
+            registry_values,
+            current_tag=current_tag,
+            limit=40,
+        )
+
+        # Keep a configured moving tag visible even when the publisher removed
+        # it. That is exactly when the user needs the channel selector.
+        if (
+            _is_update_channel_tag(current_tag)
+            and current_tag.casefold() not in {x.casefold() for x in channels}
+        ):
+            channels.insert(0, current_tag)
+
+        options = []
+        for tag in channels:
+            available = tag.casefold() in registry_lookup
+            current = tag.casefold() == current_tag.casefold()
+            target_ref = f"{repo_text}:{tag}" if repo_text else None
+            options.append({
+                "tag": tag,
+                "current": current,
+                "available": available,
+                "can_apply": bool(available and not current),
+                "target_image": target_ref,
+            })
+            if available:
+                total_available += 1
+
+        images.append({
+            "image_key": image_key,
+            "image_ref": current_ref,
+            "repository": repo_text,
+            "normalized_repository": repo_key,
+            "services": services,
+            "containers": containers,
+            "service_label": ", ".join(services) if services else current_ref,
+            "current_tag": current_tag,
+            "current_version": current_version,
+            "options": options,
+            "registry_error": str(registry_error or "")[:300] or None,
+        })
+
+    return {
+        "schema_version": 1,
+        "backend_version": VERSION,
+        "stack_key": app_item.get("stack_key"),
+        "app": app_item.get("name"),
+        "image_count": len(images),
+        "available_channel_count": total_available,
+        "images": images,
+        "backup": {"required": True, "default_mode": "full"},
+    }
+
+
+def perform_image_channel_switch(app_item, image_key, target_tag):
+    item = _image_source_find_item(app_item, image_key)
+    if not item:
+        raise RuntimeError("The selected Docker image no longer exists in this app")
+
+    compose_catalog = casaos_compose_service_image_catalog()
+    item = _image_source_live_item(
+        app_item,
+        item,
+        compose_catalog=compose_catalog,
+        compose_map_cache={},
+    )
+
+    project = str(app_item.get("compose_project") or "").strip()
+    stack_key = str(app_item.get("stack_key") or "").strip()
+    current_ref = str(
+        _image_source_compose_configured_ref(app_item, item)
+        or item.get("image_ref")
+        or ""
+    ).strip()
+    parsed = parse_image_ref(current_ref)
+    repo_key = str(parsed.get("normalized_repo") or "").strip()
+    repo_text = str(parsed.get("repo") or "").strip()
+    current_tag = str(parsed.get("tag") or "latest").strip() or "latest"
+    target_tag = str(target_tag or "").strip()
+
+    if not project or not stack_key or not current_ref or not repo_key or not repo_text:
+        raise RuntimeError("Incomplete update channel switch plan")
+    if is_update_monitor_self_app(app_item):
+        raise RuntimeError(
+            "Update Monitor cannot change its own Docker channel while it is running"
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", target_tag):
+        raise RuntimeError("Invalid Docker update channel")
+    if not _is_update_channel_tag(target_tag):
+        raise RuntimeError(
+            "The selected tag is a concrete version, not an update channel"
+        )
+    if target_tag.casefold() == current_tag.casefold():
+        raise RuntimeError("The selected update channel is already active")
+
+    registry_values, registry_error = registry_tags(repo_key, max_pages=5)
+    if registry_error:
+        raise RuntimeError(
+            "Could not read registry tags for this image: " + str(registry_error)
+        )
+    registry_lookup = {
+        str(value or "").strip().casefold()
+        for value in (registry_values or [])
+        if str(value or "").strip()
+    }
+    if target_tag.casefold() not in registry_lookup:
+        raise RuntimeError(
+            f'Docker tag "{target_tag}" is not available in the current image registry'
+        )
+
+    target_ref = f"{repo_text}:{target_tag}"
+    service_names = _image_source_service_names(item)
+    container_names = _image_source_container_names(item)
+    if not service_names or not container_names:
+        raise RuntimeError("Could not resolve the Compose service for this image")
+
+    platform = _image_source_current_platform()
+    remote_digests, manifest_error = registry_manifest_digests(
+        repo_key,
+        target_tag,
+        platform,
+        timeout=12,
+    )
+    if manifest_error or not remote_digests:
+        raise RuntimeError(
+            f'The selected update channel "{target_tag}" has no usable manifest '
+            f'for {platform}: {manifest_error or "no digest returned"}'
+        )
+
+    update_action_progress(stack_key, 18, determinate=True, phase="preparing")
+    original_yaml = casaos_compose_yaml(project)
+    updated_yaml, replacements, changed_services = replace_compose_service_images(
+        original_yaml,
+        service_names,
+        target_ref,
+    )
+    if replacements < 1:
+        raise RuntimeError("No matching Compose image entry was found")
+
+    update_action_progress(stack_key, 20, determinate=True, phase="compose_check")
+    casaos_apply_compose(project, updated_yaml, dry_run=True)
+
+    original_states = {
+        name: (docker_container_state(name) or "unknown")
+        for name in container_names
+    }
+    original_runtime_snapshots = {
+        name: (docker_container_runtime_snapshot(name) or {})
+        for name in container_names
+    }
+    original_restart_counts = {
+        name: int(
+            (original_runtime_snapshots.get(name) or {}).get("restart_count") or 0
+        )
+        for name in container_names
+    }
+    original_container_ids = {
+        name: docker_container_id(name)
+        for name in container_names
+    }
+    for name, state in original_states.items():
+        if state not in {"running", "exited", "created", "dead"}:
+            raise RuntimeError(
+                f"Unsupported container state for safe update channel switch: "
+                f"{name} ({state})"
+            )
+        if not original_container_ids.get(name):
+            raise RuntimeError(
+                f"Could not read the current Docker container ID for {name}"
+            )
+
+    update_action_progress(stack_key, 30, determinate=True, phase="pulling")
+    pulled = docker_pull_verified(
+        target_ref,
+        platform,
+        expected_digests=remote_digests,
+    )
+    expected_digests = list(pulled.get("expected_digests") or [])
+    if not expected_digests:
+        raise RuntimeError(
+            "No verified target digest is available for the selected update channel"
+        )
+    update_action_progress(stack_key, 55, determinate=True, phase="pull_complete")
+
+    applied = False
+    rollback_error = None
+    try:
+        update_action_progress(stack_key, 60, determinate=True, phase="recreating")
+        casaos_apply_compose(project, updated_yaml, dry_run=False)
+        applied = True
+
+        activation = wait_for_image_source_compose_activation(
+            project,
+            container_names,
+            original_container_ids,
+            target_ref,
+            expected_digests,
+            timeout=180,
+            recreate_after=20,
+            stack_key=stack_key,
+        )
+        update_action_progress(
+            stack_key, 75, determinate=True, phase="container_ready"
+        )
+        update_action_progress(stack_key, 80, determinate=True, phase="verifying")
+
+        verified_runtime = {}
+        verify_total = max(1, len(container_names))
+        for verify_index, name in enumerate(container_names, start=1):
+            verified = wait_for_image_source_target_runtime(
+                name,
+                target_ref,
+                expected_digests,
+                timeout=90,
+            )
+            current_id = str(verified.get("container_id") or "")
+            baseline_restarts = (
+                original_restart_counts.get(name, 0)
+                if current_id == str(original_container_ids.get(name) or "")
+                else 0
+            )
+            original_runtime = original_runtime_snapshots.get(name) or {}
+            stable = wait_for_image_source_runtime_stable(
+                name,
+                timeout=120,
+                stable_seconds=20,
+                baseline_restart_count=baseline_restarts,
+                expected_state=original_states.get(name) or "running",
+                expected_exit_code=original_runtime.get("exit_code"),
+                expected_runtime_snapshot=original_runtime,
+                unhealthy_grace_seconds=30,
+            )
+            verified["runtime_stability"] = stable
+            verified_runtime[name] = verified
+            update_action_progress(
+                stack_key,
+                min(94, 80 + int(round((14 * verify_index) / verify_total))),
+                determinate=True,
+                phase="verifying",
+            )
+
+        update_action_progress(stack_key, 96, determinate=True, phase="finalizing")
+
+        restored_states = {}
+        for name, previous_state in original_states.items():
+            current_state = docker_container_state(name)
+            if previous_state != "running" and current_state == "running":
+                docker_stop_container(name)
+                current_state = docker_container_state(name)
+            if previous_state == "running" and current_state != "running":
+                raise RuntimeError(
+                    f"Update channel switch reached the target image, but "
+                    f"{name} is not running (state={current_state or 'unknown'})"
+                )
+            restored_states[name] = current_state
+
+        previous_policy = get_monitor_policy(stack_key)
+        policy_after = save_monitor_policy(
+            stack_key,
+            "follow",
+            None,
+            auto_enabled=bool(previous_policy.get("auto_enabled")),
+            auto_immediate=bool(previous_policy.get("auto_immediate")),
+            auto_time=previous_policy.get("auto_time"),
+            auto_days=previous_policy.get("auto_days"),
+            auto_timezone=previous_policy.get("auto_timezone"),
+            auto_backup_mode=previous_policy.get("auto_backup_mode"),
+        )
+
+        for service in service_names:
+            remember_image_source_assignment(
+                project,
+                service,
+                target_ref,
+                stack_key=stack_key,
+                verified_digests=expected_digests,
+                source="verified-update-channel-switch",
+            )
+
+        return {
+            "project": project,
+            "old_image_ref": current_ref,
+            "new_image_ref": target_ref,
+            "old_tag": current_tag,
+            "target_tag": target_tag,
+            "activation": activation,
+            "compose_services": changed_services,
+            "containers": container_names,
+            "verified_runtime": verified_runtime,
+            "target_verification": pulled,
+            "final_states": restored_states,
+            "policy_after_update": policy_after,
+            "engine": "verified-update-channel+zimaos-compose",
+        }
+
+    except Exception as exc:
+        if applied:
+            try:
+                update_action_progress(stack_key, determinate=False, phase="rollback")
+                casaos_apply_compose(project, original_yaml, dry_run=True)
+                casaos_apply_compose(project, original_yaml, dry_run=False)
+                wait_for_version_compose_update(
+                    project,
+                    container_names,
+                    current_ref,
+                    timeout=180,
+                )
+                for name, previous_state in original_states.items():
+                    current_state = docker_container_state(name)
+                    if previous_state != "running" and current_state == "running":
+                        docker_stop_container(name)
+                    elif previous_state == "running" and current_state != "running":
+                        docker_start_container(name)
+            except Exception as rollback_exc:
+                rollback_error = str(rollback_exc)
+
+        message = str(exc)
+        if rollback_error:
+            message += f" | Automatic rollback also failed: {rollback_error}"
+        elif applied:
+            message += " | Previous Compose update channel was restored automatically."
+        raise RuntimeError(message) from exc
+
+
 def perform_image_source_switch(app_item, image_key, source_id, accept_warnings=False):
     option = build_image_source_option(app_item, image_key, source_id)
 
@@ -10750,7 +11193,7 @@ def startup():
 
 # Public application branding assets, independent of login.
 # Register only these exact filenames; never expose the entire static directory.
-WEB_ICON_ASSETS = {'android-chrome-192x192.png': 'image/png', 'apple-touch-icon.png': 'image/png', 'favicon-128x128.png': 'image/png', 'favicon-16x16.png': 'image/png', 'favicon-32x32.png': 'image/png', 'favicon-48x48.png': 'image/png', 'favicon-64x64.png': 'image/png', 'favicon.ico': 'image/x-icon', 'icon-256x256.png': 'image/png', 'update-monitor-master-1024.png': 'image/png', 'update-monitor-source-highres.png': 'image/png', 'web-app-icon-512.png': 'image/png', 'site.webmanifest': 'application/manifest+json'}
+WEB_ICON_ASSETS = {'update-channel.js': 'application/javascript', 'android-chrome-192x192.png': 'image/png', 'apple-touch-icon.png': 'image/png', 'favicon-128x128.png': 'image/png', 'favicon-16x16.png': 'image/png', 'favicon-32x32.png': 'image/png', 'favicon-48x48.png': 'image/png', 'favicon-64x64.png': 'image/png', 'favicon.ico': 'image/x-icon', 'icon-256x256.png': 'image/png', 'update-monitor-master-1024.png': 'image/png', 'update-monitor-source-highres.png': 'image/png', 'web-app-icon-512.png': 'image/png', 'site.webmanifest': 'application/manifest+json'}
 
 
 def _make_web_icon_handler(filename, media_type):
@@ -17456,6 +17899,106 @@ def register_successful_image_source_switch(app_item, result):
 
     return True
 
+
+
+
+@app.get("/api/image-channel-options")
+def image_channel_options(stack_key: str, request: Request):
+    require_auth(request)
+    app_item = find_scanned_app(stack_key)
+    if not app_item:
+        raise HTTPException(status_code=404, detail="App not found in current scan")
+    try:
+        return image_channel_options_for_app(app_item)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Update channel discovery failed: {type(exc).__name__}: {str(exc)[:240]}",
+        ) from exc
+
+
+@app.post("/api/image-channel-switch")
+def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
+    require_auth(request)
+    reject_mutation_during_scan()
+
+    app_item = find_scanned_app(data.stack_key)
+    if not app_item:
+        raise HTTPException(status_code=404, detail="App not found in current scan")
+    if not compose_update_supported_for_app(app_item):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                compose_update_block_reason_for_app(app_item)
+                or "Update channel switching is not supported for this Compose app"
+            ),
+        )
+    if has_pending_app_scan():
+        raise HTTPException(
+            status_code=409,
+            detail="Wait until the current verification scan is finished",
+        )
+    if not app_update_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="Another app update, restore or uninstall is already running",
+        )
+    if has_pending_app_scan():
+        app_update_lock.release()
+        raise HTTPException(
+            status_code=409,
+            detail="Wait until the current verification scan is finished",
+        )
+
+    backup_mode = _normalize_backup_mode(data.backup_mode, "full")
+    if backup_mode not in {"quick", "full"}:
+        app_update_lock.release()
+        raise HTTPException(
+            status_code=400,
+            detail="Update channel switching requires a quick or full backup",
+        )
+
+    switch_error = None
+    result = None
+    backup_result = None
+    begin_action_progress(data.stack_key, "update", app_item)
+    try:
+        update_action_progress(data.stack_key, 5, determinate=True, phase="backup")
+        backup_result = create_pre_update_backup(
+            app_item,
+            backup_mode,
+            stack_key=data.stack_key,
+        )
+        update_action_progress(data.stack_key, 15, determinate=True, phase="starting")
+        result = perform_image_channel_switch(
+            app_item,
+            data.image_key,
+            data.tag,
+        )
+        if isinstance(result, dict):
+            result["backup"] = backup_result
+        register_successful_image_source_switch(app_item, result)
+        finish_action_progress(data.stack_key, True)
+    except RuntimeError as exc:
+        switch_error = exc
+        finish_action_progress(data.stack_key, False, str(exc))
+    finally:
+        schedule_app_scan(
+            data.stack_key,
+            verification_result=result if switch_error is None else None,
+        )
+        app_update_lock.release()
+
+    if switch_error is not None:
+        raise HTTPException(status_code=500, detail=str(switch_error)) from switch_error
+
+    return {
+        "success": True,
+        "app": app_item.get("name"),
+        **(result or {}),
+    }
 
 
 @app.get("/api/image-source-options")
