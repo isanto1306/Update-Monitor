@@ -1,0 +1,37 @@
+name: Synchronize v0.3.356 UI marker
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-index:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Synchronize large index version marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q '0\.3\.355' static/index.html; then
+            echo "static/index.html is already synchronized"
+            exit 0
+          fi
+          sed -i 's/0\.3\.355/0.3.356/g' static/index.html
+          if grep -q '0\.3\.355' static/index.html; then
+            echo "A stale v0.3.355 marker remains in static/index.html" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add static/index.html
+          git commit -m "Synchronize static UI markers for v0.3.356"
+          git push
