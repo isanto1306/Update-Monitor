@@ -1,4 +1,4 @@
-name: Synchronize v0.3.356 UI marker
+name: Validate and synchronize v0.3.359
 
 on:
   push:
@@ -10,28 +10,191 @@ permissions:
   contents: write
 
 jobs:
-  sync-index:
+  validate-sync:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Synchronize large index version marker
+      - name: Validate backend syntax
         shell: bash
         run: |
           set -euo pipefail
-          if ! grep -q '0\.3\.355' static/index.html; then
+          python3 -m py_compile app/main.py
+
+      - name: Synchronize large frontend safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("static/index.html")
+          text = path.read_text(encoding="utf-8")
+
+          for old in ("0.3.356", "0.3.357", "0.3.358"):
+              text = text.replace(old, "0.3.359")
+
+          old = """  const storedAutoError=(
+              policy.auto_enabled
+              &&policy.last_auto_result==='error'
+              &&String(policy.last_auto_error||'').trim()
+          """
+          new = """  const storedAutoError=(
+              !isChecking
+              &&policy.auto_enabled
+              &&policy.last_auto_result==='error'
+              &&String(policy.last_auto_error||'').trim()
+          """
+          if new not in text:
+              if old not in text:
+                  raise SystemExit("storedAutoError frontend block not found")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Run v0.3.359 regression checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import ast
+          import re
+          from pathlib import Path
+
+          main = Path("app/main.py").read_text(encoding="utf-8")
+          html = Path("static/index.html").read_text(encoding="utf-8")
+
+          assert 'VERSION = "0.3.359"' in main
+          tree = ast.parse(main)
+
+          functions = {
+              node.name: node
+              for node in tree.body
+              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+          }
+
+          def function_source(name):
+              node = functions[name]
+              return ast.get_source_segment(main, node) or ""
+
+          def load_function(name, env):
+              node = functions[name]
+              module = ast.Module(body=[node], type_ignores=[])
+              ast.fix_missing_locations(module)
+              scope = dict(env)
+              exec(compile(module, "<regression>", "exec"), scope)
+              return scope[name], scope
+
+          # Exact v0.3.359 helper: live Docker must beat a stale GHCR scan alias.
+          def parse_image_ref(value):
+              value = str(value or "").strip().split("@", 1)[0]
+              slash = value.rfind("/")
+              colon = value.rfind(":")
+              if colon > slash:
+                  repo, tag = value[:colon], value[colon + 1:]
+              else:
+                  repo, tag = value, "latest"
+              return {"repo": repo, "tag": tag, "normalized_repo": repo}
+
+          live = {"uptime-kuma": "louislam/uptime-kuma:2.5.4"}
+          target_fn, _ = load_function(
+              "_update_target_ref_on_active_registry",
+              {
+                  "docker_container_config_image": lambda name: live.get(name),
+                  "parse_image_ref": parse_image_ref,
+              },
+          )
+          item = {
+              "containers": [{"name": "uptime-kuma"}],
+              "runtime_image_refs": ["ghcr.io/louislam/uptime-kuma:latest"],
+              "image_ref": "ghcr.io/louislam/uptime-kuma:latest",
+              "tracking_image_ref": "ghcr.io/louislam/uptime-kuma:latest",
+          }
+          assert target_fn(item, "2") == "louislam/uptime-kuma:2"
+          assert target_fn(item, "2.5.5") == "louislam/uptime-kuma:2.5.5"
+          assert target_fn(item) == "louislam/uptime-kuma:2.5.4"
+
+          # Exact follow-policy helper: channel 2 must survive and legacy :2 must recover.
+          channel_fn, _ = load_function(
+              "_follow_policy_tag",
+              {
+                  "FOLLOW_POLICY_TAG": "latest",
+                  "_is_update_channel_tag": lambda value: (
+                      str(value or "").lower()
+                      in {"latest", "stable", "lts", "next", "edge"}
+                      or bool(re.fullmatch(r"\d+", str(value or "")))
+                  ),
+              },
+          )
+          assert channel_fn({"target_tag": "2"}, ["2.5.4"]) == "2"
+          assert channel_fn({"target_tag": None}, ["2"]) == "2"
+          assert channel_fn({"target_tag": None}, ["2.5.4"]) == "latest"
+
+          # Exact acknowledgement helper: clear display error, preserve retry history.
+          class Lock:
+              def __enter__(self):
+                  return self
+              def __exit__(self, exc_type, exc, tb):
+                  return False
+
+          policies = {
+              "uptime-kuma": {
+                  "last_auto_result": "error",
+                  "last_auto_error": "old GHCR pull failed",
+                  "last_auto_signature": "version:follow:2.5.4->2",
+              }
+          }
+          ack_fn, ack_scope = load_function(
+              "acknowledge_auto_update_error",
+              {
+                  "policies": policies,
+                  "policies_lock": Lock(),
+                  "utc_now": lambda: "2026-09-19T13:00:00+00:00",
+                  "save_json": lambda *args, **kwargs: None,
+                  "POLICY_FILE": object(),
+              },
+          )
+          assert ack_fn("uptime-kuma") is True
+          assert policies["uptime-kuma"]["last_auto_error"] is None
+          assert policies["uptime-kuma"]["last_auto_result"] == "error"
+          assert policies["uptime-kuma"]["last_auto_signature"] == "version:follow:2.5.4->2"
+
+          channel_switch = function_source("perform_image_channel_switch")
+          assert re.search(
+              r'save_monitor_policy\(\s*stack_key,\s*"follow",\s*target_tag,',
+              channel_switch,
+          )
+
+          version_update = function_source("perform_version_update")
+          assert "_follow_policy_tag(" in version_update
+          assert ': target_tag' in version_update
+
+          app_scan = function_source("app_scan")
+          assert "acknowledge_auto_update_error(stack_key)" in app_scan
+
+          # Frontend regression: current release marker + no stale red auto error while checking.
+          assert "0.3.356" not in html
+          assert "0.3.357" not in html
+          assert "0.3.358" not in html
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.359';" in html
+          assert "const storedAutoError=(\n    !isChecking\n    &&policy.auto_enabled" in html
+
+          print("v0.3.359 regression checks passed")
+          PY
+
+      - name: Commit synchronized frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- static/index.html; then
             echo "static/index.html is already synchronized"
             exit 0
-          fi
-          sed -i 's/0\.3\.355/0.3.356/g' static/index.html
-          if grep -q '0\.3\.355' static/index.html; then
-            echo "A stale v0.3.355 marker remains in static/index.html" >&2
-            exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add static/index.html
-          git commit -m "Synchronize static UI markers for v0.3.356"
+          git commit -m "Synchronize static UI and regression guard for v0.3.359"
           git push
