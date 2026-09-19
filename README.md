@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.353**
+Current release: **v0.3.354**
+
+Registry alias verification now accepts an exact Docker image ID match when Docker Hub and GHCR expose different RepoDigests for the same image. This prevents a successful Update Kanal change from being rolled back only because ZimaOS/Docker activates the equivalent registry alias.
 
 Update Kanal no longer starts a second forced ZimaOS container recreate during the Compose channel change. It now waits for the original Compose apply to finish and verifies the target digest. The separate Image Quelle recreate path now prefers the current Docker container ID after replacement.
 
