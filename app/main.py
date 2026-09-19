@@ -17979,6 +17979,7 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
         )
         if isinstance(result, dict):
             result["backup"] = backup_result
+        register_successful_image_source_switch(app_item, result)
         finish_action_progress(data.stack_key, True)
     except RuntimeError as exc:
         switch_error = exc
