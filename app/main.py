@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.355"
+VERSION = "0.3.356"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -7728,6 +7728,17 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         name: docker_container_id(name)
         for name in container_names
     }
+    original_image_ids = {
+        name: docker_container_image_id(name)
+        for name in container_names
+    }
+    original_repo_digests = {
+        name: sorted(
+            docker_image_repo_digests(original_image_ids.get(name))
+        )
+        for name in container_names
+        if original_image_ids.get(name)
+    }
     for name, state in original_states.items():
         if state not in {"running", "exited", "created", "dead"}:
             raise RuntimeError(
@@ -7737,6 +7748,10 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         if not original_container_ids.get(name):
             raise RuntimeError(
                 f"Could not read the current Docker container ID for {name}"
+            )
+        if not original_image_ids.get(name):
+            raise RuntimeError(
+                f"Could not read the current Docker image ID for {name}"
             )
 
     update_action_progress(stack_key, 30, determinate=True, phase="pulling")
@@ -7767,13 +7782,14 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
             target_ref,
             expected_digests,
             timeout=180,
-            recreate_after=20,
+            recreate_after=30,
             stack_key=stack_key,
-            # A channel switch already changed the Compose image reference.
-            # Do not start a second ZimaOS recreate while that Compose apply may
-            # still be finishing; just observe and verify the requested target.
-            allow_forced_recreate=False,
+            # ZimaOS may persist the Compose source without replacing the
+            # runtime container. Wait for an in-flight replacement first and
+            # send at most one verified fallback recreate.
+            allow_forced_recreate=True,
             expected_image_id=expected_image_id,
+            recreate_pull=True,
         )
         update_action_progress(
             stack_key, 75, determinate=True, phase="container_ready"
@@ -7876,20 +7892,65 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         if applied:
             try:
                 update_action_progress(stack_key, determinate=False, phase="rollback")
+                rollback_start_ids = {
+                    name: docker_container_id(name)
+                    for name in container_names
+                }
                 casaos_apply_compose(project, original_yaml, dry_run=True)
                 casaos_apply_compose(project, original_yaml, dry_run=False)
-                wait_for_version_compose_update(
+
+                rollback_expected_digests = sorted({
+                    digest
+                    for values in original_repo_digests.values()
+                    for digest in (values or [])
+                    if str(digest or "").strip()
+                })
+                wait_for_image_source_compose_activation(
                     project,
                     container_names,
+                    rollback_start_ids,
                     current_ref,
+                    rollback_expected_digests,
                     timeout=180,
+                    recreate_after=20,
+                    stack_key=stack_key,
+                    allow_forced_recreate=True,
+                    expected_image_ids=original_image_ids,
+                    recreate_pull=False,
                 )
+
                 for name, previous_state in original_states.items():
+                    wait_for_image_source_target_runtime(
+                        name,
+                        current_ref,
+                        original_repo_digests.get(name) or [],
+                        timeout=90,
+                        expected_image_id=original_image_ids.get(name),
+                    )
+
                     current_state = docker_container_state(name)
                     if previous_state != "running" and current_state == "running":
                         docker_stop_container(name)
                     elif previous_state == "running" and current_state != "running":
                         docker_start_container(name)
+
+                    rollback_id = docker_container_id(name)
+                    baseline_restarts = (
+                        original_restart_counts.get(name, 0)
+                        if rollback_id == str(original_container_ids.get(name) or "")
+                        else 0
+                    )
+                    original_runtime = original_runtime_snapshots.get(name) or {}
+                    wait_for_image_source_runtime_stable(
+                        name,
+                        timeout=120,
+                        stable_seconds=15,
+                        baseline_restart_count=baseline_restarts,
+                        expected_state=previous_state,
+                        expected_exit_code=original_runtime.get("exit_code"),
+                        expected_runtime_snapshot=original_runtime,
+                        unhealthy_grace_seconds=30,
+                    )
             except Exception as rollback_exc:
                 rollback_error = str(rollback_exc)
 
@@ -11902,11 +11963,17 @@ def casaos_set_app_status(compose_project, status_name):
     return raw
 
 
-def casaos_recreate_container(container_id, app_name=None):
+def casaos_recreate_container(
+    container_id,
+    app_name=None,
+    *,
+    pull=True,
+    force=True,
+):
     container_id = urllib.parse.quote(str(container_id), safe="")
     query_values = {
-        "pull": "true",
-        "force": "true",
+        "pull": "true" if pull else "false",
+        "force": "true" if force else "false",
     }
     if app_name:
         query_values["app:name"] = str(app_name)
@@ -13369,8 +13436,11 @@ def wait_for_image_source_target_runtime(
         for value in (expected_digests or [])
         if str(value or "").strip()
     }
-    if not expected:
-        raise RuntimeError(f"No verified target digest supplied for {image_ref}")
+    wanted_image_id = str(expected_image_id or "").strip().lower()
+    if not expected and not wanted_image_id:
+        raise RuntimeError(
+            f"No verified target digest or image ID supplied for {image_ref}"
+        )
 
     deadline = time.time() + max(10, int(timeout))
     last = {}
@@ -13666,6 +13736,8 @@ def wait_for_image_source_compose_activation(
     stack_key=None,
     allow_forced_recreate=True,
     expected_image_id=None,
+    expected_image_ids=None,
+    recreate_pull=True,
 ):
     """Verify a source switch by Compose source + real target digest.
 
@@ -13681,6 +13753,7 @@ def wait_for_image_source_compose_activation(
     last_images = {}
     last_digest_state = {}
     compose_saved = False
+    container_change_seen_at = {}
 
     target_names = [
         str(value or "").strip()
@@ -13698,8 +13771,16 @@ def wait_for_image_source_compose_activation(
         for value in (expected_digests or [])
         if str(value or "").strip()
     }
-    if not expected:
-        raise RuntimeError("No verified target digest was supplied for source activation")
+    global_expected_image_id = str(expected_image_id or "").strip() or None
+    expected_image_id_map = {
+        str(name): str(value or "").strip()
+        for name, value in (expected_image_ids or {}).items()
+        if str(name or "").strip() and str(value or "").strip()
+    }
+    if not expected and not global_expected_image_id and not expected_image_id_map:
+        raise RuntimeError(
+            "No verified target digest or image ID was supplied for source activation"
+        )
 
     while time.time() < deadline:
         try:
@@ -13714,18 +13795,32 @@ def wait_for_image_source_compose_activation(
 
         for name in target_names:
             current_ref = docker_container_config_image(name)
+            current_container_id = docker_container_id(name)
             last_images[name] = current_ref
 
+            original_container_id = original_ids.get(name)
+            if (
+                current_container_id
+                and original_container_id
+                and current_container_id != original_container_id
+            ):
+                container_change_seen_at.setdefault(name, time.time())
+
+            wanted_image_id = (
+                expected_image_id_map.get(name)
+                or global_expected_image_id
+            )
             matched, local_digests = container_matches_target_digest(
                 name,
                 new_ref,
                 expected,
-                expected_image_id=expected_image_id,
+                expected_image_id=wanted_image_id,
             )
             last_digest_state[name] = {
                 "matched": bool(matched),
                 "local_digests": sorted(local_digests),
-                "container_id": docker_container_id(name),
+                "container_id": current_container_id,
+                "expected_image_id": wanted_image_id,
             }
             if not matched:
                 all_target_digests = False
@@ -13750,8 +13845,10 @@ def wait_for_image_source_compose_activation(
                 ),
             }
 
-        # Compose has the new source but actual bits are still old. Only then is
-        # a recreation useful.
+        # Compose can be persisted before ZimaOS has replaced the runtime
+        # container. Give an already-started recreation time to settle, then
+        # issue exactly one fallback recreate if the verified target is still
+        # not active.
         if (
             allow_forced_recreate
             and compose_saved
@@ -13759,26 +13856,47 @@ def wait_for_image_source_compose_activation(
             and not recreate_sent
             and time.time() >= recreate_deadline
         ):
-            if stack_key:
-                update_action_progress(
-                    stack_key,
-                    65,
-                    determinate=True,
-                    phase="force_recreate",
-                )
+            now = time.time()
+            recently_replaced = [
+                name
+                for name in target_names
+                if container_change_seen_at.get(name)
+                and now - container_change_seen_at[name] < 30
+            ]
 
-            for name in target_names:
-                # Compose may already have replaced the container. Always use
-                # the CURRENT Docker ID first; the pre-change ID is only a
-                # fallback when the original container is still the live one.
-                container_id = docker_container_id(name) or original_ids.get(name)
-                if not container_id:
-                    raise RuntimeError(
-                        f"Could not resolve container ID for forced source recreation: {name}"
+            if not recently_replaced:
+                if stack_key:
+                    update_action_progress(
+                        stack_key,
+                        65,
+                        determinate=True,
+                        phase="force_recreate",
                     )
-                casaos_recreate_container(container_id, compose_project)
 
-            recreate_sent = True
+                for name in target_names:
+                    container_id = docker_container_id(name) or original_ids.get(name)
+                    if not container_id:
+                        raise RuntimeError(
+                            f"Could not resolve container ID for forced source recreation: {name}"
+                        )
+
+                    wanted_image_id = (
+                        expected_image_id_map.get(name)
+                        or global_expected_image_id
+                    )
+                    if not recreate_pull and wanted_image_id:
+                        restore_ref = str(new_ref or "").split("@", 1)[0].strip()
+                        if restore_ref:
+                            docker_tag_same_image(wanted_image_id, restore_ref)
+
+                    casaos_recreate_container(
+                        container_id,
+                        compose_project,
+                        pull=bool(recreate_pull),
+                        force=True,
+                    )
+
+                recreate_sent = True
 
         if (
             not compose_saved
