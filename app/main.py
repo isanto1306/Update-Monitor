@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.352"
+VERSION = "0.3.353"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -7563,6 +7563,10 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
             timeout=180,
             recreate_after=20,
             stack_key=stack_key,
+            # A channel switch already changed the Compose image reference.
+            # Do not start a second ZimaOS recreate while that Compose apply may
+            # still be finishing; just observe and verify the requested target.
+            allow_forced_recreate=False,
         )
         update_action_progress(
             stack_key, 75, determinate=True, phase="container_ready"
@@ -13403,6 +13407,7 @@ def wait_for_image_source_compose_activation(
     timeout=180,
     recreate_after=20,
     stack_key=None,
+    allow_forced_recreate=True,
 ):
     """Verify a source switch by Compose source + real target digest.
 
@@ -13489,7 +13494,8 @@ def wait_for_image_source_compose_activation(
         # Compose has the new source but actual bits are still old. Only then is
         # a recreation useful.
         if (
-            compose_saved
+            allow_forced_recreate
+            and compose_saved
             and not all_target_digests
             and not recreate_sent
             and time.time() >= recreate_deadline
@@ -13503,7 +13509,10 @@ def wait_for_image_source_compose_activation(
                 )
 
             for name in target_names:
-                container_id = original_ids.get(name) or docker_container_id(name)
+                # Compose may already have replaced the container. Always use
+                # the CURRENT Docker ID first; the pre-change ID is only a
+                # fallback when the original container is still the live one.
+                container_id = docker_container_id(name) or original_ids.get(name)
                 if not container_id:
                     raise RuntimeError(
                         f"Could not resolve container ID for forced source recreation: {name}"
