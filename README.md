@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.351**
+Current release: **v0.3.352**
+
+Update Kanal now treats HTTP 502, 503 and 504 responses as transport interruptions when the backend Docker action is still running. The dialog keeps the action locked, follows backend progress and waits for the targeted verification instead of showing a false failure while ZimaOS is still applying the change.
 
 Update channels are now separated from concrete versions. Moving Docker tags such as latest, stable, next, lts or a major channel such as 2 can be selected directly from the application details with backup, Compose validation, verified pull and targeted post-change verification.
 
