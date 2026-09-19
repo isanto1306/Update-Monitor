@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.353"
+VERSION = "0.3.354"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -7541,7 +7541,8 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
         expected_digests=remote_digests,
     )
     expected_digests = list(pulled.get("expected_digests") or [])
-    if not expected_digests:
+    expected_image_id = str(pulled.get("image_id") or "").strip() or None
+    if not expected_digests or not expected_image_id:
         raise RuntimeError(
             "No verified target digest is available for the selected update channel"
         )
@@ -7567,6 +7568,7 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
             # Do not start a second ZimaOS recreate while that Compose apply may
             # still be finishing; just observe and verify the requested target.
             allow_forced_recreate=False,
+            expected_image_id=expected_image_id,
         )
         update_action_progress(
             stack_key, 75, determinate=True, phase="container_ready"
@@ -7581,6 +7583,7 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
                 target_ref,
                 expected_digests,
                 timeout=90,
+                expected_image_id=expected_image_id,
             )
             current_id = str(verified.get("container_id") or "")
             baseline_restarts = (
@@ -7783,7 +7786,8 @@ def perform_image_source_switch(app_item, image_key, source_id, accept_warnings=
         expected_digests=option.get("_remote_digests") or None,
     )
     expected_digests = list(pulled.get("expected_digests") or [])
-    if not expected_digests:
+    expected_image_id = str(pulled.get("image_id") or "").strip() or None
+    if not expected_digests or not expected_image_id:
         raise RuntimeError(
             "No verified target digest is available for the selected image source"
         )
@@ -7820,6 +7824,7 @@ def perform_image_source_switch(app_item, image_key, source_id, accept_warnings=
             timeout=180,
             recreate_after=20,
             stack_key=stack_key,
+            expected_image_id=expected_image_id,
         )
 
         update_action_progress(
@@ -7846,6 +7851,7 @@ def perform_image_source_switch(app_item, image_key, source_id, accept_warnings=
                 target_ref,
                 expected_digests,
                 timeout=90,
+                expected_image_id=expected_image_id,
             )
 
             current_id = str(verified.get("container_id") or "")
@@ -11722,6 +11728,21 @@ def docker_container_image_id(container_name):
     return value or None
 
 
+def docker_image_id(image_ref_or_id):
+    """Return Docker's local image ID for an image reference or ID."""
+    value = str(image_ref_or_id or "").strip()
+    if not value:
+        return None
+    rc, out, _ = run(
+        ["docker", "image", "inspect", value, "--format", "{{.Id}}"],
+        timeout=20,
+    )
+    if rc != 0:
+        return None
+    image_id = str(out or "").strip()
+    return image_id or None
+
+
 def docker_image_repo_digests(image_ref_or_id, normalized_repo=None):
     value = str(image_ref_or_id or "").strip()
     if not value:
@@ -11823,9 +11844,16 @@ def docker_pull_verified(image_ref, platform=None, expected_digests=None):
     # installation.  Keeping an older scan digest as the expected runtime target
     # caused false failures when a tag moved between scan and update.
     verified = local
+    pulled_image_id = docker_image_id(image_ref)
+    if not pulled_image_id:
+        raise RuntimeError(
+            f"Docker pulled {image_ref}, but no local image ID was available "
+            "for verification"
+        )
     return {
         "image_ref": str(image_ref),
         "repo": repo_key,
+        "image_id": pulled_image_id,
         "expected_digests": sorted(verified),
         "local_digests": sorted(local),
         "scan_expected_digests": sorted(expected),
@@ -11847,7 +11875,12 @@ def docker_tag_same_image(old_ref, new_ref):
     return True
 
 
-def container_matches_target_digest(container_name, image_ref, expected_digests):
+def container_matches_target_digest(
+    container_name,
+    image_ref,
+    expected_digests,
+    expected_image_id=None,
+):
     parsed = parse_image_ref(str(image_ref or "").strip())
     repo_key = str(parsed.get("normalized_repo") or "").strip()
 
@@ -11858,7 +11891,22 @@ def container_matches_target_digest(container_name, image_ref, expected_digests)
     }
 
     local = docker_container_repo_digests(container_name, repo_key)
-    return bool(expected and local.intersection(expected)), local
+    digest_match = bool(expected and local.intersection(expected))
+
+    # RepoDigests are scoped to a registry/repository. Docker Hub and GHCR can
+    # therefore expose different manifest digests for the exact same local
+    # image. Docker's image ID is the safe content-identity fallback.
+    wanted_image_id = str(expected_image_id or "").strip().lower()
+    current_image_id = str(
+        docker_container_image_id(container_name) or ""
+    ).strip().lower()
+    image_id_match = bool(
+        wanted_image_id
+        and current_image_id
+        and current_image_id == wanted_image_id
+    )
+
+    return bool(digest_match or image_id_match), local
 
 
 def wait_for_container_target_digest(
@@ -13102,6 +13150,7 @@ def wait_for_image_source_target_runtime(
     image_ref,
     expected_digests,
     timeout=90,
+    expected_image_id=None,
 ):
     """Confirm real image bits for a source switch without requiring ref text.
 
@@ -13127,6 +13176,7 @@ def wait_for_image_source_target_runtime(
             container_name,
             image_ref,
             expected,
+            expected_image_id=expected_image_id,
         )
 
         last = {
@@ -13408,6 +13458,7 @@ def wait_for_image_source_compose_activation(
     recreate_after=20,
     stack_key=None,
     allow_forced_recreate=True,
+    expected_image_id=None,
 ):
     """Verify a source switch by Compose source + real target digest.
 
@@ -13462,6 +13513,7 @@ def wait_for_image_source_compose_activation(
                 name,
                 new_ref,
                 expected,
+                expected_image_id=expected_image_id,
             )
             last_digest_state[name] = {
                 "matched": bool(matched),
