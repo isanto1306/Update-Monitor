@@ -1,0 +1,57 @@
+name: Inspect current UI layout
+
+on:
+  push:
+    branches:
+      - inspect-ui-layout-20260919
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print matching UI fragments
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("static/index.html")
+          s = p.read_text(encoding="utf-8", errors="replace")
+          terms = [
+              "image-source",
+              "image_source",
+              "source-switch",
+              "source_id",
+              "Quelle",
+              "Image Quelle",
+              "Details anzeigen",
+              "Automatisch",
+              "docker prüfen",
+              "app-card",
+              "summary",
+              "details",
+              "modal",
+              "dialog",
+              "action",
+          ]
+          low = s.lower()
+          seen = set()
+          print("FILE_LENGTH", len(s))
+          for term in terms:
+              start = 0
+              count = 0
+              while True:
+                  i = low.find(term.lower(), start)
+                  if i < 0 or count >= 8:
+                      break
+                  key=(term,i)
+                  if key not in seen:
+                      seen.add(key)
+                      print("\n===== TERM", repr(term), "AT", i, "=====")
+                      print(s[max(0,i-2500):min(len(s),i+5000)])
+                  start = i + max(1,len(term))
+                  count += 1
+          PY
