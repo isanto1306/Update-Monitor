@@ -88,7 +88,7 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.357**
+Current release: **v0.3.358**
 
 Update Kanal now actively completes a stored Compose change when ZimaOS leaves the old runtime container in place. It waits for an in-flight replacement first, then sends at most one fallback recreate and verifies the exact target image. Before the switch, the original Docker image ID and RepoDigests are captured; automatic rollback restores those exact local image bits without repulling a mutable tag and verifies runtime stability before reporting success.
 
