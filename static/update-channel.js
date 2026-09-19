@@ -17,7 +17,7 @@ function channelEsc(value){
 }
 
 var style=document.createElement('style');
-style.id='um-update-channel-v0354';
+style.id='um-update-channel-v0355';
 style.textContent=[
 '.update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}',
 '.update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}',
@@ -102,12 +102,15 @@ function selectedOption(){
   var image=selectedImage();
   var options=image&&Array.isArray(image.options)?image.options:[];
   for(var i=0;i<options.length;i++){
-    if(String(options[i].tag||'')===String(channelState.choice||'')) return options[i];
+    if(String(options[i].option_id||'')===String(channelState.choice||'')) return options[i];
   }
   return null;
 }
 function defaultChoice(image){
   var options=image&&Array.isArray(image.options)?image.options:[];
+  for(var r=0;r<options.length;r++){
+    if(options[r].source_is_runtime&&options[r].can_apply) return options[r];
+  }
   for(var i=0;i<options.length;i++) if(options[i].current&&options[i].available) return options[i];
   for(var j=0;j<options.length;j++) if(options[j].can_apply) return options[j];
   for(var k=0;k<options.length;k++) if(options[k].current) return options[k];
@@ -197,7 +200,7 @@ function selectImage(key){
   if(!image) return;
   channelState.imageKey=String(image.image_key||'');
   var preferred=defaultChoice(image);
-  channelState.choice=String(preferred&&preferred.tag||'');
+  channelState.choice=String(preferred&&preferred.option_id||'');
   channelState.error='';
   renderDialog();
 }
@@ -237,7 +240,7 @@ function renderDialog(){
   var image=selectedImage();
   if(image&&!channelState.choice){
     var preferred=defaultChoice(image);
-    channelState.choice=String(preferred&&preferred.tag||'');
+    channelState.choice=String(preferred&&preferred.option_id||'');
   }
   var options=image&&Array.isArray(image.options)?image.options:[];
   var selected=selectedOption();
@@ -270,21 +273,25 @@ function renderDialog(){
   var optionHtml='';
   options.forEach(function(option){
     var tag=String(option.tag||'');
-    var selectedClass=tag===String(channelState.choice||'')?' selected':'';
+    var optionId=String(option.option_id||'');
+    var selectedClass=optionId===String(channelState.choice||'')?' selected':'';
     var level=option.available?'ok':'error';
     var currentBadge=option.current
       ?'<span class="image-source-current-badge">'+channelEsc(channelText('Aktuell eingetragen','Currently configured'))+'</span>'
+      :'';
+    var runtimeBadge=option.source_is_runtime
+      ?'<span class="image-source-current-badge">'+channelEsc(channelText('Aktiver Docker Ursprung','Active Docker source'))+'</span>'
       :'';
     var status=option.available
       ?'<span class="image-source-status ok">✓ '+channelEsc(channelText('Registry Tag vorhanden','Registry tag available'))+'</span>'
       :'<span class="image-source-status error">✕ '+channelEsc(channelText('Tag nicht verfügbar','Tag unavailable'))+'</span>';
     optionHtml+=
       '<div class="image-source-option-wrap">'+
-        '<button class="image-source-option '+level+selectedClass+'" type="button" data-image-channel-choice="'+channelEsc(tag)+'"'+
+        '<button class="image-source-option '+level+selectedClass+'" type="button" data-image-channel-choice="'+channelEsc(optionId)+'"'+
         (channelState.busy?' disabled':'')+'>'+
           '<div class="image-source-option-top"><span class="image-source-radio"></span><strong>'+channelEsc(tag)+'</strong></div>'+
-          '<small>'+channelEsc(String(option.target_image||''))+'</small>'+
-          currentBadge+status+
+          '<small>'+channelEsc(String(option.source_label||option.source_repository||''))+' · '+channelEsc(String(option.target_image||''))+'</small>'+
+          currentBadge+runtimeBadge+status+
         '</button>'+
       '</div>';
   });
@@ -348,8 +355,8 @@ function renderDialog(){
   }
 
   html+='<div class="image-source-backup-note">✓ '+channelEsc(channelText(
-    'Vor dem Wechsel wird die komplette App gesichert. Danach wird nur der ausgewählte Docker Tag in den betroffenen Compose Services geändert und der Ziel Digest geprüft.',
-    'The complete app is backed up before switching. Only the selected Docker tag is then changed in the affected Compose services and the target digest is verified.'
+    'Vor dem Wechsel wird die komplette App gesichert. Wenn nötig werden Image Quelle und Update Kanal gemeinsam geändert und anschließend der Ziel Digest geprüft.',
+    'The complete app is backed up before switching. If necessary, the image source and update channel are changed together and the target digest is then verified.'
   ))+'</div>';
 
   if(channelState.error){
@@ -402,7 +409,7 @@ async function openDialog(stackKey){
     var first=list[0]||null;
     channelState.imageKey=String(first&&first.image_key||'');
     var preferred=defaultChoice(first);
-    channelState.choice=String(preferred&&preferred.tag||'');
+    channelState.choice=String(preferred&&preferred.option_id||'');
     channelState.error='';
   }catch(err){
     channelState.error=err&&err.message==='auth'?'':channelText(
@@ -477,6 +484,7 @@ async function applySwitch(){
         stack_key:stackKey,
         image_key:String(image.image_key||''),
         tag:String(selected.tag||''),
+        source_id:String(selected.source_id||'')||null,
         backup_mode:'full'
       })
     });

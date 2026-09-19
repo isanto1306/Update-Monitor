@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.354"
+VERSION = "0.3.355"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -254,6 +254,7 @@ class ImageChannelSwitchRequest(BaseModel):
     stack_key: str
     image_key: str
     tag: str
+    source_id: Optional[str] = None
     backup_mode: Optional[str] = "full"
 
 
@@ -6568,6 +6569,49 @@ def _image_source_auto_candidates(app_item, item, current_ref, platform):
             "_discovered_digests": sorted(digests),
         })
 
+    # GHCR -> Docker Hub exact owner/repository counterpart.
+    #
+    # Do not guess blindly. The Docker Hub repository is only offered when its
+    # public project metadata resolves to the SAME upstream project as the
+    # current GHCR image. This gives Update Kanal a verified alternative source
+    # for projects such as Uptime Kuma, whose recommended moving channel lives
+    # on Docker Hub while a fixed version may have been installed from GHCR.
+    if current_repo.startswith("ghcr.io/"):
+        parts = [
+            value for value in current_repo[len("ghcr.io/"):].split("/")
+            if value
+        ]
+        if len(parts) == 2:
+            owner, image_name = parts
+            docker_hub_ref = f"{owner}/{image_name}:{current_tag}"
+            try:
+                current_project = normalize_project_url(
+                    _image_source_github_project_url(app_item, item, current_ref)
+                )
+            except Exception:
+                current_project = None
+            try:
+                docker_hub_project = docker_hub_project_link(docker_hub_ref)
+                docker_hub_project_url = normalize_project_url(
+                    (docker_hub_project or {}).get("url")
+                )
+            except Exception:
+                docker_hub_project_url = None
+
+            if (
+                current_project
+                and docker_hub_project_url
+                and current_project.casefold() == docker_hub_project_url.casefold()
+            ):
+                add(
+                    docker_hub_ref,
+                    project_url=current_project,
+                    source_kind="verified-dockerhub-mirror",
+                    compatibility_mode="mirror",
+                    label_de="Docker Hub",
+                    label_en="Docker Hub",
+                )
+
     # LinuxServer -> same image family in GHCR.
     linuxserver_prefixes = (
         "lscr.io/linuxserver/",
@@ -6752,6 +6796,32 @@ def _image_source_discover_sources(app_item, item):
 
     sources = [current_source]
     seen = {current_repo.casefold()}
+
+    # If Docker/ZimaOS is already running the same service from a different
+    # repository alias, keep that live source as a first-class verified mirror.
+    # This is stronger evidence than a guessed registry mapping because the app
+    # is currently running from it with the existing mounts/env/ports.
+    runtime_ref = None
+    for container_name in _image_source_container_names(item):
+        runtime_ref = docker_container_config_image(container_name)
+        if runtime_ref:
+            break
+    runtime_repo = _image_source_repo(runtime_ref)
+    if (
+        runtime_ref
+        and runtime_repo
+        and runtime_repo.casefold() not in seen
+    ):
+        sources.append({
+            "id": _image_source_source_id(runtime_ref),
+            "label_de": _image_source_registry_label(runtime_ref),
+            "label_en": _image_source_registry_label(runtime_ref),
+            "image_ref": runtime_ref,
+            "project_url": project_url,
+            "compatibility_mode": "mirror",
+            "discovery_source": "active-runtime",
+        })
+        seen.add(runtime_repo.casefold())
 
     try:
         curated_sources = _image_source_curated_sources(app_item, current_ref)
@@ -7330,6 +7400,7 @@ def image_channel_options_for_app(app_item):
 
     images = []
     total_available = 0
+
     for item in items:
         image_key = _image_source_item_key(item)
         current_ref = str(
@@ -7337,10 +7408,11 @@ def image_channel_options_for_app(app_item):
             or item.get("image_ref")
             or ""
         ).strip()
-        parsed = parse_image_ref(current_ref)
-        repo_key = str(parsed.get("normalized_repo") or "").strip()
-        repo_text = str(parsed.get("repo") or "").strip()
-        current_tag = str(parsed.get("tag") or "latest").strip() or "latest"
+        current_parsed = parse_image_ref(current_ref)
+        current_repo_key = str(current_parsed.get("normalized_repo") or "").strip()
+        current_repo_text = str(current_parsed.get("repo") or "").strip()
+        current_tag = str(current_parsed.get("tag") or "latest").strip() or "latest"
+
         services = _image_source_service_names(item)
         containers = _image_source_container_names(item)
         current_version = str(
@@ -7349,64 +7421,158 @@ def image_channel_options_for_app(app_item):
             or ""
         ).strip() or None
 
-        registry_values = []
-        registry_error = None
+        runtime_ref = None
+        runtime_repo_key = ""
+        for container_name in containers:
+            runtime_ref = docker_container_config_image(container_name)
+            if runtime_ref:
+                runtime_repo_key = _image_source_repo(runtime_ref)
+                break
+
+        discovery_errors = []
         try:
-            registry_values, registry_error = registry_tags(repo_key, max_pages=5)
+            _, _, sources, discovery_errors = _image_source_discover_sources(
+                app_item,
+                item,
+            )
         except Exception as exc:
-            registry_error = str(exc)
+            sources = [{
+                "id": _image_source_source_id(current_ref),
+                "label_de": _image_source_registry_label(current_ref),
+                "label_en": _image_source_registry_label(current_ref),
+                "image_ref": current_ref,
+                "compatibility_mode": "current",
+                "discovery_source": "current-fallback",
+            }]
+            discovery_errors = [str(exc)[:220]]
 
-        registry_values = [
-            str(value or "").strip()
-            for value in (registry_values or [])
-            if str(value or "").strip()
-        ]
-        registry_lookup = {value.casefold(): value for value in registry_values}
-        channels = registry_update_channel_tags(
-            registry_values,
-            current_tag=current_tag,
-            limit=40,
-        )
+        def source_rank(source):
+            source_repo = _image_source_repo(source.get("image_ref"))
+            if runtime_repo_key and source_repo.casefold() == runtime_repo_key.casefold():
+                return (0, str(source.get("label_de") or ""))
+            if source_repo.casefold() == current_repo_key.casefold():
+                return (1, str(source.get("label_de") or ""))
+            return (2, str(source.get("label_de") or ""))
 
-        # Keep a configured moving tag visible even when the publisher removed
-        # it. That is exactly when the user needs the channel selector.
-        if (
-            _is_update_channel_tag(current_tag)
-            and current_tag.casefold() not in {x.casefold() for x in channels}
-        ):
-            channels.insert(0, current_tag)
-
+        sources = sorted(list(sources or []), key=source_rank)
         options = []
-        for tag in channels:
-            available = tag.casefold() in registry_lookup
-            current = tag.casefold() == current_tag.casefold()
-            target_ref = f"{repo_text}:{tag}" if repo_text else None
-            options.append({
-                "tag": tag,
-                "current": current,
-                "available": available,
-                "can_apply": bool(available and not current),
-                "target_image": target_ref,
-            })
-            if available:
-                total_available += 1
+        registry_errors = []
+
+        for source in sources:
+            source_ref = str(source.get("image_ref") or "").strip()
+            source_parsed = parse_image_ref(source_ref)
+            source_repo_key = str(source_parsed.get("normalized_repo") or "").strip()
+            source_repo_text = str(source_parsed.get("repo") or "").strip()
+            source_id = str(
+                source.get("id")
+                or _image_source_source_id(source_ref)
+            ).strip()
+            if not source_repo_key or not source_repo_text or not source_id:
+                continue
+
+            registry_values = []
+            registry_error = None
+            try:
+                registry_values, registry_error = registry_tags(
+                    source_repo_key,
+                    max_pages=5,
+                )
+            except Exception as exc:
+                registry_error = str(exc)
+
+            registry_values = [
+                str(value or "").strip()
+                for value in (registry_values or [])
+                if str(value or "").strip()
+            ]
+            registry_lookup = {
+                value.casefold(): value
+                for value in registry_values
+            }
+            channels = registry_update_channel_tags(
+                registry_values,
+                current_tag=(
+                    current_tag
+                    if source_repo_key.casefold() == current_repo_key.casefold()
+                    else None
+                ),
+                limit=40,
+            )
+
+            # Keep the configured moving channel visible even when its registry
+            # tag disappeared. Only the current Compose source gets this
+            # diagnostic entry.
+            if (
+                source_repo_key.casefold() == current_repo_key.casefold()
+                and _is_update_channel_tag(current_tag)
+                and current_tag.casefold()
+                    not in {value.casefold() for value in channels}
+            ):
+                channels.insert(0, current_tag)
+
+            if registry_error:
+                registry_errors.append(
+                    f"{source_repo_text}: {str(registry_error)[:220]}"
+                )
+
+            source_label = str(
+                source.get("label_de")
+                or source.get("label_en")
+                or _image_source_registry_label(source_ref)
+                or source_repo_text
+            ).strip()
+            source_is_runtime = bool(
+                runtime_repo_key
+                and source_repo_key.casefold() == runtime_repo_key.casefold()
+            )
+            source_is_compose = bool(
+                source_repo_key.casefold() == current_repo_key.casefold()
+            )
+
+            for tag in channels:
+                available = tag.casefold() in registry_lookup
+                current = bool(
+                    source_is_compose
+                    and tag.casefold() == current_tag.casefold()
+                )
+                target_ref = f"{source_repo_text}:{tag}"
+                option_id = f"{source_id}|{tag}"
+                options.append({
+                    "option_id": option_id,
+                    "source_id": source_id,
+                    "source_label": source_label,
+                    "source_repository": source_repo_text,
+                    "source_is_runtime": source_is_runtime,
+                    "source_is_compose": source_is_compose,
+                    "tag": tag,
+                    "current": current,
+                    "available": available,
+                    "can_apply": bool(available and not current),
+                    "target_image": target_ref,
+                })
+                if available:
+                    total_available += 1
 
         images.append({
             "image_key": image_key,
             "image_ref": current_ref,
-            "repository": repo_text,
-            "normalized_repository": repo_key,
+            "repository": current_repo_text,
+            "normalized_repository": current_repo_key,
+            "runtime_image_ref": runtime_ref,
+            "runtime_repository": runtime_repo_key or None,
             "services": services,
             "containers": containers,
             "service_label": ", ".join(services) if services else current_ref,
             "current_tag": current_tag,
             "current_version": current_version,
             "options": options,
-            "registry_error": str(registry_error or "")[:300] or None,
+            "registry_error": "; ".join(
+                [str(x) for x in (registry_errors + list(discovery_errors or [])) if str(x).strip()]
+            )[:500] or None,
         })
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "backend_version": VERSION,
         "stack_key": app_item.get("stack_key"),
         "app": app_item.get("name"),
@@ -7416,8 +7582,7 @@ def image_channel_options_for_app(app_item):
         "backup": {"required": True, "default_mode": "full"},
     }
 
-
-def perform_image_channel_switch(app_item, image_key, target_tag):
+def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None):
     item = _image_source_find_item(app_item, image_key)
     if not item:
         raise RuntimeError("The selected Docker image no longer exists in this app")
@@ -7438,12 +7603,49 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
         or ""
     ).strip()
     parsed = parse_image_ref(current_ref)
-    repo_key = str(parsed.get("normalized_repo") or "").strip()
-    repo_text = str(parsed.get("repo") or "").strip()
+    current_repo_key = str(parsed.get("normalized_repo") or "").strip()
+    current_repo_text = str(parsed.get("repo") or "").strip()
     current_tag = str(parsed.get("tag") or "latest").strip() or "latest"
     target_tag = str(target_tag or "").strip()
+    source_id = str(source_id or "").strip() or None
 
-    if not project or not stack_key or not current_ref or not repo_key or not repo_text:
+    target_source = None
+    target_repo_key = current_repo_key
+    target_repo_text = current_repo_text
+
+    if source_id:
+        _source_item, _source_platform, target_source, _all_sources = (
+            _image_source_source_for_id(app_item, image_key, source_id)
+        )
+        source_ref = str((target_source or {}).get("image_ref") or "").strip()
+        source_parsed = parse_image_ref(source_ref)
+        target_repo_key = str(
+            source_parsed.get("normalized_repo") or ""
+        ).strip()
+        target_repo_text = str(source_parsed.get("repo") or "").strip()
+
+        # A combined source + channel change is only allowed for source
+        # candidates that already passed the Image Quelle compatibility checks.
+        source_option = build_image_source_option(
+            app_item,
+            image_key,
+            source_id,
+        )
+        if source_option.get("level") != "ok":
+            raise RuntimeError(
+                "The selected image source is not verified as a safe Update Kanal source. "
+                "Use Image Quelle first if you want to accept compatibility warnings."
+            )
+
+    if (
+        not project
+        or not stack_key
+        or not current_ref
+        or not current_repo_key
+        or not current_repo_text
+        or not target_repo_key
+        or not target_repo_text
+    ):
         raise RuntimeError("Incomplete update channel switch plan")
     if is_update_monitor_self_app(app_item):
         raise RuntimeError(
@@ -7455,10 +7657,13 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
         raise RuntimeError(
             "The selected tag is a concrete version, not an update channel"
         )
-    if target_tag.casefold() == current_tag.casefold():
+    same_repo = (
+        target_repo_key.casefold() == current_repo_key.casefold()
+    )
+    if same_repo and target_tag.casefold() == current_tag.casefold():
         raise RuntimeError("The selected update channel is already active")
 
-    registry_values, registry_error = registry_tags(repo_key, max_pages=5)
+    registry_values, registry_error = registry_tags(target_repo_key, max_pages=5)
     if registry_error:
         raise RuntimeError(
             "Could not read registry tags for this image: " + str(registry_error)
@@ -7473,7 +7678,7 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
             f'Docker tag "{target_tag}" is not available in the current image registry'
         )
 
-    target_ref = f"{repo_text}:{target_tag}"
+    target_ref = f"{target_repo_text}:{target_tag}"
     service_names = _image_source_service_names(item)
     container_names = _image_source_container_names(item)
     if not service_names or not container_names:
@@ -7481,7 +7686,7 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
 
     platform = _image_source_current_platform()
     remote_digests, manifest_error = registry_manifest_digests(
-        repo_key,
+        target_repo_key,
         target_tag,
         platform,
         timeout=12,
@@ -7655,6 +7860,8 @@ def perform_image_channel_switch(app_item, image_key, target_tag):
             "new_image_ref": target_ref,
             "old_tag": current_tag,
             "target_tag": target_tag,
+            "source_id": source_id,
+            "source_changed": not same_repo,
             "activation": activation,
             "compose_services": changed_services,
             "containers": container_names,
@@ -18037,6 +18244,7 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
             app_item,
             data.image_key,
             data.tag,
+            source_id=data.source_id,
         )
         if isinstance(result, dict):
             result["backup"] = backup_result

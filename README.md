@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.354**
+Current release: **v0.3.355**
+
+Update Kanal is now source-aware. Moving tags can be selected together with a verified image source, and an already active Docker/ZimaOS runtime alias is preferred over a conflicting Compose registry. This fixes channel changes such as Uptime Kuma from a GHCR fixed tag to the Docker Hub v2 channel.
 
 Registry alias verification now accepts an exact Docker image ID match when Docker Hub and GHCR expose different RepoDigests for the same image. This prevents a successful Update Kanal change from being rolled back only because ZimaOS/Docker activates the equivalent registry alias.
 
