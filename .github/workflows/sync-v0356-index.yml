@@ -1,4 +1,4 @@
-name: Validate and synchronize v0.3.359
+name: Validate and synchronize release
 
 on:
   push:
@@ -33,8 +33,8 @@ jobs:
           path = Path("static/index.html")
           text = path.read_text(encoding="utf-8")
 
-          for old in ("0.3.356", "0.3.357", "0.3.358"):
-              text = text.replace(old, "0.3.359")
+          for old in ("0.3.356", "0.3.357", "0.3.358", "0.3.360"):
+              text = text.replace(old, "0.3.360")
 
           old = """  const storedAutoError=(
               policy.auto_enabled
@@ -55,7 +55,7 @@ jobs:
           path.write_text(text, encoding="utf-8")
           PY
 
-      - name: Run v0.3.359 regression checks
+      - name: Run v0.3.360 regression checks
         shell: bash
         run: |
           set -euo pipefail
@@ -67,7 +67,7 @@ jobs:
           main = Path("app/main.py").read_text(encoding="utf-8")
           html = Path("static/index.html").read_text(encoding="utf-8")
 
-          assert 'VERSION = "0.3.359"' in main
+          assert 'VERSION = "0.3.360"' in main
           tree = ast.parse(main)
 
           functions = {
@@ -88,7 +88,7 @@ jobs:
               exec(compile(module, "<regression>", "exec"), scope)
               return scope[name], scope
 
-          # Exact v0.3.359 helper: live Docker must beat a stale GHCR scan alias.
+          # Exact v0.3.360 helper: live Docker must beat a stale GHCR scan alias.
           def parse_image_ref(value):
               value = str(value or "").strip().split("@", 1)[0]
               slash = value.rfind("/")
@@ -116,6 +116,25 @@ jobs:
           assert target_fn(item, "2") == "louislam/uptime-kuma:2"
           assert target_fn(item, "2.5.5") == "louislam/uptime-kuma:2.5.5"
           assert target_fn(item) == "louislam/uptime-kuma:2.5.4"
+
+          # Mixed Compose/runtime regression from Uptime Kuma:
+          # Compose GHCR:2.5.4 + live Docker Hub:2 must be reconciled, not rejected.
+          reconcile_fn, _ = load_function(
+              "_update_channel_target_already_active",
+              {
+                  "image_ref_matches_target": lambda current, target: current == target,
+              },
+          )
+          assert reconcile_fn(
+              "ghcr.io/louislam/uptime-kuma:2.5.4",
+              "louislam/uptime-kuma:2",
+              "louislam/uptime-kuma:2",
+          ) is False
+          assert reconcile_fn(
+              "louislam/uptime-kuma:2",
+              "louislam/uptime-kuma:2",
+              "louislam/uptime-kuma:2",
+          ) is True
 
           # Exact follow-policy helper: channel 2 must survive and legacy :2 must recover.
           channel_fn, _ = load_function(
@@ -167,6 +186,8 @@ jobs:
               r'save_monitor_policy\(\s*stack_key,\s*"follow",\s*target_tag,',
               channel_switch,
           )
+          assert "_update_channel_target_already_active(" in channel_switch
+          assert "compose_ref or current_ref" in channel_switch
 
           version_update = function_source("perform_version_update")
           assert "_follow_policy_tag(" in version_update
@@ -179,10 +200,20 @@ jobs:
           assert "0.3.356" not in html
           assert "0.3.357" not in html
           assert "0.3.358" not in html
-          assert "const UPDATE_MONITOR_VERSION = 'v0.3.359';" in html
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.360';" in html
+          compose = Path("docker-compose.zimaos.yml").read_text(encoding="utf-8")
+          readme = Path("README.md").read_text(encoding="utf-8")
+          manifest = Path("static/site.webmanifest").read_text(encoding="utf-8")
+          channel_js = Path("static/update-channel.js").read_text(encoding="utf-8")
+          audit = Path("translation-audit-current.json").read_text(encoding="utf-8")
+          assert 'version: "0.3.360"' in compose
+          assert "Current release: **v0.3.360**" in readme
+          assert "0.3.360" in manifest
+          assert "um-update-channel-v0360" in channel_js
+          assert '"version": "v0.3.360"' in audit
           assert "const storedAutoError=(\n    !isChecking\n    &&policy.auto_enabled" in html
 
-          print("v0.3.359 regression checks passed")
+          print("v0.3.360 regression checks passed")
           PY
 
       - name: Commit synchronized frontend
@@ -196,5 +227,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add static/index.html
-          git commit -m "Synchronize static UI and regression guard for v0.3.359"
+          git commit -m "Synchronize static UI and regression guard for v0.3.360"
           git push

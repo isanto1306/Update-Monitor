@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.359"
+VERSION = "0.3.360"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -7661,6 +7661,25 @@ def image_channel_options_for_app(app_item):
         "backup": {"required": True, "default_mode": "full"},
     }
 
+def _update_channel_target_already_active(compose_ref, runtime_ref, target_ref):
+    """Return True only when Compose and the live container already match target.
+
+    A failed or interrupted source/channel change can leave Compose on one
+    registry/tag while Docker is already running another. In that mixed state
+    Update Kanal must reconcile Compose instead of rejecting the request as
+    already active.
+    """
+    target_ref = str(target_ref or "").strip()
+    compose_ref = str(compose_ref or "").strip()
+    runtime_ref = str(runtime_ref or "").strip()
+    if not target_ref or not compose_ref or not runtime_ref:
+        return False
+    return bool(
+        image_ref_matches_target(compose_ref, target_ref)
+        and image_ref_matches_target(runtime_ref, target_ref)
+    )
+
+
 def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None):
     item = _image_source_find_item(app_item, image_key)
     if not item:
@@ -7677,10 +7696,10 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
     project = str(app_item.get("compose_project") or "").strip()
     stack_key = str(app_item.get("stack_key") or "").strip()
 
-    # Update Kanal is deliberately registry-preserving. The running container
-    # is the authoritative source for the active registry because ZimaOS can
-    # persist a Compose source change before the runtime container follows it.
-    # A registry/source change belongs to Image Quelle, never to Update Kanal.
+    # The running container is authoritative for the target registry. Compose
+    # can be stale after an interrupted source/channel change, so keep the
+    # original Compose ref separately and reconcile it to the verified runtime
+    # registry when the selected channel is applied.
     compose_ref = str(
         _image_source_compose_configured_ref(app_item, item)
         or item.get("image_ref")
@@ -7756,8 +7775,6 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
     same_repo = (
         target_repo_key.casefold() == current_repo_key.casefold()
     )
-    if same_repo and target_tag.casefold() == current_tag.casefold():
-        raise RuntimeError("The selected update channel is already active")
 
     registry_values, registry_error = registry_tags(target_repo_key, max_pages=5)
     if registry_error:
@@ -7775,6 +7792,13 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         )
 
     target_ref = f"{target_repo_text}:{target_tag}"
+    if _update_channel_target_already_active(
+        compose_ref,
+        runtime_ref,
+        target_ref,
+    ):
+        raise RuntimeError("The selected update channel is already active")
+
     service_names = _image_source_service_names(item)
     container_names = _image_source_container_names(item)
     if not service_names or not container_names:
@@ -7968,9 +7992,10 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
 
         return {
             "project": project,
-            "old_image_ref": current_ref,
+            "old_image_ref": compose_ref or current_ref,
+            "old_runtime_image_ref": runtime_ref or None,
             "new_image_ref": target_ref,
-            "old_tag": current_tag,
+            "old_tag": str(parse_image_ref(compose_ref or current_ref).get("tag") or current_tag),
             "target_tag": target_tag,
             "source_id": source_id,
             "source_changed": not same_repo,
@@ -8005,7 +8030,7 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
                     project,
                     container_names,
                     rollback_start_ids,
-                    current_ref,
+                    compose_ref or current_ref,
                     rollback_expected_digests,
                     timeout=180,
                     recreate_after=20,
@@ -8018,7 +8043,7 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
                 for name, previous_state in original_states.items():
                     wait_for_image_source_target_runtime(
                         name,
-                        current_ref,
+                        compose_ref or current_ref,
                         original_repo_digests.get(name) or [],
                         timeout=90,
                         expected_image_id=original_image_ids.get(name),

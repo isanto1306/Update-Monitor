@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.359**
+Current release: **v0.3.360**
+
+v0.3.360 repairs mixed Compose/runtime channel states. If Compose still points to an old GHCR fixed tag while the live container already runs the Docker Hub channel, Update Kanal now reconciles Compose to the selected live registry/channel instead of falsely reporting that the channel is already active. Automatic rollback verifies the restored original Compose ref, not the stale runtime alias.
 
 v0.3.359 preserves the selected moving Docker channel (for example `:2`) across scans, automatic updates and policy edits. Normal updates resolve the live Docker repository before cached source metadata, and a manual Docker check acknowledges an old automatic-update error so the same stale red message is not immediately rendered again.
 

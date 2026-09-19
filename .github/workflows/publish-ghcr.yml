@@ -3,7 +3,7 @@ name: Publish Docker image
 on:
   workflow_run:
     workflows:
-      - Validate and synchronize v0.3.359
+      - Validate and synchronize release
     types:
       - completed
   push:
