@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.352**
+Current release: **v0.3.353**
+
+Update Kanal no longer starts a second forced ZimaOS container recreate during the Compose channel change. It now waits for the original Compose apply to finish and verifies the target digest. The separate Image Quelle recreate path now prefers the current Docker container ID after replacement.
 
 Update Kanal now treats HTTP 502, 503 and 504 responses as transport interruptions when the backend Docker action is still running. The dialog keeps the action locked, follows backend progress and waits for the targeted verification instead of showing a false failure while ZimaOS is still applying the change.
 
