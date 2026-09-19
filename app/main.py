@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.357"
+VERSION = "0.3.358"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -447,11 +447,30 @@ def finish_action_progress(stack_key, success, error=None):
             record["phase"] = "error"
 
 
+def _action_progress_finished_expired(record, max_age_seconds=60):
+    if not isinstance(record, dict) or not record.get("finished"):
+        return False
+    raw = str(record.get("updated_at") or "").strip()
+    if not raw:
+        return False
+    try:
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds()
+        return age >= max(5, int(max_age_seconds))
+    except Exception:
+        return False
+
+
 def action_progress_snapshot(stack_key):
     stack_key = str(stack_key or "").strip()
     with action_progress_lock:
         record = action_progress.get(stack_key)
         if not record:
+            return None
+        if _action_progress_finished_expired(record):
+            action_progress.pop(stack_key, None)
             return None
         # Deep-copy through JSON so callers cannot mutate nested lists.
         return json.loads(json.dumps(record))
@@ -461,8 +480,12 @@ def action_progress_public_snapshot():
     """Compact progress records for the lightweight live-status poll."""
     with action_progress_lock:
         result = {}
+        expired_keys = []
         for key, record in action_progress.items():
             if not isinstance(record, dict):
+                continue
+            if _action_progress_finished_expired(record):
+                expired_keys.append(key)
                 continue
             result[str(key)] = {
                 "stack_key": str(record.get("stack_key") or key),
@@ -477,6 +500,8 @@ def action_progress_public_snapshot():
                 "success": record.get("success"),
                 "error": record.get("error"),
             }
+        for key in expired_keys:
+            action_progress.pop(key, None)
         return json.loads(json.dumps(result))
 
 
@@ -16221,6 +16246,45 @@ def restore_app_backup(app_item, backup_id=None, stack_key=None):
         if temporary_root is not None:
             shutil.rmtree(temporary_root, ignore_errors=True)
 
+def _update_target_ref_on_active_registry(item, requested_tag=None):
+    """Build an update target on the registry used by the live container.
+
+    Normal updates must not migrate registries implicitly. If Compose/source
+    metadata disagrees with Docker after an interrupted source/channel change,
+    the live container repository is authoritative and only the tag is changed.
+    """
+    item = item or {}
+    candidates = []
+
+    for value in item.get("runtime_image_refs") or []:
+        value = str(value or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    for container in item.get("containers") or []:
+        name = str((container or {}).get("name") or "").strip()
+        if not name:
+            continue
+        value = str(docker_container_config_image(name) or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    for value in (item.get("image_ref"), item.get("tracking_image_ref")):
+        value = str(value or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    for value in candidates:
+        parsed = parse_image_ref(value)
+        repo = str(parsed.get("repo") or "").strip()
+        if not repo:
+            continue
+        tag = str(requested_tag or parsed.get("tag") or "latest").strip() or "latest"
+        return f"{repo}:{tag}"
+
+    return ""
+
+
 def perform_version_update(app_item):
     project = app_item.get("compose_project")
     if not project:
@@ -16294,7 +16358,14 @@ def perform_version_update(app_item):
                 f"No installable target tag was found for version-group image {old_ref}"
             )
 
-        new_ref = f"{parsed['repo']}:{exact_target_tag}"
+        new_ref = _update_target_ref_on_active_registry(
+            item,
+            requested_tag=exact_target_tag,
+        )
+        if not new_ref:
+            raise RuntimeError(
+                f"Could not determine the active Docker registry for {old_ref}"
+            )
 
         # Do not probe the registry a second time here.  docker_pull_verified()
         # is the authoritative installability check and avoids an extra Docker
@@ -16693,11 +16764,17 @@ def perform_image_update(app_item):
     # Pull and verify every unique target before asking ZimaOS to recreate.
     target_verification = {}
     for item in targets:
-        image_ref = str(
+        tracking_ref = str(
             item.get("tracking_image_ref")
             or item.get("image_ref")
             or ""
         ).strip()
+        tracking_parsed = parse_image_ref(tracking_ref)
+        requested_tag = str(tracking_parsed.get("tag") or "latest").strip() or "latest"
+        image_ref = _update_target_ref_on_active_registry(
+            item,
+            requested_tag=requested_tag,
+        )
         if not image_ref:
             raise RuntimeError("Could not determine same-tag target image")
         if image_ref in target_verification:
@@ -16711,11 +16788,17 @@ def perform_image_update(app_item):
     tracking_pin_targets = []
 
     for item in targets:
-        image_ref = str(
+        tracking_ref = str(
             item.get("tracking_image_ref")
             or item.get("image_ref")
             or ""
         ).strip()
+        tracking_parsed = parse_image_ref(tracking_ref)
+        requested_tag = str(tracking_parsed.get("tag") or "latest").strip() or "latest"
+        image_ref = _update_target_ref_on_active_registry(
+            item,
+            requested_tag=requested_tag,
+        )
         verification = target_verification.get(image_ref) or {}
         expected_digests = list(verification.get("expected_digests") or [])
         if not expected_digests:
