@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.358"
+VERSION = "0.3.359"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -2857,6 +2857,34 @@ def _is_update_channel_tag(tag):
     return bool(re.fullmatch(r"\d+", value))
 
 
+def _follow_policy_tag(policy, current_tags=None):
+    """Return the moving tag followed by one app/version family.
+
+    v0.3.358 still collapsed every follow policy to :latest. A selected channel
+    such as :2 must survive scans, automatic updates and policy edits. Legacy
+    policies with no saved target recover the currently configured moving tag
+    when all members of the version family agree on one.
+    """
+    policy = policy or {}
+    stored = str(policy.get("target_tag") or "").strip()
+    if stored and _is_update_channel_tag(stored):
+        return stored
+
+    values = [
+        str(value or "").strip()
+        for value in (current_tags or [])
+        if str(value or "").strip()
+    ]
+    if values and all(_is_update_channel_tag(value) for value in values):
+        unique = {}
+        for value in values:
+            unique.setdefault(value.casefold(), value)
+        if len(unique) == 1:
+            return next(iter(unique.values()))
+
+    return FOLLOW_POLICY_TAG
+
+
 def registry_update_channel_tags(registry_tags_value, current_tag=None, limit=40):
     """Return moving registry tags separately from concrete release versions."""
     values = []
@@ -4001,6 +4029,27 @@ def record_auto_update_result(
         save_json(POLICY_FILE, policies)
 
 
+def acknowledge_auto_update_error(stack_key):
+    """Hide an old automatic-update error after an explicit manual recheck.
+
+    Retry timing/signature/result are deliberately preserved. A later automatic
+    failure writes a fresh error again; a manual Docker check only acknowledges
+    the already-seen diagnostic.
+    """
+    key = str(stack_key or "").strip()
+    if not key:
+        return False
+    with policies_lock:
+        current = dict(policies.get(key) or {})
+        if not str(current.get("last_auto_error") or "").strip():
+            return False
+        current["last_auto_error"] = None
+        current["last_auto_error_acknowledged_at"] = utc_now()
+        policies[key] = current
+        save_json(POLICY_FILE, policies)
+    return True
+
+
 def record_follow_normalization_result(
     stack_key,
     signature,
@@ -4493,6 +4542,10 @@ def apply_monitor_policy_fields(app_item):
 
     mode = policy.get("mode") or "fixed"
     target_tag = str(policy.get("target_tag") or "").strip() or None
+    follow_tag = _follow_policy_tag(
+        policy,
+        current_tags=((group or {}).get("current_tags") or []),
+    )
     can_version_update = False
 
     current_aliases = {
@@ -4517,8 +4570,8 @@ def apply_monitor_policy_fields(app_item):
             mismatched = [
                 item
                 for item in group_items
-                if str(_version_item_current_tag(item) or "").strip().lower()
-                != FOLLOW_POLICY_TAG
+                if str(_version_item_current_tag(item) or "").strip().casefold()
+                != str(follow_tag).casefold()
             ]
 
             if mismatched:
@@ -4555,7 +4608,7 @@ def apply_monitor_policy_fields(app_item):
 
     app_item["monitor_policy"] = policy
     app_item["policy_available_tags"] = available_tags
-    app_item["policy_follow_tag"] = FOLLOW_POLICY_TAG
+    app_item["policy_follow_tag"] = follow_tag
     app_item["follow_tag_switch_only"] = follow_tag_switch_only
     app_item["follow_target_state"] = follow_target_state
     app_item["can_version_update"] = can_version_update
@@ -5266,10 +5319,11 @@ def enrich_follow_policy_targets(results, platform):
             item.pop("follow_target_digests", None)
             continue
 
-        current_tag = str(item.get("tag") or "").strip().lower()
-        item["follow_target_tag"] = FOLLOW_POLICY_TAG
+        current_tag = str(item.get("tag") or "").strip()
+        follow_tag = _follow_policy_tag(policy, current_tags=[current_tag])
+        item["follow_target_tag"] = follow_tag
 
-        if current_tag == FOLLOW_POLICY_TAG:
+        if current_tag.casefold() == str(follow_tag).casefold():
             item["follow_target_same_image"] = True
             item["follow_target_state"] = "already-following"
             item["follow_target_error"] = None
@@ -5300,16 +5354,16 @@ def enrich_follow_policy_targets(results, platform):
             item["follow_target_digests"] = []
             continue
 
-        pending.append((item, repo_key, local))
+        pending.append((item, repo_key, local, follow_tag))
 
     if not pending:
         return
 
-    def check_one(item, repo_key, local):
+    def check_one(item, repo_key, local, follow_tag):
         try:
             remote, error = registry_manifest_digests(
                 repo_key,
-                FOLLOW_POLICY_TAG,
+                follow_tag,
                 platform,
                 timeout=10,
             )
@@ -5323,7 +5377,7 @@ def enrich_follow_policy_targets(results, platform):
         }
 
         if error or not remote:
-            detail = str(error or "No remote latest digest")[:240]
+            detail = str(error or f"No remote {follow_tag} digest")[:240]
             state = "missing" if "HTTP 404" in detail else "unknown"
             return item, None, state, detail, []
 
@@ -5338,8 +5392,8 @@ def enrich_follow_policy_targets(results, platform):
     worker_count = max(1, min(4, len(pending)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [
-            executor.submit(check_one, item, repo_key, local)
-            for item, repo_key, local in pending
+            executor.submit(check_one, item, repo_key, local, follow_tag)
+            for item, repo_key, local, follow_tag in pending
         ]
         for future in concurrent.futures.as_completed(futures):
             try:
@@ -7893,7 +7947,7 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         policy_after = save_monitor_policy(
             stack_key,
             "follow",
-            None,
+            target_tag,
             auto_enabled=bool(previous_policy.get("auto_enabled")),
             auto_immediate=bool(previous_policy.get("auto_immediate")),
             auto_time=previous_policy.get("auto_time"),
@@ -8214,10 +8268,22 @@ def perform_image_source_switch(app_item, image_key, source_id, accept_warnings=
             restored_states[name] = current_state
 
         previous_policy = get_monitor_policy(stack_key)
+        source_target_tag = str(
+            parse_image_ref(target_ref).get("tag") or ""
+        ).strip()
+        follow_target_tag = (
+            _follow_policy_tag(previous_policy)
+            if str(previous_policy.get("mode") or "") == "follow"
+            else (
+                source_target_tag
+                if _is_update_channel_tag(source_target_tag)
+                else FOLLOW_POLICY_TAG
+            )
+        )
         policy_after = save_monitor_policy(
             stack_key,
             "follow",
-            None,
+            follow_target_tag,
             auto_enabled=bool(previous_policy.get("auto_enabled")),
             auto_immediate=bool(previous_policy.get("auto_immediate")),
             auto_time=previous_policy.get("auto_time"),
@@ -11007,7 +11073,10 @@ def _auto_update_signature(app_item):
         if policy.get("mode") == "upgrade":
             target = str(policy.get("target_tag") or "").strip()
         elif policy.get("mode") == "follow":
-            target = FOLLOW_POLICY_TAG
+            target = _follow_policy_tag(
+                policy,
+                current_tags=(version_group.get("current_tags") or []),
+            )
         else:
             target = ""
 
@@ -11098,10 +11167,14 @@ def _follow_normalization_signature(app_item):
 
     group = select_primary_version_group(app_item)
     items = list((group or {}).get("items") or [])
+    follow_tag = _follow_policy_tag(
+        policy,
+        current_tags=((group or {}).get("current_tags") or []),
+    )
     parts = []
     for item in items:
-        current_tag = str(_version_item_current_tag(item) or "").strip().lower()
-        if current_tag == FOLLOW_POLICY_TAG:
+        current_tag = str(_version_item_current_tag(item) or "").strip()
+        if current_tag.casefold() == str(follow_tag).casefold():
             continue
         image_ref = str(item.get("image_ref") or "").strip()
         digests = ",".join(sorted(
@@ -11114,7 +11187,12 @@ def _follow_normalization_signature(app_item):
 
     if not parts:
         return None
-    return "follow-normalize:" + "|".join(sorted(parts)) + "->latest"
+    return (
+        "follow-normalize:"
+        + "|".join(sorted(parts))
+        + "->"
+        + str(follow_tag)
+    )
 
 
 def _follow_normalization_due(app_item, now_utc=None):
@@ -16256,16 +16334,18 @@ def _update_target_ref_on_active_registry(item, requested_tag=None):
     item = item or {}
     candidates = []
 
-    for value in item.get("runtime_image_refs") or []:
-        value = str(value or "").strip()
-        if value and value not in candidates:
-            candidates.append(value)
-
+    # Fresh Docker state is authoritative. Cached scan/runtime refs may still
+    # contain a registry alias from an older failed source/channel operation.
     for container in item.get("containers") or []:
         name = str((container or {}).get("name") or "").strip()
         if not name:
             continue
         value = str(docker_container_config_image(name) or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    for value in item.get("runtime_image_refs") or []:
+        value = str(value or "").strip()
         if value and value not in candidates:
             candidates.append(value)
 
@@ -16315,9 +16395,12 @@ def perform_version_update(app_item):
             raise RuntimeError("The selected version is no longer available")
         target_map = _version_group_target_map(group, target_tag, "available")
     else:
-        target_tag = FOLLOW_POLICY_TAG
+        target_tag = _follow_policy_tag(
+            policy,
+            current_tags=((group or {}).get("current_tags") or []),
+        )
         target_map = {
-            str(item.get("image_ref") or "").strip(): FOLLOW_POLICY_TAG
+            str(item.get("image_ref") or "").strip(): target_tag
             for item in group_items
             if str(item.get("image_ref") or "").strip()
         }
@@ -16764,17 +16847,7 @@ def perform_image_update(app_item):
     # Pull and verify every unique target before asking ZimaOS to recreate.
     target_verification = {}
     for item in targets:
-        tracking_ref = str(
-            item.get("tracking_image_ref")
-            or item.get("image_ref")
-            or ""
-        ).strip()
-        tracking_parsed = parse_image_ref(tracking_ref)
-        requested_tag = str(tracking_parsed.get("tag") or "latest").strip() or "latest"
-        image_ref = _update_target_ref_on_active_registry(
-            item,
-            requested_tag=requested_tag,
-        )
+        image_ref = _update_target_ref_on_active_registry(item)
         if not image_ref:
             raise RuntimeError("Could not determine same-tag target image")
         if image_ref in target_verification:
@@ -16788,17 +16861,7 @@ def perform_image_update(app_item):
     tracking_pin_targets = []
 
     for item in targets:
-        tracking_ref = str(
-            item.get("tracking_image_ref")
-            or item.get("image_ref")
-            or ""
-        ).strip()
-        tracking_parsed = parse_image_ref(tracking_ref)
-        requested_tag = str(tracking_parsed.get("tag") or "latest").strip() or "latest"
-        image_ref = _update_target_ref_on_active_registry(
-            item,
-            requested_tag=requested_tag,
-        )
+        image_ref = _update_target_ref_on_active_registry(item)
         verification = target_verification.get(image_ref) or {}
         expected_digests = list(verification.get("expected_digests") or [])
         if not expected_digests:
@@ -17663,6 +17726,11 @@ def app_scan(data: AppScanRequest, request: Request):
             detail="A scan or Docker action is already active",
         )
 
+    # The user explicitly asked for a fresh Docker check. Do not keep painting
+    # a previous automatic-update failure after this new check has started.
+    acknowledge_auto_update_error(stack_key)
+    refresh_scan_policy_fields()
+
     return {
         "started": True,
         "state": "scanning",
@@ -18019,6 +18087,7 @@ def app_policy(data: AppPolicyRequest, request: Request):
         )
 
     available_tags = policy_available_tags(app_item)
+    current_policy = get_monitor_policy(data.stack_key)
     target_tag = str(data.target_tag or "").strip() or None
 
     if mode in {"upgrade", "follow", "notify"} and not app_item.get("compose_project"):
@@ -18035,6 +18104,23 @@ def app_policy(data: AppPolicyRequest, request: Request):
                 status_code=400,
                 detail="The selected version is not available in the current scan",
             )
+    elif mode == "follow":
+        if target_tag and not _is_update_channel_tag(target_tag):
+            raise HTTPException(
+                status_code=400,
+                detail="Follow mode requires a moving Docker channel",
+            )
+        if not target_tag:
+            if str(current_policy.get("mode") or "") == "follow":
+                target_tag = _follow_policy_tag(
+                    current_policy,
+                    current_tags=(
+                        (select_primary_version_group(app_item) or {}).get("current_tags")
+                        or []
+                    ),
+                )
+            else:
+                target_tag = FOLLOW_POLICY_TAG
     else:
         target_tag = None
 
