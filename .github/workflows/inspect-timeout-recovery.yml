@@ -1,0 +1,42 @@
+name: Inspect timeout recovery helpers
+on:
+  push:
+    branches: [fix-update-channel-timeout-0352]
+    paths: ['.github/workflows/inspect-timeout-recovery.yml']
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print timeout helpers
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("static/index.html").read_text(encoding="utf-8")
+          terms=[
+            "HTTP 504",
+            "HTTP 503",
+            "HTTP 502",
+            "waitForPostUpdateVerification",
+            "beginVerificationState",
+            "async function api",
+            "function api",
+            "gateway",
+            "interrupted",
+            "verification timeout",
+            "update request",
+          ]
+          for term in terms:
+              print("\n###",term)
+              start=0
+              count=0
+              while True:
+                  i=s.lower().find(term.lower(),start)
+                  if i<0: break
+                  count+=1
+                  print("OFFSET",i)
+                  print(s[max(0,i-2500):min(len(s),i+8500)])
+                  start=i+len(term)
+                  if count>=8: break
+          PY
