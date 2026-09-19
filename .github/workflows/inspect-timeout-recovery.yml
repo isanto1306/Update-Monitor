@@ -26,6 +26,8 @@ jobs:
             "interrupted",
             "verification timeout",
             "update request",
+            "finishActionProgressPolling",
+            "startActionProgressPolling",
           ]
           for term in terms:
               print("\n###",term)
