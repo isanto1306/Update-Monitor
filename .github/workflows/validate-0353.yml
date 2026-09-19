@@ -1,0 +1,130 @@
+name: Validate Update Monitor 0.3.353
+
+on:
+  push:
+    branches:
+      - fix-channel-recreate-0353
+    paths:
+      - '.github/workflows/validate-0353.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.event.head_commit.message == 'Apply 0.3.353 release markers and tests'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-channel-recreate-0353
+          fetch-depth: 0
+
+      - name: Patch release markers
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def once(text, old, new, label):
+              count=text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 occurrence, found {count}")
+              return text.replace(old,new,1)
+
+          index=Path("static/index.html")
+          s=index.read_text(encoding="utf-8")
+          s=s.replace("?v=0.3.352","?v=0.3.353")
+          s=s.replace(">v0.3.352<",">v0.3.353<")
+          s=once(
+              s,
+              "const UPDATE_MONITOR_VERSION = 'v0.3.352';",
+              "const UPDATE_MONITOR_VERSION = 'v0.3.353';",
+              "frontend version",
+          )
+          index.write_text(s,encoding="utf-8")
+
+          channel=Path("static/update-channel.js")
+          ch=channel.read_text(encoding="utf-8")
+          ch=ch.replace("um-update-channel-v0352","um-update-channel-v0353")
+          channel.write_text(ch,encoding="utf-8")
+
+          manifest=Path("static/site.webmanifest")
+          m=manifest.read_text(encoding="utf-8").replace("?v=0.3.352","?v=0.3.353")
+          manifest.write_text(m,encoding="utf-8")
+
+          readme=Path("README.md")
+          r=readme.read_text(encoding="utf-8")
+          r=once(r,"Current release: **v0.3.352**","Current release: **v0.3.353**","README release")
+          marker="Current release: **v0.3.353**\n"
+          note=(
+              "\nUpdate Kanal no longer starts a second forced ZimaOS container recreate "
+              "during the Compose channel change. It now waits for the original Compose "
+              "apply to finish and verifies the target digest. The separate Image Quelle "
+              "recreate path now prefers the current Docker container ID after replacement.\n"
+          )
+          r=r.replace(marker,marker+note,1)
+          readme.write_text(r,encoding="utf-8")
+
+          compose=Path("docker-compose.zimaos.yml")
+          c=compose.read_text(encoding="utf-8")
+          c=once(c,'  version: "0.3.352"','  version: "0.3.353"',"Compose version")
+          c=re.sub(r'(?m)^  update_at: "[^"]+"$','  update_at: "2026-09-19"',c,count=1)
+          compose.write_text(c,encoding="utf-8")
+
+          audit=Path("translation-audit-current.json")
+          a=audit.read_text(encoding="utf-8")
+          a=once(a,'"version": "v0.3.352"','"version": "v0.3.353"',"translation audit version")
+          audit.write_text(a,encoding="utf-8")
+          PY
+
+      - name: Compile backend
+        run: python3 -m py_compile app/main.py
+
+      - name: Regression checks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("app/main.py").read_text(encoding="utf-8")
+          assert 'VERSION = "0.3.353"' in s
+          assert "allow_forced_recreate=True" in s
+          assert "allow_forced_recreate=False" in s
+          assert "container_id = docker_container_id(name) or original_ids.get(name)" in s
+
+          channel_start=s.index("def perform_image_channel_switch")
+          channel_end=s.index("def perform_image_source_switch",channel_start)
+          channel=s[channel_start:channel_end]
+          assert "allow_forced_recreate=False" in channel
+          assert 'phase="force_recreate"' not in channel
+
+          helper_start=s.index("def wait_for_image_source_compose_activation")
+          helper_end=s.index("def wait_for_version_compose_update",helper_start)
+          helper=s[helper_start:helper_end]
+          assert "allow_forced_recreate" in helper
+          assert "container_id = docker_container_id(name) or original_ids.get(name)" in helper
+          print("Channel recreate regression checks OK")
+          PY
+          node --check static/update-channel.js
+
+      - name: Version audit and diff check
+        shell: bash
+        run: |
+          grep -n 'VERSION = "0.3.353"' app/main.py
+          grep -n "UPDATE_MONITOR_VERSION = 'v0.3.353'" static/index.html
+          grep -n '/update-channel.js?v=0.3.353' static/index.html
+          grep -n 'version: "0.3.353"' docker-compose.zimaos.yml
+          grep -n '"version": "v0.3.353"' translation-audit-current.json
+          grep -n 'Current release: \*\*v0.3.353\*\*' README.md
+          grep -n 'v=0.3.353' static/site.webmanifest
+          git diff --check
+
+      - name: Commit release markers
+        shell: bash
+        run: |
+          git config user.name "isanto1306"
+          git config user.email "185259594+isanto1306@users.noreply.github.com"
+          git add static/index.html static/update-channel.js static/site.webmanifest README.md docker-compose.zimaos.yml translation-audit-current.json
+          git commit -m "Complete Update Kanal recreate fix v0.3.353"
+          git push origin HEAD:fix-channel-recreate-0353
