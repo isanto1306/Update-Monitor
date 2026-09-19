@@ -1,44 +1,149 @@
-name: Inspect timeout recovery helpers
+name: Validate Update Monitor 0.3.352
+
 on:
   push:
-    branches: [fix-update-channel-timeout-0352]
-    paths: ['.github/workflows/inspect-timeout-recovery.yml']
+    branches:
+      - fix-update-channel-timeout-0352
+    paths:
+      - '.github/workflows/inspect-timeout-recovery.yml'
+
+permissions:
+  contents: write
+
 jobs:
-  inspect:
+  validate:
+    if: github.event.head_commit.message == 'Apply 0.3.352 release markers and tests'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Print timeout helpers
+        with:
+          ref: fix-update-channel-timeout-0352
+          fetch-depth: 0
+
+      - name: Patch release markers
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          s=Path("static/index.html").read_text(encoding="utf-8")
-          terms=[
-            "HTTP 504",
-            "HTTP 503",
-            "HTTP 502",
-            "waitForPostUpdateVerification",
-            "beginVerificationState",
-            "async function api",
-            "function api",
-            "gateway",
-            "interrupted",
-            "verification timeout",
-            "update request",
-            "finishActionProgressPolling",
-            "startActionProgressPolling",
-          ]
-          for term in terms:
-              print("\n###",term)
-              start=0
-              count=0
-              while True:
-                  i=s.lower().find(term.lower(),start)
-                  if i<0: break
-                  count+=1
-                  print("OFFSET",i)
-                  print(s[max(0,i-2500):min(len(s),i+8500)])
-                  start=i+len(term)
-                  if count>=8: break
+          import re
+
+          def once(text, old, new, label):
+              count=text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 occurrence, found {count}")
+              return text.replace(old,new,1)
+
+          p=Path("static/index.html")
+          s=p.read_text(encoding="utf-8")
+          s=s.replace("?v=0.3.351","?v=0.3.352")
+          s=s.replace(">v0.3.351<",">v0.3.352<")
+          s=once(
+              s,
+              "const UPDATE_MONITOR_VERSION = 'v0.3.351';",
+              "const UPDATE_MONITOR_VERSION = 'v0.3.352';",
+              "frontend version",
+          )
+          p.write_text(s,encoding="utf-8")
+
+          manifest=Path("static/site.webmanifest")
+          m=manifest.read_text(encoding="utf-8").replace("?v=0.3.351","?v=0.3.352")
+          manifest.write_text(m,encoding="utf-8")
+
+          readme=Path("README.md")
+          r=readme.read_text(encoding="utf-8")
+          r=once(
+              r,
+              "Current release: **v0.3.351**",
+              "Current release: **v0.3.352**",
+              "README release",
+          )
+          marker="Current release: **v0.3.352**\n"
+          note=(
+              "\nUpdate Kanal now treats HTTP 502, 503 and 504 responses as "
+              "transport interruptions when the backend Docker action is still "
+              "running. The dialog keeps the action locked, follows backend "
+              "progress and waits for the targeted verification instead of "
+              "showing a false failure while ZimaOS is still applying the change.\n"
+          )
+          r=r.replace(marker,marker+note,1)
+          readme.write_text(r,encoding="utf-8")
+
+          compose=Path("docker-compose.zimaos.yml")
+          c=compose.read_text(encoding="utf-8")
+          c=once(c,'  version: "0.3.351"','  version: "0.3.352"',"Compose version")
+          c=re.sub(r'(?m)^  update_at: "[^"]+"$','  update_at: "2026-09-19"',c,count=1)
+          compose.write_text(c,encoding="utf-8")
+
+          audit=Path("translation-audit-current.json")
+          a=audit.read_text(encoding="utf-8")
+          a=once(a,'"version": "v0.3.351"','"version": "v0.3.352"',"translation audit version")
+          audit.write_text(a,encoding="utf-8")
+
+          checks={
+              "frontend version":"UPDATE_MONITOR_VERSION = 'v0.3.352'" in s,
+              "channel cache":'/update-channel.js?v=0.3.352' in s,
+              "manifest":"?v=0.3.352" in m,
+              "README":"Current release: **v0.3.352**" in r,
+              "Compose":'version: "0.3.352"' in c,
+              "audit":'"version": "v0.3.352"' in a,
+          }
+          failed=[k for k,v in checks.items() if not v]
+          if failed:
+              raise SystemExit("Release checks failed: "+", ".join(failed))
           PY
+
+      - name: Compile backend
+        run: python3 -m py_compile app/main.py
+
+      - name: Check Update Kanal timeout recovery
+        shell: bash
+        run: |
+          node --check static/update-channel.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("static/update-channel.js").read_text(encoding="utf-8")
+          assert "waitForInterruptedChannelAction" in s
+          assert "isUpdateTransportFailure" in s
+          assert "recovery.state==='finished'" in s
+          assert "info.success===true" in s
+          assert "beginVerificationState(stackKey,baseline)" in s
+          assert "waitForPostUpdateVerification(stackKey)" in s
+          assert "channelState.busy=false" in s
+          assert "The Docker action is taking unusually long" in s
+          assert "um-update-channel-v0352" in s
+
+          catch_pos=s.index("}catch(err){",s.index("async function applySwitch"))
+          transport_pos=s.index("isUpdateTransportFailure",catch_pos)
+          unlock_pos=s.index("channelState.busy=false",catch_pos)
+          assert transport_pos < unlock_pos
+
+          # Regression for the observed failure: a gateway timeout must not
+          # immediately unlock the dialog or report HTTP 504 while the backend
+          # action is still running.
+          recovery_pos=s.index("waitForInterruptedChannelAction(stackKey)",catch_pos)
+          finished_pos=s.index("recovery.state==='finished'",recovery_pos)
+          verify_pos=s.index("waitForPostUpdateVerification(stackKey)",finished_pos)
+          assert recovery_pos < finished_pos < verify_pos < unlock_pos
+          print("Update Kanal gateway-timeout recovery checks OK")
+          PY
+
+      - name: Version audit and diff check
+        shell: bash
+        run: |
+          grep -n 'VERSION = "0.3.352"' app/main.py
+          grep -n "UPDATE_MONITOR_VERSION = 'v0.3.352'" static/index.html
+          grep -n '/update-channel.js?v=0.3.352' static/index.html
+          grep -n 'version: "0.3.352"' docker-compose.zimaos.yml
+          grep -n '"version": "v0.3.352"' translation-audit-current.json
+          grep -n 'Current release: \*\*v0.3.352\*\*' README.md
+          grep -n 'v=0.3.352' static/site.webmanifest
+          git diff --check
+
+      - name: Commit release markers
+        shell: bash
+        run: |
+          git config user.name "isanto1306"
+          git config user.email "185259594+isanto1306@users.noreply.github.com"
+          git add static/index.html static/site.webmanifest README.md docker-compose.zimaos.yml translation-audit-current.json
+          git commit -m "Complete gateway timeout recovery v0.3.352"
+          git push origin HEAD:fix-update-channel-timeout-0352
