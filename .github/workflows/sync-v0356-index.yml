@@ -80,7 +80,7 @@ jobs:
           path.write_text(text, encoding="utf-8")
           PY
 
-      - name: Run v0.3.360 regression checks
+      - name: Run release regression checks
         shell: bash
         run: |
           set -euo pipefail
@@ -163,6 +163,37 @@ jobs:
               "louislam/uptime-kuma:2",
           ) is True
 
+          # Same-tag update regression: a fresh 2.5.5 digest must replace a stale 2.5.4 display.
+          hint_fn, _ = load_function(
+              "_pulled_image_version_hint",
+              {
+                  "parse_image_ref": parse_image_ref,
+                  "parse_version": lambda value: (
+                      {"tag": value} if re.fullmatch(r"\d+\.\d+(?:\.\d+)?", str(value or "")) else None
+                  ),
+                  "resolve_installed_version_tag": lambda repo, digests, candidates, platform, **kwargs: (
+                      "2.5.5"
+                      if repo == "louislam/uptime-kuma"
+                      and "sha256:new255" in digests
+                      and "2.5.5" in candidates
+                      else None
+                  ),
+              },
+          )
+          assert hint_fn(
+              {
+                  "resolved_available_tag": "2.5.5",
+                  "newer_tag": "2.5.5",
+                  "available_version_tags": ["2.5.5", "2.5.4"],
+              },
+              {
+                  "image_ref": "louislam/uptime-kuma:2",
+                  "repo": "louislam/uptime-kuma",
+                  "local_digests": ["sha256:new255"],
+              },
+              "linux/amd64",
+          ) == "2.5.5"
+
           # Exact follow-policy helper: channel 2 must survive and legacy :2 must recover.
           channel_fn, _ = load_function(
               "_follow_policy_tag",
@@ -207,6 +238,10 @@ jobs:
           assert policies["uptime-kuma"]["last_auto_error"] is None
           assert policies["uptime-kuma"]["last_auto_result"] == "error"
           assert policies["uptime-kuma"]["last_auto_signature"] == "version:follow:2.5.4->2"
+
+          image_update = function_source("perform_image_update")
+          assert "_pulled_image_version_hint(" in image_update
+          assert 'pulled["resolved_version_hint"] = version_hint' in image_update
 
           channel_switch = function_source("perform_image_channel_switch")
           assert re.search(

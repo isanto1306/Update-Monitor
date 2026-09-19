@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.360"
+VERSION = "0.3.361"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -10155,6 +10155,16 @@ def scan_all(stack_key=None):
                     if str(value)
                 )
                 current_local = sorted(str(value) for value in local if str(value))
+                previous_image_ids = sorted(
+                    str(value or "").strip()
+                    for value in ((previous or {}).get("local_image_ids") or [])
+                    if str(value or "").strip()
+                )
+                current_image_ids = sorted(
+                    str(value or "").strip()
+                    for value in (group.get("image_ids") or [])
+                    if str(value or "").strip()
+                )
                 previous_resolved = str(
                     (previous or {}).get("resolved_installed_tag") or ""
                 ).strip()
@@ -10170,6 +10180,9 @@ def scan_all(stack_key=None):
                 if (
                     previous_resolved
                     and previous_local == current_local
+                    and previous_image_ids
+                    and current_image_ids
+                    and previous_image_ids == current_image_ids
                     and not previous_is_untrusted_label
                     and not _is_build_identity_tag(previous_resolved)
                 ):
@@ -10346,6 +10359,13 @@ def scan_all(stack_key=None):
                                         "Post-update local digest and known version verified"
                                     )
                                 else:
+                                    # A real moving-tag update reached a verified digest but
+                                    # supplied no concrete version hint. Do not let a prior
+                                    # resolved version survive into this new image; the resolver
+                                    # below must determine the installed release from the new digest.
+                                    item["resolved_installed_tag"] = None
+                                    item["display_installed_version"] = None
+                                    item["installed_version_resolution"] = None
                                     item["detail"] = "Post-update local digest verified"
                     else:
                         if parsed["base"] not in remote_cache:
@@ -16820,6 +16840,54 @@ def perform_version_update(app_item):
     }
 
 
+def _pulled_image_version_hint(item, pulled, platform):
+    """Resolve the concrete release behind a freshly pulled moving tag.
+
+    The hint is accepted only after an exact registry manifest digest match with
+    the bytes Docker just pulled. It is safe to hand to the targeted post-update
+    scan and prevents an older resolved_installed_tag from surviving a real image
+    replacement.
+    """
+    item = item or {}
+    pulled = pulled or {}
+    image_ref = str(pulled.get("image_ref") or item.get("image_ref") or "").strip()
+    parsed = parse_image_ref(image_ref) if image_ref else {}
+    repo_key = str(parsed.get("normalized_repo") or pulled.get("repo") or "").strip()
+    local_digests = sorted({
+        str(value or "").strip().lower()
+        for value in (pulled.get("local_digests") or pulled.get("expected_digests") or [])
+        if str(value or "").strip()
+    })
+    if not repo_key or not local_digests:
+        return None
+
+    candidates = []
+    for value in (
+        item.get("resolved_available_tag"),
+        item.get("newer_tag"),
+    ):
+        value = str(value or "").strip()
+        if value and parse_version(value) and value not in candidates:
+            candidates.append(value)
+    for value in item.get("available_version_tags") or []:
+        value = str(value or "").strip()
+        if value and parse_version(value) and value not in candidates:
+            candidates.append(value)
+
+    if not candidates:
+        return None
+
+    return resolve_installed_version_tag(
+        repo_key,
+        local_digests,
+        candidates,
+        platform,
+        batch_size=4,
+        deadline_seconds=20.0,
+        cache_result=True,
+    )
+
+
 def perform_image_update(app_item):
     """
     Install same-tag updates such as :latest -> newer :latest.
@@ -16879,6 +16947,13 @@ def perform_image_update(app_item):
             continue
         pulled = docker_pull_verified(image_ref, update_platform)
         pulled["method"] = "verified-docker-pull"
+        version_hint = _pulled_image_version_hint(
+            item,
+            pulled,
+            update_platform,
+        )
+        if version_hint:
+            pulled["resolved_version_hint"] = version_hint
         target_verification[image_ref] = pulled
 
     target_containers = []
