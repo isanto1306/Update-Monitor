@@ -28,13 +28,38 @@ jobs:
         run: |
           set -euo pipefail
           python3 <<'PY'
+          import re
           from pathlib import Path
+
+          main = Path("app/main.py").read_text(encoding="utf-8")
+          match = re.search(r'^VERSION = "([^"]+)"', main, re.MULTILINE)
+          if not match:
+              raise SystemExit("Backend VERSION marker not found")
+          target = match.group(1)
 
           path = Path("static/index.html")
           text = path.read_text(encoding="utf-8")
 
-          for old in ("0.3.356", "0.3.357", "0.3.358", "0.3.360"):
-              text = text.replace(old, "0.3.360")
+          text = re.sub(
+              r'(\?v=)\d+\.\d+\.\d+',
+              lambda m: m.group(1) + target,
+              text,
+          )
+          text = re.sub(
+              r'(<div class="system-info-value" id="systemInfoVersion">v)\d+\.\d+\.\d+(</div>)',
+              lambda m: m.group(1) + target + m.group(2),
+              text,
+          )
+          text = re.sub(
+              r'(/update-channel\.js\?v=)\d+\.\d+\.\d+',
+              lambda m: m.group(1) + target,
+              text,
+          )
+          text = re.sub(
+              r"(const UPDATE_MONITOR_VERSION = 'v)\d+\.\d+\.\d+(';)",
+              lambda m: m.group(1) + target + m.group(2),
+              text,
+          )
 
           old = """  const storedAutoError=(
               policy.auto_enabled
@@ -66,8 +91,10 @@ jobs:
 
           main = Path("app/main.py").read_text(encoding="utf-8")
           html = Path("static/index.html").read_text(encoding="utf-8")
+          version_match = re.search(r'^VERSION = "([^"]+)"', main, re.MULTILINE)
+          assert version_match
+          release_version = version_match.group(1)
 
-          assert 'VERSION = "0.3.360"' in main
           tree = ast.parse(main)
 
           functions = {
@@ -196,24 +223,23 @@ jobs:
           app_scan = function_source("app_scan")
           assert "acknowledge_auto_update_error(stack_key)" in app_scan
 
-          # Frontend regression: current release marker + no stale red auto error while checking.
-          assert "0.3.356" not in html
-          assert "0.3.357" not in html
-          assert "0.3.358" not in html
-          assert "const UPDATE_MONITOR_VERSION = 'v0.3.360';" in html
+          # Frontend/release regression: all active version markers must agree.
+          assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
+          assert f'id="systemInfoVersion">v{release_version}</div>' in html
           compose = Path("docker-compose.zimaos.yml").read_text(encoding="utf-8")
           readme = Path("README.md").read_text(encoding="utf-8")
           manifest = Path("static/site.webmanifest").read_text(encoding="utf-8")
           channel_js = Path("static/update-channel.js").read_text(encoding="utf-8")
           audit = Path("translation-audit-current.json").read_text(encoding="utf-8")
-          assert 'version: "0.3.360"' in compose
-          assert "Current release: **v0.3.360**" in readme
-          assert "0.3.360" in manifest
-          assert "um-update-channel-v0360" in channel_js
-          assert '"version": "v0.3.360"' in audit
+          assert f'version: "{release_version}"' in compose
+          assert f"Current release: **v{release_version}**" in readme
+          assert release_version in manifest
+          patch = release_version.rsplit(".", 1)[-1]
+          assert f"um-update-channel-v0{patch}" in channel_js
+          assert f'"version": "v{release_version}"' in audit
           assert "const storedAutoError=(\n    !isChecking\n    &&policy.auto_enabled" in html
 
-          print("v0.3.360 regression checks passed")
+          print(f"v{release_version} regression checks passed")
           PY
 
       - name: Commit synchronized frontend
