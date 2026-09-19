@@ -163,6 +163,49 @@ jobs:
               "louislam/uptime-kuma:2",
           ) is True
 
+          # Numeric moving-channel regression: :2 is not a fixed version.
+          needs_fn, needs_scope = load_function(
+              "_needs_installed_version_resolution",
+              {
+                  "_DYNAMIC_REGISTRY_TAGS": {"latest", "stable"},
+                  "_is_update_channel_tag": lambda value: (
+                      str(value or "").lower() in {"latest", "stable"}
+                      or bool(re.fullmatch(r"\d+", str(value or "")))
+                  ),
+              },
+          )
+          assert needs_fn("2") is True
+          assert needs_fn("latest") is True
+          assert needs_fn("2.5.5") is False
+
+          reusable_fn, _ = load_function(
+              "_installed_version_resolution_reusable",
+              {
+                  "_needs_installed_version_resolution": needs_fn,
+              },
+          )
+          assert reusable_fn(
+              {
+                  "resolved_installed_tag": "2.5.4",
+                  "installed_version_resolution": {"source": "previous-scan"},
+              },
+              "2",
+          ) is False
+          assert reusable_fn(
+              {
+                  "resolved_installed_tag": "2.5.4",
+                  "installed_version_resolution": {"source": "configured-tag"},
+              },
+              "2",
+          ) is False
+          assert reusable_fn(
+              {
+                  "resolved_installed_tag": "2.5.5",
+                  "installed_version_resolution": {"source": "registry-digest"},
+              },
+              "2",
+          ) is True
+
           # Same-tag update regression: a fresh 2.5.5 digest must replace a stale 2.5.4 display.
           hint_fn, _ = load_function(
               "_pulled_image_version_hint",
@@ -238,6 +281,10 @@ jobs:
           assert policies["uptime-kuma"]["last_auto_error"] is None
           assert policies["uptime-kuma"]["last_auto_result"] == "error"
           assert policies["uptime-kuma"]["last_auto_signature"] == "version:follow:2.5.4->2"
+
+          enrich_versions = function_source("enrich_scan_installed_versions")
+          assert "_installed_version_resolution_reusable(item, current_tag)" in enrich_versions
+          assert 'item["resolved_installed_tag"] = None' in enrich_versions
 
           image_update = function_source("perform_image_update")
           assert "_pulled_image_version_hint(" in image_update

@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.361"
+VERSION = "0.3.362"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -1858,7 +1858,7 @@ _REGISTRY_MANIFEST_ACCEPT = ", ".join((
 ))
 
 
-INSTALLED_VERSION_CACHE_SCHEMA = "v3-uniform-digest-verified"
+INSTALLED_VERSION_CACHE_SCHEMA = "v4-moving-channel-revalidated"
 
 def _installed_version_cache_key(repo_key, local_digests):
     digests = sorted(
@@ -2086,9 +2086,45 @@ def _needs_installed_version_resolution(tag):
     value = str(tag or "").strip()
     if not value:
         return True
+    # Keep this classifier consistent with Update Kanal. Numeric major aliases
+    # such as :2 are moving tags and must be resolved to the concrete release
+    # behind the currently installed digest (for example 2.5.5).
+    if _is_update_channel_tag(value):
+        return True
     if value.lower() in _DYNAMIC_REGISTRY_TAGS:
         return True
     return not bool(re.search(r"\d", value))
+
+
+def _installed_version_resolution_reusable(item, current_tag):
+    """Return True only for evidence safe to reuse for the current tag."""
+    item = item or {}
+    source = str(
+        (item.get("installed_version_resolution") or {}).get("source") or ""
+    ).strip()
+    resolved = str(item.get("resolved_installed_tag") or "").strip()
+    if not resolved:
+        return False
+
+    # A concrete configured tag is authoritative on its own.
+    if not _needs_installed_version_resolution(current_tag):
+        return True
+
+    # Moving tags must never trust the legacy "previous-scan" or
+    # "configured-tag" provenance. Those sources can preserve a version after
+    # the channel has moved to a different image. Only digest/image-bound
+    # evidence is reusable.
+    if source in {
+        "digest-cache",
+        "registry-digest",
+        "digest",
+        "local-repotag",
+        "post-update-known-version",
+    }:
+        return True
+    if source.startswith("registry+"):
+        return True
+    return False
 
 
 def _all_local_digest_groups_match_remote(digest_groups, remote_digests):
@@ -4821,9 +4857,12 @@ def enrich_scan_installed_versions(results, platform, progress_callback=None):
         current_tag = str(item.get("tag") or "").strip()
 
         # A concrete configured tag is already the installed version.
+        # Always overwrite any stale carried value: the Compose tag itself is
+        # authoritative for fixed releases.
         if not _needs_installed_version_resolution(current_tag):
-            if current_tag and not item.get("resolved_installed_tag"):
+            if current_tag:
                 item["resolved_installed_tag"] = current_tag
+                item["display_installed_version"] = None
             _installed_version_resolution_record(
                 item,
                 "resolved",
@@ -4832,17 +4871,26 @@ def enrich_scan_installed_versions(results, platform, progress_callback=None):
             )
             continue
 
-        # Reuse a prior scan result only when it already survived the local
-        # digest continuity check performed while rebuilding this item.
+        # Moving tags may reuse only digest/image-bound evidence. Legacy
+        # previous-scan/configured-tag values are deliberately discarded so an
+        # old 2.5.4 cannot survive after channel :2 moved to 2.5.5.
         existing = str(item.get("resolved_installed_tag") or "").strip()
-        if existing:
+        if existing and _installed_version_resolution_reusable(item, current_tag):
+            source = str(
+                (item.get("installed_version_resolution") or {}).get("source")
+                or "digest"
+            ).strip()
             _installed_version_resolution_record(
                 item,
                 "resolved",
-                "previous-scan",
+                source,
                 existing,
             )
             continue
+        if existing:
+            item["resolved_installed_tag"] = None
+            item["display_installed_version"] = None
+            item["installed_version_resolution"] = None
 
         # Strongest and cheapest zero-network evidence: a concrete RepoTag
         # attached to the exact same local image ID.
@@ -7880,6 +7928,9 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         platform,
         expected_digests=remote_digests,
     )
+    version_hint = _pulled_image_version_hint(item, pulled, platform)
+    if version_hint:
+        pulled["resolved_version_hint"] = version_hint
     expected_digests = list(pulled.get("expected_digests") or [])
     expected_image_id = str(pulled.get("image_id") or "").strip() or None
     if not expected_digests or not expected_image_id:
@@ -10168,13 +10219,19 @@ def scan_all(stack_key=None):
                 previous_resolved = str(
                     (previous or {}).get("resolved_installed_tag") or ""
                 ).strip()
+                previous_resolution = dict(
+                    (previous or {}).get("installed_version_resolution") or {}
+                )
                 previous_resolution_source = str(
-                    ((previous or {}).get("installed_version_resolution") or {}).get("source")
-                    or ""
+                    previous_resolution.get("source") or ""
                 ).strip()
 
                 previous_is_untrusted_label = previous_resolution_source.startswith(
                     "local-image-label"
+                )
+                previous_reusable = _installed_version_resolution_reusable(
+                    previous,
+                    parsed["tag"],
                 )
 
                 if (
@@ -10183,10 +10240,13 @@ def scan_all(stack_key=None):
                     and previous_image_ids
                     and current_image_ids
                     and previous_image_ids == current_image_ids
+                    and previous_reusable
                     and not previous_is_untrusted_label
                     and not _is_build_identity_tag(previous_resolved)
                 ):
                     item["resolved_installed_tag"] = previous_resolved
+                    if previous_resolution:
+                        item["installed_version_resolution"] = previous_resolution
                 elif not _needs_installed_version_resolution(parsed["tag"]):
                     item["resolved_installed_tag"] = parsed["tag"]
 
@@ -18552,6 +18612,24 @@ def register_successful_image_source_switch(app_item, result):
                     if normalized else None
                 )
                 item["post_update_verified"] = True
+
+            new_tag = str(parse_image_ref(new_ref).get("tag") or "").strip()
+            if _needs_installed_version_resolution(new_tag):
+                version_hint = str(
+                    (verification or {}).get("resolved_version_hint") or ""
+                ).strip()
+                if version_hint and parse_version(version_hint):
+                    item["resolved_installed_tag"] = version_hint
+                    _installed_version_resolution_record(
+                        item,
+                        "resolved",
+                        "post-update-known-version",
+                        version_hint,
+                    )
+                else:
+                    item["resolved_installed_tag"] = None
+                    item["display_installed_version"] = None
+                    item["installed_version_resolution"] = None
 
             item["source_change_pending_verification"] = True
             item["scan_warning"] = (

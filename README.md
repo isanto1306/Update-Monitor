@@ -88,7 +88,7 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.361**\n\nv0.3.361 fixes stale installed-version display after a moving-tag update. The concrete version is now resolved from the freshly pulled Docker digest and passed to the targeted verification scan. Previous installed-version results are reused only when both RepoDigests and local Docker image IDs are unchanged.
+Current release: **v0.3.362**\n\nv0.3.362 repairs stale concrete-version state for moving numeric channels such as `:2`. Numeric major tags now always use digest-to-release resolution, legacy `previous-scan`/`configured-tag` evidence is rejected for moving channels, and the installed-version cache schema is bumped so old mappings are revalidated.\n\nv0.3.361 fixes stale installed-version display after a moving-tag update. The concrete version is now resolved from the freshly pulled Docker digest and passed to the targeted verification scan. Previous installed-version results are reused only when both RepoDigests and local Docker image IDs are unchanged.
 
 v0.3.360 repairs mixed Compose/runtime channel states. If Compose still points to an old GHCR fixed tag while the live container already runs the Docker Hub channel, Update Kanal now reconciles Compose to the selected live registry/channel instead of falsely reporting that the channel is already active. Automatic rollback verifies the restored original Compose ref, not the stale runtime alias.
 
