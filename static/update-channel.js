@@ -413,6 +413,35 @@ async function openDialog(stackKey){
   renderDialog();
 }
 
+async function waitForInterruptedChannelAction(stackKey,timeoutMs=30*60*1000){
+  var key=String(stackKey||'').trim();
+  if(!key) return {state:'missing',info:null};
+
+  var deadline=Date.now()+Math.max(30000,Number(timeoutMs)||0);
+  var firstMissingAt=Date.now();
+  var sawAction=false;
+
+  while(Date.now()<deadline){
+    var info=await refreshProgress(key);
+
+    if(info&&info.kind==='update'){
+      sawAction=true;
+      if(info.finished){
+        return {state:'finished',info:info};
+      }
+    }else if(!sawAction&&Date.now()-firstMissingAt>=15000){
+      // A gateway error can also happen before the request reaches the
+      // backend. Do not keep the dialog locked forever when no action record
+      // ever appeared.
+      return {state:'missing',info:null};
+    }
+
+    await new Promise(function(resolve){setTimeout(resolve,750);});
+  }
+
+  return {state:'timeout',info:channelProgressInfo};
+}
+
 async function applySwitch(){
   if(channelState.busy||!channelState.data) return;
   var image=selectedImage();
@@ -459,16 +488,69 @@ async function applySwitch(){
     if(typeof beginVerificationState==='function') beginVerificationState(stackKey,baseline);
     if(typeof waitForPostUpdateVerification==='function') await waitForPostUpdateVerification(stackKey);
   }catch(err){
-    stopProgress();
-    if(!err||err.message!=='auth'){
+    if(err&&err.message==='auth'){
+      stopProgress();
+      return;
+    }
+
+    var transportFailure=false;
+    try{
+      transportFailure=(
+        typeof isUpdateTransportFailure==='function'
+        &&isUpdateTransportFailure(err)
+      );
+    }catch(e){}
+
+    if(transportFailure){
+      // A reverse proxy can time out while the synchronous backend request
+      // keeps running. Keep the dialog locked, follow the backend action
+      // progress and let the targeted verification decide the real result.
+      stopProgress();
+      var recovery=await waitForInterruptedChannelAction(stackKey);
+      var info=recovery&&recovery.info;
+
+      if(
+        recovery&&recovery.state==='finished'
+        &&info&&info.success===true
+      ){
+        closeDialog(true);
+        if(typeof beginVerificationState==='function'){
+          beginVerificationState(stackKey,baseline);
+        }
+        if(typeof waitForPostUpdateVerification==='function'){
+          await waitForPostUpdateVerification(stackKey);
+        }
+        return;
+      }
+
       channelState.busy=false;
       channelProgressInfo=null;
+      var recoveryError=(
+        info&&String(info.error||'').trim()
+      )||(
+        recovery&&recovery.state==='timeout'
+        ?channelText(
+          'Die Docker Aktion läuft ungewöhnlich lange. Bitte erst nach Abschluss erneut prüfen.',
+          'The Docker action is taking unusually long. Please check again only after it finishes.'
+        )
+        :String(err&&err.message||'-')
+      );
       channelState.error=channelText(
-        'Update Kanal konnte nicht gewechselt werden: '+String(err&&err.message||'-'),
-        'Update channel could not be switched: '+String(err&&err.message||'-')
+        'Update Kanal konnte nicht gewechselt werden: '+recoveryError,
+        'Update channel could not be switched: '+recoveryError
       );
       renderDialog();
+      return;
     }
+
+    stopProgress();
+    channelState.busy=false;
+    channelProgressInfo=null;
+    channelState.error=channelText(
+      'Update Kanal konnte nicht gewechselt werden: '+String(err&&err.message||'-'),
+      'Update channel could not be switched: '+String(err&&err.message||'-')
+    );
+    renderDialog();
   }
 }
 
