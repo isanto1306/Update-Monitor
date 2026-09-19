@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.356"
+VERSION = "0.3.357"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -7597,11 +7597,23 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
 
     project = str(app_item.get("compose_project") or "").strip()
     stack_key = str(app_item.get("stack_key") or "").strip()
-    current_ref = str(
+
+    # Update Kanal is deliberately registry-preserving. The running container
+    # is the authoritative source for the active registry because ZimaOS can
+    # persist a Compose source change before the runtime container follows it.
+    # A registry/source change belongs to Image Quelle, never to Update Kanal.
+    compose_ref = str(
         _image_source_compose_configured_ref(app_item, item)
         or item.get("image_ref")
         or ""
     ).strip()
+    runtime_ref = ""
+    for container_name in _image_source_container_names(item):
+        runtime_ref = str(docker_container_config_image(container_name) or "").strip()
+        if runtime_ref:
+            break
+
+    current_ref = runtime_ref or compose_ref
     parsed = parse_image_ref(current_ref)
     current_repo_key = str(parsed.get("normalized_repo") or "").strip()
     current_repo_text = str(parsed.get("repo") or "").strip()
@@ -7619,23 +7631,28 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         )
         source_ref = str((target_source or {}).get("image_ref") or "").strip()
         source_parsed = parse_image_ref(source_ref)
-        target_repo_key = str(
+        selected_repo_key = str(
             source_parsed.get("normalized_repo") or ""
         ).strip()
-        target_repo_text = str(source_parsed.get("repo") or "").strip()
+        selected_repo_text = str(source_parsed.get("repo") or "").strip()
 
-        # A combined source + channel change is only allowed for source
-        # candidates that already passed the Image Quelle compatibility checks.
-        source_option = build_image_source_option(
-            app_item,
-            image_key,
-            source_id,
-        )
-        if source_option.get("level") != "ok":
+        # Never let Update Kanal silently change Docker Hub/GHCR/LSCR/etc.
+        # Project/source metadata may discover aliases, but those aliases are
+        # not registries for a channel switch. Use Image Quelle explicitly for
+        # a registry migration, then change the channel in that active registry.
+        if (
+            selected_repo_key
+            and selected_repo_key.casefold() != current_repo_key.casefold()
+        ):
             raise RuntimeError(
-                "The selected image source is not verified as a safe Update Kanal source. "
-                "Use Image Quelle first if you want to accept compatibility warnings."
+                "Update Kanal changes only the tag of the active image registry. "
+                f"Active registry: {current_repo_text}; selected source: "
+                f"{selected_repo_text or selected_repo_key}. "
+                "Change the registry with Image Quelle first."
             )
+
+        target_repo_key = current_repo_key
+        target_repo_text = current_repo_text
 
     if (
         not project
