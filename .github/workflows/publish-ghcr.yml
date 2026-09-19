@@ -1,14 +1,14 @@
 name: Publish Docker image
 
 on:
+  workflow_run:
+    workflows:
+      - Validate and synchronize v0.3.359
+    types:
+      - completed
   push:
-    branches:
-      - main
     tags:
       - 'v*'
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -17,10 +17,18 @@ permissions:
 
 jobs:
   build-and-push:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
+      - name: Check out synchronized main
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Check out requested ref
+        if: github.event_name != 'workflow_run'
         uses: actions/checkout@v4
 
       - name: Read app version
