@@ -167,6 +167,7 @@ jobs:
           needs_fn, needs_scope = load_function(
               "_needs_installed_version_resolution",
               {
+                  "re": re,
                   "_DYNAMIC_REGISTRY_TAGS": {"latest", "stable"},
                   "_is_update_channel_tag": lambda value: (
                       str(value or "").lower() in {"latest", "stable"}
