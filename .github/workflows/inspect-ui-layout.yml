@@ -13,45 +13,67 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Print matching UI fragments
+      - name: Print exact UI sections
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("static/index.html")
-          s = p.read_text(encoding="utf-8", errors="replace")
-          terms = [
-              "image-source",
-              "image_source",
-              "source-switch",
-              "source_id",
-              "Quelle",
-              "Image Quelle",
-              "Details anzeigen",
-              "Automatisch",
-              "docker prüfen",
-              "app-card",
-              "summary",
-              "details",
-              "modal",
-              "dialog",
-              "action",
-          ]
-          low = s.lower()
-          seen = set()
-          print("FILE_LENGTH", len(s))
-          for term in terms:
-              start = 0
-              count = 0
-              while True:
-                  i = low.find(term.lower(), start)
-                  if i < 0 or count >= 8:
-                      break
-                  key=(term,i)
-                  if key not in seen:
-                      seen.add(key)
-                      print("\n===== TERM", repr(term), "AT", i, "=====")
-                      print(s[max(0,i-2500):min(len(s),i+5000)])
-                  start = i + max(1,len(term))
-                  count += 1
+          s=Path("static/index.html").read_text(encoding="utf-8",errors="replace")
+
+          def section(label,start_marker,end_marker=None,extra=0):
+              i=s.find(start_marker)
+              print("\n===== "+label+" =====")
+              print("START",i)
+              if i<0:
+                  return
+              if end_marker:
+                  j=s.find(end_marker,i+len(start_marker))
+                  if j<0: j=min(len(s),i+12000)
+                  else: j+=len(end_marker)
+              else:
+                  j=min(len(s),i+12000)
+              print(s[i:min(len(s),j+extra)])
+
+          section("IMAGE_SOURCE_CSS",
+                  '<style id="um-image-source-v03264">',
+                  '</style>')
+          section("IMAGE_SOURCE_HTML",
+                  '<div id="imageSourceBackdrop"',
+                  '<style id="um-port-conflict-runtime-colors-v0345">')
+          
+          for marker in [
+              'image-source-entry',
+              'image-source-option',
+              'imageSourceBody.innerHTML',
+              'function openImageSource',
+              'function renderImageSource',
+              'openImageSource',
+              'imageSourceApply',
+              'data-image-source'
+          ]:
+              print("\n===== OCCURRENCES",marker,"=====")
+              start=0
+              n=0
+              while n<12:
+                  i=s.find(marker,start)
+                  if i<0: break
+                  print("\n---",i,"---")
+                  print(s[max(0,i-2200):min(len(s),i+5200)])
+                  start=i+len(marker)
+                  n+=1
+
+          # Exact CSS declarations that affect the update cards/details.
+          import re
+          print("\n===== UPDATE_CARD_RULES =====")
+          selectors = (
+              "update-card","update-detail","update-row","update-app",
+              "update-item","update-name","update-card-icon","policy-chip",
+              "update-version","update-state","update-action"
+          )
+          for m in re.finditer(r'([^{}]+)\{([^{}]*)\}', s):
+              sel=m.group(1)
+              if any(x in sel for x in selectors):
+                  block=m.group(0)
+                  if len(block)<6000:
+                      print(block)
           PY
