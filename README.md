@@ -92,6 +92,8 @@ Current release: **v0.3.359**
 
 v0.3.359 preserves the selected moving Docker channel (for example `:2`) across scans, automatic updates and policy edits. Normal updates resolve the live Docker repository before cached source metadata, and a manual Docker check acknowledges an old automatic-update error so the same stale red message is not immediately rendered again.
 
+The v0.3.359 release workflow compiles the Python backend and runs regression checks for live-registry precedence, channel persistence, stale automatic-error acknowledgement and frontend synchronization before the release image is published.
+
 Update Kanal now actively completes a stored Compose change when ZimaOS leaves the old runtime container in place. It waits for an in-flight replacement first, then sends at most one fallback recreate and verifies the exact target image. Before the switch, the original Docker image ID and RepoDigests are captured; automatic rollback restores those exact local image bits without repulling a mutable tag and verifies runtime stability before reporting success.
 
 Update Kanal is registry-preserving. It changes only the tag on the registry that is actually active in the running container. GitHub project metadata and discovered aliases can no longer turn a Docker Hub channel change into a GHCR change. Registry migrations remain a separate Image Quelle action.
