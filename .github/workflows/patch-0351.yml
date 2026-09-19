@@ -55,12 +55,14 @@ jobs:
               dollar+"{renderBackupDetails(app)}"
           )
           s=once(s,old_detail,new_detail,"Update Kanal detail insertion")
-          s=once(
-              s,
-              "<script>\\nconst UPDATE_MONITOR_VERSION = 'v0.3.350';",
-              "<script src=\\"/update-channel.js?v=0.3.351\\"></script>\\n\\n<script>\\nconst UPDATE_MONITOR_VERSION = 'v0.3.351';",
-              "Update Kanal module and frontend version",
-          )
+
+          old_script="<script>\nconst UPDATE_MONITOR_VERSION = 'v0.3.350';"
+          new_script="""<script src="/update-channel.js?v=0.3.351"></script>
+
+          <script>
+          const UPDATE_MONITOR_VERSION = 'v0.3.351';"""
+          s=once(s,old_script,new_script,"Update Kanal module and frontend version")
+
           s=s.replace("?v=0.3.350","?v=0.3.351")
           s=s.replace(">v0.3.350<",">v0.3.351<")
           p.write_text(s,encoding="utf-8")
@@ -72,13 +74,13 @@ jobs:
           readme=Path("README.md")
           r=readme.read_text(encoding="utf-8")
           r=once(r,"Current release: **v0.3.350**","Current release: **v0.3.351**","README release")
-          marker="Current release: **v0.3.351**\\n"
+          marker="Current release: **v0.3.351**\n"
           note=(
-              "\\nUpdate channels are now separated from concrete versions. "
+              "\nUpdate channels are now separated from concrete versions. "
               "Moving Docker tags such as latest, stable, next, lts or "
               "a major channel such as 2 can be selected directly from the "
               "application details with backup, Compose validation, verified "
-              "pull and targeted post-change verification.\\n"
+              "pull and targeted post-change verification.\n"
           )
           r=r.replace(marker,marker+note,1)
           readme.write_text(r,encoding="utf-8")
@@ -112,7 +114,7 @@ jobs:
           for path in ["static/index.html","static/site.webmanifest","README.md","docker-compose.zimaos.yml","translation-audit-current.json"]:
               data=Path(path).read_text(encoding="utf-8")
               for match in re.finditer("0.3.350",data):
-                  leftovers.append((path,data[max(0,match.start()-90):match.end()+90].replace("\\n"," ")))
+                  leftovers.append((path,data[max(0,match.start()-90):match.end()+90].replace("\n"," ")))
           if leftovers:
               print("Remaining 0.3.350 contexts (historical text may be valid):")
               for row in leftovers:
