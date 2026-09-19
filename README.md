@@ -92,9 +92,9 @@ Current release: **v0.3.357**
 
 Update Kanal now actively completes a stored Compose change when ZimaOS leaves the old runtime container in place. It waits for an in-flight replacement first, then sends at most one fallback recreate and verifies the exact target image. Before the switch, the original Docker image ID and RepoDigests are captured; automatic rollback restores those exact local image bits without repulling a mutable tag and verifies runtime stability before reporting success.
 
-Update Kanal is now source-aware. Moving tags can be selected together with a verified image source, and an already active Docker/ZimaOS runtime alias is preferred over a conflicting Compose registry. This fixes channel changes such as Uptime Kuma from a GHCR fixed tag to the Docker Hub v2 channel.
+Update Kanal is registry-preserving in v0.3.357. It changes only the tag on the registry that is actually active in the running container. GitHub project metadata and discovered aliases can no longer turn a Docker Hub channel change into a GHCR change. Registry migrations remain a separate Image Quelle action.
 
-Registry alias verification now accepts an exact Docker image ID match when Docker Hub and GHCR expose different RepoDigests for the same image. This prevents a successful Update Kanal change from being rolled back only because ZimaOS/Docker activates the equivalent registry alias.
+Registry alias verification still accepts an exact Docker image ID match when Docker Hub and GHCR expose different RepoDigests for equivalent image bits, but that compatibility logic is verification-only and no longer selects a different registry for Update Kanal.
 
 Update Kanal no longer starts a second forced ZimaOS container recreate during the Compose channel change. It now waits for the original Compose apply to finish and verifies the target digest. The separate Image Quelle recreate path now prefers the current Docker container ID after replacement.
 
