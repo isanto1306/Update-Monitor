@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app/main.py /app/main.py
 COPY static/ /app/static/
+RUN python -m py_compile /app/main.py
 RUN mkdir -p /app/cache /app/backups
 
 EXPOSE 9001
