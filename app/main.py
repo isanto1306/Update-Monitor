@@ -6797,6 +6797,32 @@ def _image_source_discover_sources(app_item, item):
     sources = [current_source]
     seen = {current_repo.casefold()}
 
+    # If Docker/ZimaOS is already running the same service from a different
+    # repository alias, keep that live source as a first-class verified mirror.
+    # This is stronger evidence than a guessed registry mapping because the app
+    # is currently running from it with the existing mounts/env/ports.
+    runtime_ref = None
+    for container_name in _image_source_container_names(item):
+        runtime_ref = docker_container_config_image(container_name)
+        if runtime_ref:
+            break
+    runtime_repo = _image_source_repo(runtime_ref)
+    if (
+        runtime_ref
+        and runtime_repo
+        and runtime_repo.casefold() not in seen
+    ):
+        sources.append({
+            "id": _image_source_source_id(runtime_ref),
+            "label_de": _image_source_registry_label(runtime_ref),
+            "label_en": _image_source_registry_label(runtime_ref),
+            "image_ref": runtime_ref,
+            "project_url": project_url,
+            "compatibility_mode": "mirror",
+            "discovery_source": "active-runtime",
+        })
+        seen.add(runtime_repo.casefold())
+
     try:
         curated_sources = _image_source_curated_sources(app_item, current_ref)
     except Exception as exc:
@@ -7605,9 +7631,10 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
             image_key,
             source_id,
         )
-        if source_option.get("level") == "error":
+        if source_option.get("level") != "ok":
             raise RuntimeError(
-                "The selected image source is not compatible with the current Compose configuration"
+                "The selected image source is not verified as a safe Update Kanal source. "
+                "Use Image Quelle first if you want to accept compatibility warnings."
             )
 
     if (
