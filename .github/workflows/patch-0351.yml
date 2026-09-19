@@ -35,6 +35,7 @@ jobs:
 
           p=Path("static/index.html")
           s=p.read_text(encoding="utf-8")
+          dollar="$"
 
           s=once(
               s,
@@ -42,16 +43,22 @@ jobs:
               "imageSourceText('Image Quelle wählen','Choose image source')",
               "Image Quelle button label",
           )
-          s=once(
-              s,
-              "\${details}\${renderImageSourceEntry(app)}\${renderBackupDetails(app)}",
-              "\${details}\${renderUpdateChannelEntry(app)}\${renderImageSourceEntry(app)}\${renderBackupDetails(app)}",
-              "Update Kanal detail insertion",
+          old_detail=(
+              dollar+"{details}"+
+              dollar+"{renderImageSourceEntry(app)}"+
+              dollar+"{renderBackupDetails(app)}"
           )
+          new_detail=(
+              dollar+"{details}"+
+              dollar+"{renderUpdateChannelEntry(app)}"+
+              dollar+"{renderImageSourceEntry(app)}"+
+              dollar+"{renderBackupDetails(app)}"
+          )
+          s=once(s,old_detail,new_detail,"Update Kanal detail insertion")
           s=once(
               s,
               "<script>\\nconst UPDATE_MONITOR_VERSION = 'v0.3.350';",
-              '<script src="/update-channel.js?v=0.3.351"></script>\\n\\n<script>\\nconst UPDATE_MONITOR_VERSION = \\'v0.3.351\\';',
+              "<script src=\\"/update-channel.js?v=0.3.351\\"></script>\\n\\n<script>\\nconst UPDATE_MONITOR_VERSION = 'v0.3.351';",
               "Update Kanal module and frontend version",
           )
           s=s.replace("?v=0.3.350","?v=0.3.351")
@@ -89,7 +96,7 @@ jobs:
 
           checks={
               "module reference": '/update-channel.js?v=0.3.351' in s,
-              "channel detail": "\${renderUpdateChannelEntry(app)}" in s,
+              "channel detail": (dollar+"{renderUpdateChannelEntry(app)}") in s,
               "source label": "imageSourceText('Image Quelle wählen','Choose image source')" in s,
               "frontend version": "UPDATE_MONITOR_VERSION = 'v0.3.351'" in s,
               "manifest": "?v=0.3.351" in m,
@@ -153,8 +160,9 @@ jobs:
           from pathlib import Path
           js=Path("static/update-channel.js").read_text(encoding="utf-8")
           html=Path("static/index.html").read_text(encoding="utf-8")
+          dollar="$"
           assert html.count('/update-channel.js?v=0.3.351') == 1
-          assert html.count('\${renderUpdateChannelEntry(app)}') == 1
+          assert html.count(dollar+"{renderUpdateChannelEntry(app)}") == 1
           assert "Image Quelle wählen" in html
           assert ".update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}" in js
           assert ".update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}" in js
