@@ -1,5 +1,5 @@
 {
-  "version": "v0.3.363",
+  "version": "v0.3.364",
   "languages": [
     "de",
     "en"
@@ -308,10 +308,11 @@
       "uninstallStarted": "Deinstallation abgeschlossen.",
       "uninstallFailed": "Deinstallation fehlgeschlagen: {error}",
       "uninstallConfirmShort": "Deinstallieren?",
-      "backupCancelRunning": "BACKUP ABBRECHEN",
+      "backupCancelRunning": "Backup abbrechen",
       "backupCancelling": "BACKUP WIRD ABGEBROCHEN…",
       "backupCancelled": "Backup wurde abgebrochen. Update wurde nicht gestartet.",
-      "backupCancelFailed": "Backup konnte nicht abgebrochen werden: {error}"
+      "backupCancelFailed": "Backup konnte nicht abgebrochen werden: {error}",
+      "backupCancelInline": "{progress} % · Backup abbrechen"
     },
     "en": {
       "loginSubtitle": "Docker Image & Version Monitoring",
@@ -616,10 +617,11 @@
       "uninstallStarted": "Uninstall completed.",
       "uninstallFailed": "Uninstall failed: {error}",
       "uninstallConfirmShort": "Uninstall?",
-      "backupCancelRunning": "CANCEL BACKUP",
+      "backupCancelRunning": "Cancel backup",
       "backupCancelling": "CANCELLING BACKUP…",
       "backupCancelled": "Backup was cancelled. The update was not started.",
-      "backupCancelFailed": "Could not cancel backup: {error}"
+      "backupCancelFailed": "Could not cancel backup: {error}",
+      "backupCancelInline": "{progress} % · Cancel backup"
     }
   },
   "used_translation_keys": [
@@ -644,6 +646,7 @@
     "available",
     "backupAutoHelp",
     "backupAutoTitle",
+    "backupCancelInline",
     "backupCount1",
     "backupCount2",
     "backupCount3",
