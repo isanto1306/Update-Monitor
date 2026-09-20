@@ -269,7 +269,10 @@ jobs:
           assert 'current["last_auto_result"] = "cancelled"' in auto_update
           assert "if not cancelled:" in auto_update
           assert "/api/backup-cancel" in html
-          assert "data-backup-cancel-stack" in html
+          assert "data-backup-cancel-inline" in html
+          assert "backupCancelInline" in html
+          assert "data-backup-cancel-stack" not in html
+          assert "backup-cancel-running-button" not in html
           assert "backup_cancel_available" in html
           assert "backupCancelled" in html
           assert "cancelImageSourceBackup" in html
