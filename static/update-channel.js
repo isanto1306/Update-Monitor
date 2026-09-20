@@ -17,7 +17,7 @@ function channelEsc(value){
 }
 
 var style=document.createElement('style');
-style.id='um-update-channel-v0362';
+style.id='um-update-channel-v0363';
 style.textContent=[
 '.update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}',
 '.update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}',
@@ -146,6 +146,45 @@ function progressLabel(){
   }catch(e){}
   return channelText('Wechsel läuft…','Switching…');
 }
+function syncBackupCancel(){
+  var button=document.getElementById('imageChannelCancel');
+  if(!button) return;
+  if(!channelState.busy){
+    button.disabled=false;
+    button.textContent=channelText('Abbrechen','Cancel');
+    return;
+  }
+  var info=channelProgressInfo||{};
+  var cancellable=!!(info.backup_cancel_available&&!info.finished);
+  var requested=!!info.backup_cancel_requested;
+  button.disabled=!cancellable||requested;
+  button.textContent=requested
+    ?channelText('Abbruch läuft…','Cancelling…')
+    :cancellable
+      ?channelText('Backup abbrechen','Cancel backup')
+      :channelText('Abbrechen','Cancel');
+}
+async function cancelRunningBackup(){
+  var key=String(channelState.stackKey||'').trim();
+  var info=channelProgressInfo||{};
+  if(!key||!info.backup_cancel_available||info.backup_cancel_requested) return;
+  info.backup_cancel_requested=true;
+  info.phase='backup_cancelling';
+  channelProgressInfo=info;
+  syncBackupCancel();
+  try{
+    if(typeof requestBackupCancellation!=='function') throw new Error(channelText('Backup Abbruch ist nicht verfügbar.','Backup cancellation is unavailable.'));
+    await requestBackupCancellation(key);
+  }catch(err){
+    info.backup_cancel_requested=false;
+    channelProgressInfo=info;
+    channelState.error=channelText(
+      'Backup konnte nicht abgebrochen werden: '+String(err&&err.message||'-'),
+      'Could not cancel backup: '+String(err&&err.message||'-')
+    );
+    renderDialog();
+  }
+}
 function applyProgress(){
   var button=document.getElementById('imageChannelApply');
   if(!button||!channelState.busy) return;
@@ -157,6 +196,7 @@ function applyProgress(){
   if(hasPercent) button.style.setProperty('--image-source-progress',percent+'%');
   else button.style.removeProperty('--image-source-progress');
   button.textContent=progressLabel();
+  syncBackupCancel();
 }
 async function refreshProgress(stackKey){
   try{
@@ -365,8 +405,8 @@ function renderDialog(){
 
   html+=
     '<div class="image-source-actions">'+
-      '<button class="image-source-action secondary" id="imageChannelCancel" type="button"'+
-        (channelState.busy?' disabled':'')+'>'+channelEsc(channelText('Abbrechen','Cancel'))+'</button>'+
+      '<button class="image-source-action secondary" id="imageChannelCancel" type="button">'+
+        channelEsc(channelText('Abbrechen','Cancel'))+'</button>'+
       '<button class="image-source-action primary'+progressClass+'" id="imageChannelApply" type="button"'+progressStyle+
         (actionDisabled?' disabled':'')+'>'+channelEsc(actionText)+'</button>'+
     '</div>';
@@ -385,7 +425,11 @@ function renderDialog(){
     };
   });
   var cancel=document.getElementById('imageChannelCancel');
-  if(cancel) cancel.onclick=function(){closeDialog(false);};
+  if(cancel) cancel.onclick=function(){
+    if(channelState.busy) cancelRunningBackup();
+    else closeDialog(false);
+  };
+  syncBackupCancel();
   var apply=document.getElementById('imageChannelApply');
   if(apply) apply.onclick=applySwitch;
 }
@@ -478,7 +522,7 @@ async function applySwitch(){
   startProgress(stackKey);
 
   try{
-    await api('/api/image-channel-switch',{
+    var switchResult=await api('/api/image-channel-switch',{
       method:'POST',
       body:JSON.stringify({
         stack_key:stackKey,
@@ -488,6 +532,21 @@ async function applySwitch(){
         backup_mode:'full'
       })
     });
+    if(switchResult&&switchResult.cancelled){
+      stopProgress();
+      closeDialog(true);
+      try{
+        if(typeof state!=='undefined'&&state.updateMessages){
+          state.updateMessages.set(stackKey,{
+            ok:true,
+            kind:'backup_cancelled',
+            text:channelText('Backup wurde abgebrochen. Update Kanal wurde nicht geändert.','Backup was cancelled. The update channel was not changed.')
+          });
+        }
+        if(typeof render==='function') render();
+      }catch(e){}
+      return;
+    }
     await refreshProgress(stackKey);
     if(channelProgressInfo&&channelProgressInfo.determinate&&Number(channelProgressInfo.progress)>=100){
       await new Promise(function(resolve){setTimeout(resolve,350);});

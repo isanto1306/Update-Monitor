@@ -77,6 +77,252 @@ jobs:
                   raise SystemExit("storedAutoError frontend block not found")
               text = text.replace(old, new, 1)
 
+
+          # v0.3.363 running-backup cancellation UI (idempotent).
+          if "data-backup-cancel-stack" not in text:
+              text = text.replace(
+                  ".update-install-button:disabled {\n    opacity: .55;\n    cursor: wait;\n}\n",
+                  """.update-install-button:disabled {
+    opacity: .55;
+    cursor: wait;
+}
+.backup-cancel-running-button{
+    width:auto;align-self:center;margin-top:-12px;margin-bottom:12px;
+    padding:5px 8px;border:1px solid rgba(214,82,82,.62);border-radius:7px;
+    background:rgba(151,42,42,.12);color:#ffb2ad;font:inherit;
+    font-size:9.4px;font-weight:800;letter-spacing:.025em;white-space:nowrap;cursor:pointer;
+}
+.backup-cancel-running-button:hover:not(:disabled){border-color:rgba(231,101,101,.78);background:rgba(163,47,47,.20);color:#ffd0cd}
+.backup-cancel-running-button:disabled{opacity:.58;cursor:wait}
+.backup-cancel-running-button[hidden]{display:none!important}
+""",1)
+
+              text = text.replace(
+                  "backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', installPhase:",
+                  "backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'BACKUP ABBRECHEN', backupCancelling:'BACKUP WIRD ABGEBROCHEN…', backupCancelled:'Backup wurde abgebrochen. Update wurde nicht gestartet.', backupCancelFailed:'Backup konnte nicht abgebrochen werden: {error}', installPhase:",1)
+              text = text.replace(
+                  "backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', installPhase:",
+                  "backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'CANCEL BACKUP', backupCancelling:'CANCELLING BACKUP…', backupCancelled:'Backup was cancelled. The update was not started.', backupCancelFailed:'Could not cancel backup: {error}', installPhase:",1)
+
+              text = text.replace(
+                  """  if(kind==='update'){
+    if(p.startsWith('backup')){
+""",
+                  """  if(kind==='update'){
+    if(p==='backup_cancelling')return t('backupCancelling');
+    if(p.startsWith('backup')){
+""",1)
+
+              text = text.replace(
+                  """    button.textContent=actionProgressLabel(kind,progress,String(info&&info.phase||''));
+  });
+}
+""",
+                  """    button.textContent=actionProgressLabel(kind,progress,String(info&&info.phase||''));
+  });
+  document.querySelectorAll('[data-backup-cancel-stack]').forEach(button=>{
+    if(String(button.dataset.backupCancelStack||'')!==key)return;
+    const cancellable=!!(info&&info.kind==='update'&&!info.finished&&info.backup_cancel_available);
+    const requested=!!(info&&info.backup_cancel_requested);
+    button.hidden=!cancellable;
+    button.disabled=!cancellable||requested;
+    button.textContent=requested?t('backupCancelling'):t('backupCancelRunning');
+  });
+}
+""",1)
+
+              polling = """async function finishActionProgressPolling(stackKey){
+  const key=String(stackKey||'');
+  if(!key)return;
+  await refreshActionProgress(key);
+  // Keep a real 100% result visible briefly before the card changes/rescans.
+  const info=state.actionProgress.get(key);
+  if(info&&info.determinate&&Number(info.progress)>=100){
+    await new Promise(resolve=>setTimeout(resolve,300));
+  }
+  stopActionProgressPolling(key);
+}
+"""
+              text = text.replace(polling,polling+"""
+async function requestBackupCancellation(stackKey){
+  const key=String(stackKey||'').trim();
+  if(!key)throw new Error('Missing app key');
+  return api('/api/backup-cancel',{method:'POST',body:JSON.stringify({stack_key:key})});
+}
+async function cancelBackupForStack(stackKey){
+  const key=String(stackKey||'').trim();
+  if(!key)return;
+  const info=state.actionProgress.get(key);
+  if(!info||!info.backup_cancel_available||info.backup_cancel_requested)return;
+  info.backup_cancel_requested=true;
+  info.phase='backup_cancelling';
+  state.actionProgress.set(key,info);
+  applyActionProgressToDom(key);
+  try{await requestBackupCancellation(key);}
+  catch(err){
+    info.backup_cancel_requested=false;
+    state.actionProgress.set(key,info);
+    applyActionProgressToDom(key);
+    if(err.message!=='auth'){
+      state.updateMessages.set(key,{ok:false,kind:'backup_cancel',text:t('backupCancelFailed').replace('{error}',err.message||'-')});
+      render();
+    }
+  }
+}
+document.addEventListener('click',event=>{
+  const button=event.target&&event.target.closest?event.target.closest('[data-backup-cancel-stack]'):null;
+  if(!button)return;
+  event.preventDefault();event.stopPropagation();
+  cancelBackupForStack(String(button.dataset.backupCancelStack||''));
+});
+""",1)
+
+              card = """  const cardActionButton=isChecking
+    ? `<button class="update-install-button" type="button" data-check-index="\${index}" disabled>\${esc(t('checkingDocker'))}</button>`
+    : ((canInstall||isUpdateBusy)
+      ? `<button class="update-install-button \${isUpdating?'action-progress':''}\${updateProgressClass}"\${updateProgressStyle} type="button" data-update-index="\${index}" data-progress-stack="\${esc(app.stack_key)}" data-progress-kind="update" \${isUpdateBusy?'disabled':''}>\${esc(updateButtonLabel)}</button>`
+      : `<button class="update-install-button" type="button" data-check-index="\${index}">\${esc(t('checkDocker'))}</button>`);
+"""
+              text = text.replace(card,card+"""  const backupCancelButton=`<button class="backup-cancel-running-button" type="button" data-backup-cancel-stack="\${esc(app.stack_key)}" hidden>\${esc(t('backupCancelRunning'))}</button>`;
+""",1)
+              text = text.replace(
+                  '\${primary}\\n      <div class="update-card-actions">\${cardActionButton}<button class="update-details-button"',
+                  '\${primary}\\n      <div class="update-card-actions">\${cardActionButton}\${backupCancelButton}<button class="update-details-button"',1)
+
+              text = text.replace(
+                  """    const updateResult=await api('/api/app-update',{
+      method:'POST',
+      body:JSON.stringify({stack_key:stackKey,backup_mode:normalizedBackupMode})
+    });
+    if(updateResult&&updateResult.self_update_handoff){
+""",
+                  """    const updateResult=await api('/api/app-update',{
+      method:'POST',
+      body:JSON.stringify({stack_key:stackKey,backup_mode:normalizedBackupMode})
+    });
+    if(updateResult&&updateResult.cancelled){
+      state.updateMessages.set(stackKey,{ok:true,kind:'backup_cancelled',text:t('backupCancelled')});
+      return;
+    }
+    if(updateResult&&updateResult.self_update_handoff){
+""",1)
+
+              text = text.replace(
+                  """      state.autoLiveActions.delete(key);
+      state.updatingApps.delete(key);
+      beginVerificationState(key,state.verificationBaselines.get(key));
+
+      // Installation is finished, but the authoritative app recheck is not.
+""",
+                  """      state.autoLiveActions.delete(key);
+      state.updatingApps.delete(key);
+      if(info.cancelled){
+        state.verifyingApps.delete(key);
+        state.verificationBaselines.delete(key);
+        state.updateMessages.set(key,{ok:true,kind:'backup_cancelled',text:t('backupCancelled')});
+        state.actionProgress.delete(key);
+        return;
+      }
+      beginVerificationState(key,state.verificationBaselines.get(key));
+
+      // Installation is finished, but the authoritative app recheck is not.
+""",1)
+
+              text = text.replace(
+                  """function applyImageSourceProgressToButton(){
+  const button=document.getElementById('imageSourceApply');
+  if(!button||!imageSourceState.busy)return;
+
+  const info=imageSourceProgressInfo;
+""",
+                  """function syncImageSourceBackupCancel(){
+  const button=document.getElementById('imageSourceCancel');
+  if(!button)return;
+  if(!imageSourceState.busy){button.disabled=false;button.textContent=imageSourceText('Abbrechen','Cancel');return;}
+  const info=imageSourceProgressInfo||{};
+  const cancellable=!!(info.backup_cancel_available&&!info.finished);
+  const requested=!!info.backup_cancel_requested;
+  button.disabled=!cancellable||requested;
+  button.textContent=requested?imageSourceText('Abbruch läuft…','Cancelling…'):cancellable?imageSourceText('Backup abbrechen','Cancel backup'):imageSourceText('Abbrechen','Cancel');
+}
+async function cancelImageSourceBackup(){
+  const key=String(imageSourceState.stackKey||'').trim();
+  const info=imageSourceProgressInfo||{};
+  if(!key||!info.backup_cancel_available||info.backup_cancel_requested)return;
+  info.backup_cancel_requested=true;info.phase='backup_cancelling';imageSourceProgressInfo=info;syncImageSourceBackupCancel();
+  try{await requestBackupCancellation(key);}
+  catch(err){info.backup_cancel_requested=false;imageSourceProgressInfo=info;imageSourceState.error=imageSourceText('Backup konnte nicht abgebrochen werden: '+String(err&&err.message||'-'),'Could not cancel backup: '+String(err&&err.message||'-'));renderImageSourceDialog();}
+}
+function applyImageSourceProgressToButton(){
+  const button=document.getElementById('imageSourceApply');
+  if(!button||!imageSourceState.busy)return;
+
+  const info=imageSourceProgressInfo;
+""",1)
+              text = text.replace(
+                  """  button.textContent=imageSourceProgressLabel(info);
+}
+""",
+                  """  button.textContent=imageSourceProgressLabel(info);
+  syncImageSourceBackupCancel();
+}
+""",1)
+              text = text.replace(
+                  """          <button class="image-source-action secondary" id="imageSourceCancel" type="button" ${imageSourceState.busy?'disabled':''}>${esc(
+            imageSourceText('Abbrechen','Cancel')
+          )}</button>
+""",
+                  """          <button class="image-source-action secondary" id="imageSourceCancel" type="button">${esc(
+            imageSourceText('Abbrechen','Cancel')
+          )}</button>
+""",1)
+              text = text.replace(
+                  """  const cancel=document.getElementById('imageSourceCancel');
+  if(cancel)cancel.onclick=()=>closeImageSourceDialog();
+
+  const apply=document.getElementById('imageSourceApply');
+""",
+                  """  const cancel=document.getElementById('imageSourceCancel');
+  if(cancel){cancel.onclick=()=>imageSourceState.busy?cancelImageSourceBackup():closeImageSourceDialog();}
+  syncImageSourceBackupCancel();
+
+  const apply=document.getElementById('imageSourceApply');
+""",1)
+              text = text.replace(
+                  """    await api('/api/image-source-switch',{
+      method:'POST',
+      body:JSON.stringify({
+        stack_key:stackKey,
+        image_key:imageKey,
+        source_id:String(selected.source_id||''),
+        accept_warnings:selected.level==='warn',
+        backup_mode:'full'
+      })
+    });
+
+    await refreshImageSourceProgress(stackKey);
+""",
+                  """    const switchResult=await api('/api/image-source-switch',{
+      method:'POST',
+      body:JSON.stringify({
+        stack_key:stackKey,
+        image_key:imageKey,
+        source_id:String(selected.source_id||''),
+        accept_warnings:selected.level==='warn',
+        backup_mode:'full'
+      })
+    });
+    if(switchResult&&switchResult.cancelled){
+      stopImageSourceProgressPolling();
+      closeImageSourceDialog(true);
+      state.updateMessages.set(stackKey,{ok:true,kind:'backup_cancelled',text:imageSourceText('Backup wurde abgebrochen. Image Quelle wurde nicht geändert.','Backup was cancelled. The image source was not changed.')});
+      render();
+      return;
+    }
+
+    await refreshImageSourceProgress(stackKey);
+""",1)
+
           path.write_text(text, encoding="utf-8")
           PY
 
@@ -306,6 +552,25 @@ jobs:
           app_scan = function_source("app_scan")
           assert "acknowledge_auto_update_error(stack_key)" in app_scan
 
+          backup_source = function_source("create_pre_update_backup")
+          assert "_run_backup_process_cancellable(" in backup_source
+          assert "except BackupCancelledError" in backup_source
+          assert "shutil.rmtree(work_dir, ignore_errors=True)" in backup_source
+          assert "work_dir.replace(final_dir)" in backup_source
+          backup_cancel = function_source("backup_cancel")
+          assert "request_backup_cancellation(data.stack_key)" in backup_cancel
+          app_update = function_source("app_update")
+          assert "except BackupCancelledError" in app_update
+          assert '"cancelled": True' in app_update
+          auto_update = function_source("run_due_auto_updates")
+          assert 'current["last_auto_result"] = "cancelled"' in auto_update
+          assert "if not cancelled:" in auto_update
+          assert "/api/backup-cancel" in html
+          assert "data-backup-cancel-stack" in html
+          assert "backup_cancel_available" in html
+          assert "backupCancelled" in html
+          assert "cancelImageSourceBackup" in html
+
           # Frontend/release regression: all active version markers must agree.
           assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
           assert f'id="systemInfoVersion">v{release_version}</div>' in html
@@ -336,5 +601,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add static/index.html
-          git commit -m "Synchronize static UI and regression guard for v0.3.360"
+          git commit -m "Synchronize static UI for current release"
           git push

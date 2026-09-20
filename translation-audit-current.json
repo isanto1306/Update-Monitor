@@ -1,5 +1,5 @@
 {
-  "version": "v0.3.362",
+  "version": "v0.3.363",
   "languages": [
     "de",
     "en"
@@ -307,7 +307,11 @@
       "uninstallConfirmDelete": "„{name}“ deinstallieren und den ZimaOS-App-Ordner ebenfalls löschen?",
       "uninstallStarted": "Deinstallation abgeschlossen.",
       "uninstallFailed": "Deinstallation fehlgeschlagen: {error}",
-      "uninstallConfirmShort": "Deinstallieren?"
+      "uninstallConfirmShort": "Deinstallieren?",
+      "backupCancelRunning": "BACKUP ABBRECHEN",
+      "backupCancelling": "BACKUP WIRD ABGEBROCHEN…",
+      "backupCancelled": "Backup wurde abgebrochen. Update wurde nicht gestartet.",
+      "backupCancelFailed": "Backup konnte nicht abgebrochen werden: {error}"
     },
     "en": {
       "loginSubtitle": "Docker Image & Version Monitoring",
@@ -611,7 +615,11 @@
       "uninstallConfirmDelete": "Uninstall “{name}” and delete the ZimaOS app folder too?",
       "uninstallStarted": "Uninstall completed.",
       "uninstallFailed": "Uninstall failed: {error}",
-      "uninstallConfirmShort": "Uninstall?"
+      "uninstallConfirmShort": "Uninstall?",
+      "backupCancelRunning": "CANCEL BACKUP",
+      "backupCancelling": "CANCELLING BACKUP…",
+      "backupCancelled": "Backup was cancelled. The update was not started.",
+      "backupCancelFailed": "Could not cancel backup: {error}"
     }
   },
   "used_translation_keys": [

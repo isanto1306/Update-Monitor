@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.362"
+VERSION = "0.3.363"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -269,6 +269,10 @@ class BackupSettingsRequest(BaseModel):
     stack_key: Optional[str] = None
 
 
+class BackupCancelRequest(BaseModel):
+    stack_key: str
+
+
 class VersionConfirmationRequest(BaseModel):
     stack_key: str
     image_ref: str
@@ -339,6 +343,18 @@ SERVICE_STARTED_AT = datetime.now(timezone.utc).isoformat()
 # container removals are converted into a measured percentage.
 action_progress_lock = threading.Lock()
 action_progress = {}
+
+# The active backup stays owned by the update operation. This registry only
+# allows a second authenticated request to signal cancellation and interrupt
+# the blocking Docker copy without taking over the global update lock.
+BACKUP_CANCEL_LOCK = threading.RLock()
+BACKUP_CANCEL_STATE = {}
+
+
+class BackupCancelledError(RuntimeError):
+    """Raised after a user-requested backup cancellation is observed."""
+
+
 message_bus_state_lock = threading.Lock()
 message_bus_state = {
     "connected": False,
@@ -395,6 +411,9 @@ def begin_action_progress(stack_key, kind, app_item, automatic=False):
         "finished": False,
         "success": None,
         "error": None,
+        "cancelled": False,
+        "backup_cancel_available": False,
+        "backup_cancel_requested": False,
         "initial_container_count": max(0, container_count),
         "removed_container_ids": [],
     }
@@ -445,6 +464,25 @@ def finish_action_progress(stack_key, success, error=None):
             record["phase"] = "complete"
         else:
             record["phase"] = "error"
+
+
+def finish_action_progress_cancelled(stack_key):
+    """Finish an update as deliberately cancelled instead of failed."""
+    stack_key = str(stack_key or "").strip()
+    if not stack_key:
+        return
+    with action_progress_lock:
+        record = action_progress.get(stack_key)
+        if not record:
+            return
+        record["finished"] = True
+        record["success"] = None
+        record["error"] = None
+        record["cancelled"] = True
+        record["backup_cancel_available"] = False
+        record["backup_cancel_requested"] = True
+        record["phase"] = "cancelled"
+        record["updated_at"] = utc_now()
 
 
 def _action_progress_finished_expired(record, max_age_seconds=60):
@@ -499,10 +537,146 @@ def action_progress_public_snapshot():
                 "finished": bool(record.get("finished")),
                 "success": record.get("success"),
                 "error": record.get("error"),
+                "cancelled": bool(record.get("cancelled")),
+                "backup_cancel_available": bool(record.get("backup_cancel_available")),
+                "backup_cancel_requested": bool(record.get("backup_cancel_requested")),
             }
         for key in expired_keys:
             action_progress.pop(key, None)
         return json.loads(json.dumps(result))
+
+
+def _backup_cancel_register(stack_key):
+    stack_key = str(stack_key or "").strip()
+    if not stack_key:
+        raise RuntimeError("Backup cancellation requires an app key")
+    event = threading.Event()
+    with BACKUP_CANCEL_LOCK:
+        active = BACKUP_CANCEL_STATE.get(stack_key)
+        if active and not active.get("finished"):
+            raise RuntimeError("A backup is already active for this app")
+        BACKUP_CANCEL_STATE[stack_key] = {
+            "event": event,
+            "process": None,
+            "started_at": utc_now(),
+            "finished": False,
+        }
+    with action_progress_lock:
+        record = action_progress.get(stack_key)
+        if record and not record.get("finished"):
+            record["backup_cancel_available"] = True
+            record["backup_cancel_requested"] = False
+            record["cancelled"] = False
+            record["updated_at"] = utc_now()
+    return event
+
+
+def _backup_cancel_unregister(stack_key, event):
+    stack_key = str(stack_key or "").strip()
+    with BACKUP_CANCEL_LOCK:
+        current = BACKUP_CANCEL_STATE.get(stack_key)
+        if current and current.get("event") is event:
+            current["finished"] = True
+            BACKUP_CANCEL_STATE.pop(stack_key, None)
+    with action_progress_lock:
+        record = action_progress.get(stack_key)
+        if record and not record.get("finished"):
+            record["backup_cancel_available"] = False
+            record["updated_at"] = utc_now()
+
+
+def _backup_cancel_attach_process(stack_key, event, process):
+    with BACKUP_CANCEL_LOCK:
+        current = BACKUP_CANCEL_STATE.get(str(stack_key or "").strip())
+        if current and current.get("event") is event:
+            current["process"] = process
+
+
+def _backup_cancel_detach_process(stack_key, event, process):
+    with BACKUP_CANCEL_LOCK:
+        current = BACKUP_CANCEL_STATE.get(str(stack_key or "").strip())
+        if current and current.get("event") is event and current.get("process") is process:
+            current["process"] = None
+
+
+def _backup_check_cancel(stack_key, event):
+    if event is not None and event.is_set():
+        raise BackupCancelledError("Backup was cancelled by the user")
+
+
+def _terminate_backup_process(process):
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=4)
+    except Exception:
+        try:
+            process.kill()
+            process.wait(timeout=4)
+        except Exception:
+            pass
+
+
+def request_backup_cancellation(stack_key):
+    """Signal cancellation and interrupt an active docker cp without waiting."""
+    stack_key = str(stack_key or "").strip()
+    if not stack_key:
+        return False
+    with BACKUP_CANCEL_LOCK:
+        current = BACKUP_CANCEL_STATE.get(stack_key)
+        if not current or current.get("finished"):
+            return False
+        event = current.get("event")
+        process = current.get("process")
+        if event is None:
+            return False
+        event.set()
+    with action_progress_lock:
+        record = action_progress.get(stack_key)
+        if record and not record.get("finished"):
+            record["backup_cancel_requested"] = True
+            record["backup_cancel_available"] = True
+            record["phase"] = "backup_cancelling"
+            record["updated_at"] = utc_now()
+    # Only signal here. The owner thread waits/restarts/cleans up safely.
+    if process is not None and process.poll() is None:
+        try:
+            process.terminate()
+        except Exception:
+            pass
+    return True
+
+
+def _run_backup_process_cancellable(cmd, stack_key, event, timeout):
+    """Run docker cp while another request may cancel it."""
+    process = None
+    try:
+        process = subprocess.Popen(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        _backup_cancel_attach_process(stack_key, event, process)
+        deadline = time.monotonic() + max(1.0, float(timeout or 1))
+        while True:
+            _backup_check_cancel(stack_key, event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _terminate_backup_process(process)
+                return 124, "", "Timeout"
+            try:
+                out, err = process.communicate(timeout=min(0.35, remaining))
+                _backup_check_cancel(stack_key, event)
+                return process.returncode, (out or "").strip(), (err or "").strip()
+            except subprocess.TimeoutExpired:
+                continue
+    except FileNotFoundError as exc:
+        return 127, "", str(exc)
+    finally:
+        if process is not None:
+            _backup_cancel_detach_process(stack_key, event, process)
 
 
 def live_scan_snapshot():
@@ -11156,7 +11330,7 @@ def _auto_retry_ready(policy, now_utc, update_signature):
             now_utc - last_attempt
         ).total_seconds() >= AUTO_UPDATE_SUCCESS_REVERIFY_SECONDS
 
-    if result not in {"error", "running"}:
+    if result not in {"error", "running", "cancelled"}:
         return True
 
     if last_attempt is None:
@@ -11445,6 +11619,7 @@ def run_due_auto_updates(now_utc=None):
 
         update_result = None
         backup_result = None
+        cancelled = False
         try:
             auto_policy = get_monitor_policy(stack_key)
             auto_backup_mode = _normalize_backup_mode(auto_policy.get("auto_backup_mode"), "none")
@@ -11476,6 +11651,17 @@ def run_due_auto_updates(now_utc=None):
             )
             finish_action_progress(stack_key, True)
 
+        except BackupCancelledError:
+            cancelled = True
+            with policies_lock:
+                current = dict(policies.get(str(stack_key)) or {})
+                current["last_auto_result"] = "cancelled"
+                current["last_auto_error"] = None
+                current["last_auto_cancelled_at"] = utc_now()
+                policies[str(stack_key)] = current
+                save_json(POLICY_FILE, policies)
+            finish_action_progress_cancelled(stack_key)
+
         except Exception as exc:
             record_auto_update_result(
                 stack_key,
@@ -11487,13 +11673,11 @@ def run_due_auto_updates(now_utc=None):
             finish_action_progress(stack_key, False, str(exc))
 
         finally:
-            # Queue the authoritative targeted verification BEFORE releasing the
-            # common operation gate. The pending marker blocks the scheduler, so
-            # no second automatic update can start until this scan has completed.
-            schedule_app_scan(
-                stack_key,
-                verification_result=update_result,
-            )
+            if not cancelled:
+                schedule_app_scan(
+                    stack_key,
+                    verification_result=update_result,
+                )
             app_update_lock.release()
 
         # Exactly one automatic update attempt per scheduler iteration.
@@ -14542,20 +14726,22 @@ def _backup_payload_aad(backup_id):
     return ("update-monitor-backup-payload-v1:" + str(backup_id or "")).encode("utf-8")
 
 
-def _encrypt_file_gcm(source_path, target_path, key, aad):
+def _encrypt_file_gcm(source_path, target_path, key, aad, cancel_check=None):
     nonce = os.urandom(12)
     cipher = Cipher(algorithms.AES(bytes(key)), modes.GCM(nonce))
     encryptor = cipher.encryptor()
     encryptor.authenticate_additional_data(bytes(aad))
-
     with open(source_path, "rb") as source, open(target_path, "wb") as target:
         while True:
+            if cancel_check is not None:
+                cancel_check()
             chunk = source.read(BACKUP_PAYLOAD_CHUNK_SIZE)
             if not chunk:
                 break
             target.write(encryptor.update(chunk))
+        if cancel_check is not None:
+            cancel_check()
         target.write(encryptor.finalize())
-
     return nonce, bytes(encryptor.tag)
 
 
@@ -14576,26 +14762,34 @@ def _decrypt_file_gcm(source_path, target_path, key, nonce, tag, aad):
         target.write(decryptor.finalize())
 
 
-def _encrypt_backup_payload(work_dir, metadata, key):
+def _encrypt_backup_payload(work_dir, metadata, key, cancel_check=None):
     """Pack compose/data into one encrypted payload while keeping a small index."""
     backup_id = str(metadata.get("backup_id") or "")
     archive_path = work_dir / ".payload.tar.gz"
     encrypted_path = work_dir / "payload.umbackup.enc"
 
+    def cancel_filter(tarinfo):
+        if cancel_check is not None:
+            cancel_check()
+        return tarinfo
+
     with tarfile.open(archive_path, "w:gz") as archive:
         compose_path = work_dir / "compose.yaml"
         if compose_path.is_file():
-            archive.add(compose_path, arcname="compose.yaml", recursive=False)
+            archive.add(compose_path, arcname="compose.yaml", recursive=False, filter=cancel_filter)
         data_root = work_dir / "data"
         if data_root.is_dir():
-            archive.add(data_root, arcname="data", recursive=True)
+            archive.add(data_root, arcname="data", recursive=True, filter=cancel_filter)
 
+    if cancel_check is not None:
+        cancel_check()
     try:
         nonce, tag = _encrypt_file_gcm(
             archive_path,
             encrypted_path,
             key,
             _backup_payload_aad(backup_id),
+            cancel_check=cancel_check,
         )
     finally:
         try:
@@ -14603,13 +14797,13 @@ def _encrypt_backup_payload(work_dir, metadata, key):
         except OSError:
             pass
 
-    # Remove plaintext only after authenticated encryption completed.
+    if cancel_check is not None:
+        cancel_check()
     try:
         (work_dir / "compose.yaml").unlink()
     except OSError:
         pass
     shutil.rmtree(work_dir / "data", ignore_errors=True)
-
     metadata["encryption"] = {
         "encrypted": True,
         "algorithm": "AES-256-GCM",
@@ -15294,18 +15488,18 @@ def _write_backup_json(path, value):
     tmp.replace(path)
 
 
-def _backup_directory_size_bytes(root):
+def _backup_directory_size_bytes(root, cancel_check=None):
     """Return backup directory size without following symlinks."""
     root = Path(root)
     total = 0
     try:
         for base, dirs, files in os.walk(root, followlinks=False):
-            # Never descend into symlinked directories.
-            dirs[:] = [
-                name for name in dirs
-                if not (Path(base) / name).is_symlink()
-            ]
+            if cancel_check is not None:
+                cancel_check()
+            dirs[:] = [name for name in dirs if not (Path(base) / name).is_symlink()]
             for name in files:
+                if cancel_check is not None:
+                    cancel_check()
                 path = Path(base) / name
                 try:
                     if path.is_symlink():
@@ -15371,194 +15565,241 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
     if not stack_key or not project:
         raise RuntimeError("Backup requires a ZimaOS Compose app")
 
-    # Backup progress is milestone based. docker cp does not expose a reliable
-    # byte progress stream, so the percentages represent completed backup stages.
-    update_action_progress(stack_key, 2, determinate=True, phase="backup_prepare")
-    encryption_key = _backup_encryption_key_for_write()
+    cancel_event = _backup_cancel_register(stack_key)
+    work_dir = None
 
-    cleanup_expired_backups()
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    stack_dir = BACKUP_DIR / _backup_stack_dir_name(
-        stack_key,
-        compose_project=project,
-        app_name=(app_item or {}).get("name"),
-    )
-    stack_dir.mkdir(parents=True, exist_ok=True)
+    def check_cancel():
+        _backup_check_cancel(stack_key, cancel_event)
 
-    created_at = datetime.now(timezone.utc)
-    backup_id = created_at.strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(3)
-    final_dir = stack_dir / backup_id
-    work_dir = stack_dir / (backup_id + ".incomplete")
-    shutil.rmtree(work_dir, ignore_errors=True)
-    work_dir.mkdir(parents=True, exist_ok=False)
-
-    inspects = _backup_container_inspects(app_item)
-    compose_yaml = casaos_compose_yaml(project)
-    (work_dir / "compose.yaml").write_text(compose_yaml, encoding="utf-8")
-
-    mounts, mount_inventory = _backup_candidate_mounts_with_inventory(inspects)
-    if mount_inventory["volumes_selected"] != mount_inventory["volumes_detected"]:
-        raise RuntimeError("Full backup mount discovery excluded one or more Docker volumes")
-    running_before = [
-        str(row.get("Name") or "").lstrip("/")
-        for row in inspects
-        if str((row.get("State") or {}).get("Status") or "") == "running"
-    ]
-
-    retention_days = current_backup_retention_days()
-    expires_at = (
-        created_at + timedelta(days=retention_days)
-        if retention_days is not None
-        else None
-    )
-
-    metadata = {
-        "schema": "update-monitor-backup-v2",
-        "backup_id": backup_id,
-        "created_at": created_at.isoformat(),
-        "expires_at": expires_at.isoformat() if expires_at is not None else None,
-        "retention_days": retention_days,
-        "mode": mode,
-        "stack_key": stack_key,
-        "app_name": str((app_item or {}).get("name") or ""),
-        "compose_project": project,
-        "update_monitor_version": VERSION,
-        "monitor_policy": get_monitor_policy(stack_key),
-        "images": _backup_image_snapshot(app_item, inspects),
-        "persistent_data_detected": bool(mounts),
-        "persistent_mount_count": len(mounts),
-        "mount_inventory": dict(mount_inventory),
-        "persistent_mounts": [
-            {
-                "identity": mount.get("identity"),
-                "container": mount.get("container"),
-                "destination": mount.get("destination"),
-                "type": mount.get("type"),
-                "name": mount.get("name"),
-                "rw": bool(mount.get("rw", True)),
-            }
-            for mount in mounts
-        ],
-        "data_mounts": [],
-        "container_count": len(inspects),
-        "running_containers_before_backup": running_before,
-    }
-    _write_backup_json(work_dir / "metadata.json", metadata)
-    update_action_progress(stack_key, 4, determinate=True, phase="backup_prepare")
-
-    stopped = []
-    restart_errors = []
     try:
-        if mode == "full" and mounts:
-            # Stop only containers that were running. A consistent offline copy is
-            # safer for SQLite/PostgreSQL/etc. than copying live database files.
-            update_action_progress(stack_key, 5, determinate=True, phase="backup_stop")
-            total_running = max(1, len(running_before))
-            for stop_index, name in enumerate(running_before, start=1):
-                rc, _, err = run(["docker", "stop", "-t", "30", name], timeout=60)
-                if rc != 0:
-                    raise RuntimeError(f"Could not stop {name} for full backup: {err or 'docker stop failed'}")
-                stopped.append(name)
-                update_action_progress(
-                    stack_key,
-                    5 + round((stop_index / total_running) * 3),
-                    determinate=True,
-                    phase="backup_stop",
-                )
+        update_action_progress(stack_key, 2, determinate=True, phase="backup_prepare")
+        check_cancel()
+        encryption_key = _backup_encryption_key_for_write()
+        cleanup_expired_backups()
+        check_cancel()
 
-            data_root = work_dir / "data"
-            data_root.mkdir(parents=True, exist_ok=True)
-            total_mounts = max(1, len(mounts))
-            for index, mount in enumerate(mounts, start=1):
-                container_name = mount["container"]
-                destination = mount["destination"]
-                target_name = f"mount-{index:03d}"
-                target_path = data_root / target_name
-                update_action_progress(
-                    stack_key,
-                    8 + round(((index - 1) / total_mounts) * 5),
-                    determinate=True,
-                    phase="backup_data",
-                )
-                rc, _, err = run(
-                    ["docker", "cp", "-a", f"{container_name}:{destination}", str(target_path)],
-                    timeout=60 * 60,
-                )
-                if rc != 0:
-                    raise RuntimeError(
-                        f"Full backup failed while copying {container_name}:{destination}: {err or 'docker cp failed'}"
-                    )
-                metadata["data_mounts"].append({
-                    **mount,
-                    "backup_path": f"data/{target_name}",
-                })
-                _write_backup_json(work_dir / "metadata.json", metadata)
-                update_action_progress(
-                    stack_key,
-                    8 + round((index / total_mounts) * 5),
-                    determinate=True,
-                    phase="backup_data",
-                )
-    except Exception:
-        # Keep no apparently-complete backup after a copy/stop failure.
-        raise
-    finally:
-        if stopped:
-            update_action_progress(stack_key, 14, determinate=True, phase="backup_restart")
-        for name in stopped:
-            rc, _, err = run(["docker", "start", name], timeout=60)
-            if rc != 0:
-                restart_errors.append(f"{name}: {err or 'docker start failed'}")
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        stack_dir = BACKUP_DIR / _backup_stack_dir_name(
+            stack_key,
+            compose_project=project,
+            app_name=(app_item or {}).get("name"),
+        )
+        stack_dir.mkdir(parents=True, exist_ok=True)
 
-    if restart_errors:
-        metadata["restart_errors"] = restart_errors
+        created_at = datetime.now(timezone.utc)
+        backup_id = created_at.strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(3)
+        final_dir = stack_dir / backup_id
+        work_dir = stack_dir / (backup_id + ".incomplete")
+        shutil.rmtree(work_dir, ignore_errors=True)
+        work_dir.mkdir(parents=True, exist_ok=False)
+
+        check_cancel()
+        inspects = _backup_container_inspects(app_item)
+        compose_yaml = casaos_compose_yaml(project)
+        (work_dir / "compose.yaml").write_text(compose_yaml, encoding="utf-8")
+
+        mounts, mount_inventory = _backup_candidate_mounts_with_inventory(inspects)
+        if mount_inventory["volumes_selected"] != mount_inventory["volumes_detected"]:
+            raise RuntimeError("Full backup mount discovery excluded one or more Docker volumes")
+        running_before = [
+            str(row.get("Name") or "").lstrip("/")
+            for row in inspects
+            if str((row.get("State") or {}).get("Status") or "") == "running"
+        ]
+
+        retention_days = current_backup_retention_days()
+        expires_at = (
+            created_at + timedelta(days=retention_days)
+            if retention_days is not None
+            else None
+        )
+
+        metadata = {
+            "schema": "update-monitor-backup-v2",
+            "backup_id": backup_id,
+            "created_at": created_at.isoformat(),
+            "expires_at": expires_at.isoformat() if expires_at is not None else None,
+            "retention_days": retention_days,
+            "mode": mode,
+            "stack_key": stack_key,
+            "app_name": str((app_item or {}).get("name") or ""),
+            "compose_project": project,
+            "update_monitor_version": VERSION,
+            "monitor_policy": get_monitor_policy(stack_key),
+            "images": _backup_image_snapshot(app_item, inspects),
+            "persistent_data_detected": bool(mounts),
+            "persistent_mount_count": len(mounts),
+            "mount_inventory": dict(mount_inventory),
+            "persistent_mounts": [
+                {
+                    "identity": mount.get("identity"),
+                    "container": mount.get("container"),
+                    "destination": mount.get("destination"),
+                    "type": mount.get("type"),
+                    "name": mount.get("name"),
+                    "rw": bool(mount.get("rw", True)),
+                }
+                for mount in mounts
+            ],
+            "data_mounts": [],
+            "container_count": len(inspects),
+            "running_containers_before_backup": running_before,
+        }
         _write_backup_json(work_dir / "metadata.json", metadata)
-        raise RuntimeError(
-            "Backup was created, but one or more containers could not be restarted: "
-            + "; ".join(restart_errors)
-        )
+        update_action_progress(stack_key, 4, determinate=True, phase="backup_prepare")
+        check_cancel()
 
-    if mode == "full":
-        copied_volume_count = sum(
-            1 for mount in metadata.get("data_mounts") or []
-            if str((mount or {}).get("type") or "").strip().lower() == "volume"
-        )
-        copied_bind_count = sum(
-            1 for mount in metadata.get("data_mounts") or []
-            if str((mount or {}).get("type") or "").strip().lower() == "bind"
-        )
-        metadata.setdefault("mount_inventory", {})["volumes_copied"] = copied_volume_count
-        metadata.setdefault("mount_inventory", {})["binds_copied"] = copied_bind_count
-        expected_volumes = int((metadata.get("mount_inventory") or {}).get("volumes_detected") or 0)
-        if copied_volume_count != expected_volumes:
-            _write_backup_json(work_dir / "metadata.json", metadata)
+        stopped = []
+        restart_errors = []
+        backup_error = None
+        try:
+            if mode == "full" and mounts:
+                update_action_progress(stack_key, 5, determinate=True, phase="backup_stop")
+                total_running = max(1, len(running_before))
+                for stop_index, name in enumerate(running_before, start=1):
+                    check_cancel()
+                    rc, _, err = run(["docker", "stop", "-t", "30", name], timeout=60)
+                    if rc != 0:
+                        raise RuntimeError(
+                            f"Could not stop {name} for full backup: {err or 'docker stop failed'}"
+                        )
+                    stopped.append(name)
+                    update_action_progress(
+                        stack_key,
+                        5 + round((stop_index / total_running) * 3),
+                        determinate=True,
+                        phase="backup_stop",
+                    )
+                    check_cancel()
+
+                data_root = work_dir / "data"
+                data_root.mkdir(parents=True, exist_ok=True)
+                total_mounts = max(1, len(mounts))
+                for index, mount in enumerate(mounts, start=1):
+                    check_cancel()
+                    container_name = mount["container"]
+                    destination = mount["destination"]
+                    target_name = f"mount-{index:03d}"
+                    target_path = data_root / target_name
+                    update_action_progress(
+                        stack_key,
+                        8 + round(((index - 1) / total_mounts) * 5),
+                        determinate=True,
+                        phase="backup_data",
+                    )
+                    rc, _, err = _run_backup_process_cancellable(
+                        ["docker", "cp", "-a", f"{container_name}:{destination}", str(target_path)],
+                        stack_key,
+                        cancel_event,
+                        timeout=60 * 60,
+                    )
+                    if rc != 0:
+                        raise RuntimeError(
+                            f"Full backup failed while copying {container_name}:{destination}: "
+                            f"{err or 'docker cp failed'}"
+                        )
+                    check_cancel()
+                    metadata["data_mounts"].append({**mount, "backup_path": f"data/{target_name}"})
+                    _write_backup_json(work_dir / "metadata.json", metadata)
+                    update_action_progress(
+                        stack_key,
+                        8 + round((index / total_mounts) * 5),
+                        determinate=True,
+                        phase="backup_data",
+                    )
+        except Exception as exc:
+            backup_error = exc
+        finally:
+            if stopped:
+                update_action_progress(
+                    stack_key,
+                    14,
+                    determinate=True,
+                    phase="backup_cancelling" if cancel_event.is_set() else "backup_restart",
+                )
+            for name in stopped:
+                rc, _, err = run(["docker", "start", name], timeout=60)
+                if rc != 0:
+                    restart_errors.append(f"{name}: {err or 'docker start failed'}")
+
+        if restart_errors:
             raise RuntimeError(
-                f"Full backup incomplete: copied {copied_volume_count} of {expected_volumes} Docker volumes"
+                "Backup could not safely restore all stopped containers: "
+                + "; ".join(restart_errors)
+            )
+        if backup_error is not None:
+            raise backup_error
+
+        check_cancel()
+        if mode == "full":
+            copied_volume_count = sum(
+                1 for mount in metadata.get("data_mounts") or []
+                if str((mount or {}).get("type") or "").strip().lower() == "volume"
+            )
+            copied_bind_count = sum(
+                1 for mount in metadata.get("data_mounts") or []
+                if str((mount or {}).get("type") or "").strip().lower() == "bind"
+            )
+            metadata.setdefault("mount_inventory", {})["volumes_copied"] = copied_volume_count
+            metadata.setdefault("mount_inventory", {})["binds_copied"] = copied_bind_count
+            expected_volumes = int(
+                (metadata.get("mount_inventory") or {}).get("volumes_detected") or 0
+            )
+            if copied_volume_count != expected_volumes:
+                _write_backup_json(work_dir / "metadata.json", metadata)
+                raise RuntimeError(
+                    f"Full backup incomplete: copied {copied_volume_count} "
+                    f"of {expected_volumes} Docker volumes"
+                )
+
+        check_cancel()
+        metadata["completed_at"] = utc_now()
+        if encryption_key is not None:
+            update_action_progress(stack_key, 14, determinate=True, phase="backup_encrypt")
+            _encrypt_backup_payload(
+                work_dir,
+                metadata,
+                encryption_key,
+                cancel_check=check_cancel,
             )
 
-    metadata["completed_at"] = utc_now()
-    if encryption_key is not None:
-        _encrypt_backup_payload(work_dir, metadata, encryption_key)
-    _write_backup_json(work_dir / "metadata.json", metadata)
-    metadata["size_bytes"] = _backup_directory_size_bytes(work_dir)
-    _write_backup_json(work_dir / "metadata.json", metadata)
-    work_dir.replace(final_dir)
-    cleanup_expired_backups()
-    update_action_progress(stack_key, 15, determinate=True, phase="backup_done")
+        check_cancel()
+        _write_backup_json(work_dir / "metadata.json", metadata)
+        metadata["size_bytes"] = _backup_directory_size_bytes(
+            work_dir,
+            cancel_check=check_cancel,
+        )
+        check_cancel()
+        _write_backup_json(work_dir / "metadata.json", metadata)
 
-    return {
-        "backup_id": backup_id,
-        "mode": mode,
-        "created_at": metadata["created_at"],
-        "expires_at": metadata["expires_at"],
-        "data_mount_count": len(metadata["data_mounts"]),
-        "container_count": int(metadata.get("container_count") or 0),
-        "encrypted": bool(
-            isinstance(metadata.get("encryption"), dict)
-            and metadata.get("encryption", {}).get("encrypted")
-        ),
-    }
+        # This atomic rename is the only point at which staging becomes a valid backup.
+        work_dir.replace(final_dir)
+        work_dir = None
+        cleanup_expired_backups()
+        update_action_progress(stack_key, 15, determinate=True, phase="backup_done")
 
+        return {
+            "backup_id": backup_id,
+            "mode": mode,
+            "created_at": metadata["created_at"],
+            "expires_at": metadata["expires_at"],
+            "data_mount_count": len(metadata["data_mounts"]),
+            "container_count": int(metadata.get("container_count") or 0),
+            "encrypted": bool(
+                isinstance(metadata.get("encryption"), dict)
+                and metadata.get("encryption", {}).get("encrypted")
+            ),
+        }
+    except BackupCancelledError:
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        raise
+    except Exception:
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        raise
+    finally:
+        _backup_cancel_unregister(stack_key, cancel_event)
 
 
 def _backup_records_for_app(app_item):
@@ -17674,6 +17915,21 @@ def action_progress_status(stack_key: str, request: Request):
     }
 
 
+@app.post("/api/backup-cancel")
+def backup_cancel(data: BackupCancelRequest, request: Request):
+    require_auth(request)
+    if not request_backup_cancellation(data.stack_key):
+        raise HTTPException(
+            status_code=409,
+            detail="No cancellable backup is currently running for this app",
+        )
+    return {
+        "success": True,
+        "cancel_requested": True,
+        "stack_key": data.stack_key,
+    }
+
+
 @app.get("/api/runtime-status")
 def runtime_status(request: Request):
     require_auth(request)
@@ -18713,6 +18969,7 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
     switch_error = None
     result = None
     backup_result = None
+    cancelled = False
     begin_action_progress(data.stack_key, "update", app_item)
     try:
         update_action_progress(data.stack_key, 5, determinate=True, phase="backup")
@@ -18732,15 +18989,26 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
             result["backup"] = backup_result
         register_successful_image_source_switch(app_item, result)
         finish_action_progress(data.stack_key, True)
+    except BackupCancelledError:
+        cancelled = True
+        finish_action_progress_cancelled(data.stack_key)
     except RuntimeError as exc:
         switch_error = exc
         finish_action_progress(data.stack_key, False, str(exc))
     finally:
-        schedule_app_scan(
-            data.stack_key,
-            verification_result=result if switch_error is None else None,
-        )
+        if not cancelled:
+            schedule_app_scan(
+                data.stack_key,
+                verification_result=result if switch_error is None else None,
+            )
         app_update_lock.release()
+
+    if cancelled:
+        return {
+            "success": False,
+            "cancelled": True,
+            "app": app_item.get("name"),
+        }
 
     if switch_error is not None:
         raise HTTPException(status_code=500, detail=str(switch_error)) from switch_error
@@ -18810,6 +19078,7 @@ def image_source_switch(data: ImageSourceSwitchRequest, request: Request):
     switch_error = None
     result = None
     backup_result = None
+    cancelled = False
     begin_action_progress(data.stack_key, "update", app_item)
 
     try:
@@ -18845,15 +19114,26 @@ def image_source_switch(data: ImageSourceSwitchRequest, request: Request):
         register_successful_image_source_switch(app_item, result)
 
         finish_action_progress(data.stack_key, True)
+    except BackupCancelledError:
+        cancelled = True
+        finish_action_progress_cancelled(data.stack_key)
     except RuntimeError as exc:
         switch_error = exc
         finish_action_progress(data.stack_key, False, str(exc))
     finally:
-        schedule_app_scan(
-            data.stack_key,
-            verification_result=result if switch_error is None else None,
-        )
+        if not cancelled:
+            schedule_app_scan(
+                data.stack_key,
+                verification_result=result if switch_error is None else None,
+            )
         app_update_lock.release()
+
+    if cancelled:
+        return {
+            "success": False,
+            "cancelled": True,
+            "app": app_item.get("name"),
+        }
 
     if switch_error is not None:
         raise HTTPException(status_code=500, detail=str(switch_error)) from switch_error
@@ -18927,6 +19207,7 @@ def app_update(data: AppUpdateRequest, request: Request):
     update_error = None
     result = None
     backup_result = None
+    cancelled = False
     begin_action_progress(data.stack_key, "update", app_item)
 
     try:
@@ -18946,6 +19227,9 @@ def app_update(data: AppUpdateRequest, request: Request):
         if isinstance(result, dict) and backup_result:
             result["backup"] = backup_result
         finish_action_progress(data.stack_key, True)
+    except BackupCancelledError:
+        cancelled = True
+        finish_action_progress_cancelled(data.stack_key)
     except RuntimeError as exc:
         update_error = exc
         finish_action_progress(data.stack_key, False, str(exc))
@@ -18955,11 +19239,19 @@ def app_update(data: AppUpdateRequest, request: Request):
         # for this stack while the Docker-operation lock is still held. The
         # pending marker then blocks the 1/6/12/24-hour scheduler until this one
         # app verification has completed.
-        schedule_app_scan(
-            data.stack_key,
-            verification_result=result if update_error is None else None,
-        )
+        if not cancelled:
+            schedule_app_scan(
+                data.stack_key,
+                verification_result=result if update_error is None else None,
+            )
         app_update_lock.release()
+
+    if cancelled:
+        return {
+            "success": False,
+            "cancelled": True,
+            "app": app_item.get("name"),
+        }
 
     if update_error is not None:
         raise HTTPException(status_code=500, detail=str(update_error)) from update_error
