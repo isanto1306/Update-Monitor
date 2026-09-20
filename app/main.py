@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.364"
+VERSION = "0.3.365"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -17189,6 +17189,77 @@ def _pulled_image_version_hint(item, pulled, platform):
     )
 
 
+def _moving_update_scan_target_version(item):
+    """Return the concrete version the scan advertised for a moving-tag update."""
+    item = item or {}
+    for key in ("resolved_available_tag", "newer_tag"):
+        value = str(item.get(key) or "").strip()
+        if value and parse_version(value):
+            return value
+    return None
+
+
+def _verify_moving_tag_matches_scan_target(item, pulled, platform):
+    """Fail closed when a moving tag has not reached the scanned target version.
+
+    A successful pull of :latest only proves which bytes the registry currently
+    serves for :latest.  When the scan advertised a concrete version such as
+    0.32.88, verify that the concrete version tag resolves to the same digest
+    before any container is recreated.
+    """
+    target_version = _moving_update_scan_target_version(item)
+    if not target_version:
+        return None
+
+    pulled = pulled or {}
+    image_ref = str(pulled.get("image_ref") or item.get("image_ref") or "").strip()
+    parsed = parse_image_ref(image_ref) if image_ref else {}
+    repo_key = str(parsed.get("normalized_repo") or pulled.get("repo") or "").strip()
+    pulled_digests = {
+        str(value or "").strip().lower()
+        for value in (
+            pulled.get("local_digests")
+            or pulled.get("expected_digests")
+            or []
+        )
+        if str(value or "").strip()
+    }
+
+    if not repo_key or not pulled_digests:
+        raise RuntimeError(
+            f"Could not verify the scanned target version {target_version} "
+            f"for {image_ref or 'the moving image tag'}"
+        )
+
+    target_digests, target_error = registry_manifest_digests(
+        repo_key,
+        target_version,
+        platform,
+        timeout=12,
+    )
+    target_digests = {
+        str(value or "").strip().lower()
+        for value in (target_digests or [])
+        if str(value or "").strip()
+    }
+
+    if target_error or not target_digests:
+        raise RuntimeError(
+            f"Could not verify target version {target_version} in the registry "
+            f"before installation: {target_error or 'no digest returned'}. "
+            "No container was changed."
+        )
+
+    if not pulled_digests.intersection(target_digests):
+        raise RuntimeError(
+            f"The moving tag {image_ref} does not yet point to the scanned "
+            f"target version {target_version}. Run the update check again after "
+            "the registry tag has caught up. No container was changed."
+        )
+
+    return target_version
+
+
 def perform_image_update(app_item):
     """
     Install same-tag updates such as :latest -> newer :latest.
@@ -17248,7 +17319,17 @@ def perform_image_update(app_item):
             continue
         pulled = docker_pull_verified(image_ref, update_platform)
         pulled["method"] = "verified-docker-pull"
-        version_hint = _pulled_image_version_hint(
+
+        # A moving tag can lag behind the concrete version discovered by the
+        # scan. Never report success for that stale image: prove that the
+        # freshly pulled moving tag and the scanned version tag are the same
+        # registry image before ZimaOS is allowed to recreate the container.
+        scan_target_version = _verify_moving_tag_matches_scan_target(
+            item,
+            pulled,
+            update_platform,
+        )
+        version_hint = scan_target_version or _pulled_image_version_hint(
             item,
             pulled,
             update_platform,
