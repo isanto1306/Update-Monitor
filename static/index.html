@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.362"
+        href="favicon.ico?v=0.3.363"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.362"
+        href="favicon-16x16.png?v=0.3.363"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.362"
+        href="favicon-32x32.png?v=0.3.363"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.362"
+        href="apple-touch-icon.png?v=0.3.363"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.362"
+        href="site.webmanifest?v=0.3.363"
     >
 
     <meta
@@ -18268,6 +18268,17 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   }
 }
 </style>
+<style id="um-backup-cancel-v0363">
+.backup-cancel-running-button{
+    width:auto;align-self:center;margin-top:-12px;margin-bottom:12px;
+    padding:5px 8px;border:1px solid rgba(214,82,82,.62);border-radius:7px;
+    background:rgba(151,42,42,.12);color:#ffb2ad;font:inherit;
+    font-size:9.4px;font-weight:800;letter-spacing:.025em;white-space:nowrap;cursor:pointer;
+}
+.backup-cancel-running-button:hover:not(:disabled){border-color:rgba(231,101,101,.78);background:rgba(163,47,47,.20);color:#ffd0cd}
+.backup-cancel-running-button:disabled{opacity:.58;cursor:wait}
+.backup-cancel-running-button[hidden]{display:none!important}
+</style>
 </head>
 <body>
 <div id="umPageScrollbarV21" aria-hidden="true">
@@ -18385,7 +18396,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.362</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.363</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18734,10 +18745,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.362"></script>
+<script src="/update-channel.js?v=0.3.363"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.362';
+const UPDATE_MONITOR_VERSION = 'v0.3.363';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -18830,7 +18841,7 @@ const translations = {
     backupSettingsRetention:'Aufbewahrungsdauer', backupSettingsRetentionAll:'Gilt für alle Backups.', backupSettingsCount:'Backups behalten', backupSettingsCountAll:'Pro App.', backupCount1:'1 Backup', backupCount2:'2 Backups', backupCount3:'3 Backups', backupCountSaved:'Backup Anzahl gespeichert.', backupCountFailed:'Backup Anzahl konnte nicht gespeichert werden: {error}', backupRetention2:'2 Tage', backupRetention5:'5 Tage', backupRetention10:'10 Tage', backupRetentionForever:'Unbegrenzt', backupRetentionSaved:'Aufbewahrungsdauer gespeichert.', backupRetentionFailed:'Aufbewahrungsdauer konnte nicht gespeichert werden: {error}',
     backupDelete:'Löschen', backupDeleteConfirm:'Ausgewähltes Backup wirklich löschen?', backupDeleteSuccess:'Backup wurde gelöscht.', backupDeleteFailed:'Backup konnte nicht gelöscht werden: {error}',
     backupEncryptionLabel:'Backup Verschlüsselung', backupEncryptionHelp:'Optional. Neue Backups werden mit AES 256 GCM verschlüsselt. Das Passwort wird nicht gespeichert.', backupEncryptionOff:'Nicht aktiviert', backupEncryptionOn:'Aktiv · entsperrt', backupEncryptionLocked:'Aktiv · gesperrt', backupEncryptionPassword:'Backup Passwort', backupEncryptionConfirm:'Passwort bestätigen', backupEncryptionEnable:'Aktivieren / Passwort setzen', backupEncryptionChange:'Passwort ändern', backupEncryptionUnlock:'Entsperren', backupEncryptionDisable:'Ausschalten', backupEncryptionMismatch:'Die Passwörter stimmen nicht überein.', backupEncryptionSaved:'Backup Verschlüsselung ist aktiv.', backupEncryptionDisabled:'Backup Verschlüsselung ist ausgeschaltet.', backupEncryptionError:'Backup Verschlüsselung: {error}',
-    backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'UPDATE WIRD INSTALLIERT…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'UPDATE WIRD ÜBERPRÜFT…',
+    backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'BACKUP ABBRECHEN', backupCancelling:'BACKUP WIRD ABGEBROCHEN…', backupCancelled:'Backup wurde abgebrochen. Update wurde nicht gestartet.', backupCancelFailed:'Backup konnte nicht abgebrochen werden: {error}', installPhase:'UPDATE WIRD INSTALLIERT…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'UPDATE WIRD ÜBERPRÜFT…',
     portConflictBannerOne:'Port Konflikt erkannt · {count} Port', portConflictBannerMany:'Port Konflikte erkannt · {count} Ports', portConflictSummary:'Port Konflikt', portConflictTitle:'Port Konflikte', portConflictHelp:'Mehrere Docker-Apps verwenden denselben veröffentlichten Host-Port.', portConflictApps:'Betroffene Docker-Apps',
     policyLegendTitle:'Symbol-Erklärung', policyLegendSubtitle:'Die verschiedenen Update-Optionen im Überblick.', legendFixedTitle:'Fixiert', legendFixedText:'Version bleibt unverändert.', legendUpgradeTitle:'Neue Version', legendUpgradeText:'Eine verfügbare Version gezielt freigeben.', legendFollowTitle:'Folgen', legendFollowText:'Neuere Versionen automatisch als Update erkennen.', legendNotifyTitle:'Benachrichtigen', legendNotifyText:'Nur über verfügbare Updates informieren.', legendAutoTitle:'Auto-Update', legendAutoText:'Updates automatisch herunterladen und installieren.', policyTipTitle:'Tipp', policyTipText:'Mit automatischen Updates bleibt dein Container immer aktuell und sicher – ganz ohne manuellen Aufwand.',
     autoLastSuccess:'Letztes Auto-Update erfolgreich', autoLastError:'Letztes Auto-Update fehlgeschlagen',
@@ -18874,7 +18885,7 @@ const translations = {
     backupSettingsRetention:'Retention period', backupSettingsRetentionAll:'Applies to all backups.', backupSettingsCount:'Keep backups', backupSettingsCountAll:'Per app.', backupCount1:'1 backup', backupCount2:'2 backups', backupCount3:'3 backups', backupCountSaved:'Backup count saved.', backupCountFailed:'Could not save backup count: {error}', backupRetention2:'2 days', backupRetention5:'5 days', backupRetention10:'10 days', backupRetentionForever:'Unlimited', backupRetentionSaved:'Retention period saved.', backupRetentionFailed:'Could not save retention period: {error}',
     backupDelete:'Delete', backupDeleteConfirm:'Delete the selected backup?', backupDeleteSuccess:'Backup deleted.', backupDeleteFailed:'Could not delete backup: {error}',
     backupEncryptionLabel:'Backup encryption', backupEncryptionHelp:'Optional. New backups are encrypted with AES 256 GCM. The password is not stored.', backupEncryptionOff:'Not enabled', backupEncryptionOn:'Active · unlocked', backupEncryptionLocked:'Active · locked', backupEncryptionPassword:'Backup password', backupEncryptionConfirm:'Confirm password', backupEncryptionEnable:'Enable / set password', backupEncryptionChange:'Change password', backupEncryptionUnlock:'Unlock', backupEncryptionDisable:'Disable', backupEncryptionMismatch:'The passwords do not match.', backupEncryptionSaved:'Backup encryption is active.', backupEncryptionDisabled:'Backup encryption is disabled.', backupEncryptionError:'Backup encryption: {error}',
-    backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
+    backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'CANCEL BACKUP', backupCancelling:'CANCELLING BACKUP…', backupCancelled:'Backup was cancelled. The update was not started.', backupCancelFailed:'Could not cancel backup: {error}', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
     portConflictBannerOne:'Port conflict detected · {count} port', portConflictBannerMany:'Port conflicts detected · {count} ports', portConflictSummary:'Port conflict', portConflictTitle:'Port conflicts', portConflictHelp:'Multiple Docker apps use the same published host port.', portConflictApps:'Affected Docker apps',
     policyLegendTitle:'Symbol legend', policyLegendSubtitle:'Overview of the available update options.', legendFixedTitle:'Fixed', legendFixedText:'Keep the current version unchanged.', legendUpgradeTitle:'New version', legendUpgradeText:'Release a specific available version.', legendFollowTitle:'Follow', legendFollowText:'Automatically recognize newer versions as updates.', legendNotifyTitle:'Notify', legendNotifyText:'Only inform about available updates.', legendAutoTitle:'Auto update', legendAutoText:'Download and install updates automatically.', policyTipTitle:'Tip', policyTipText:'Automatic updates keep your container current and secure with almost no manual work.',
     autoLastSuccess:'Last automatic update succeeded', autoLastError:'Last automatic update failed',
@@ -19976,6 +19987,7 @@ function actionProgressView(stackKey,kind){
 function actionProgressLabel(kind,progress,phase=''){
   const p=String(phase||'');
   if(kind==='update'){
+    if(p==='backup_cancelling')return t('backupCancelling');
     if(p.startsWith('backup')){
       return progress===null
         ?t('backupPhase')
@@ -21009,6 +21021,7 @@ function renderAppCard(app,index){
     : ((canInstall||isUpdateBusy)
       ? `<button class="update-install-button ${isUpdating?'action-progress':''}${updateProgressClass}"${updateProgressStyle} type="button" data-update-index="${index}" data-progress-stack="${esc(app.stack_key)}" data-progress-kind="update" ${isUpdateBusy?'disabled':''}>${esc(updateButtonLabel)}</button>`
       : `<button class="update-install-button" type="button" data-check-index="${index}">${esc(t('checkDocker'))}</button>`);
+  const backupCancelButton=`<button class="backup-cancel-running-button" type="button" data-backup-cancel-stack="${esc(app.stack_key)}" hidden>${esc(t('backupCancelRunning'))}</button>`;
   const storedAutoError=(
     !isChecking
     &&policy.auto_enabled
@@ -21051,7 +21064,7 @@ function renderAppCard(app,index){
         ${renderAppPortStat(app)}
       </div>
       ${primary}
-      <div class="update-card-actions">${cardActionButton}<button class="update-details-button" type="button" data-details-index="${index}" aria-expanded="${isOpen?'true':'false'}">${esc(isOpen?t('detailsHide'):t('detailsShow'))}</button></div>
+      <div class="update-card-actions">${cardActionButton}${backupCancelButton}<button class="update-details-button" type="button" data-details-index="${index}" aria-expanded="${isOpen?'true':'false'}">${esc(isOpen?t('detailsHide'):t('detailsShow'))}</button></div>
     </div>
     ${renderPolicyPanel(app,index)}
     ${messageHtml}
@@ -22469,6 +22482,38 @@ function imageSourceProgressLabel(info){
     :`${label} · ${percent} %`;
 }
 
+function syncImageSourceBackupCancel(){
+  const button=document.getElementById('imageSourceCancel');
+  if(!button)return;
+  if(!imageSourceState.busy){button.disabled=false;button.textContent=imageSourceText('Abbrechen','Cancel');return;}
+  const info=imageSourceProgressInfo||{};
+  const cancellable=!!(info.backup_cancel_available&&!info.finished);
+  const requested=!!info.backup_cancel_requested;
+  button.disabled=!cancellable||requested;
+  button.textContent=requested
+    ?imageSourceText('Abbruch läuft…','Cancelling…')
+    :cancellable?imageSourceText('Backup abbrechen','Cancel backup'):imageSourceText('Abbrechen','Cancel');
+}
+async function cancelImageSourceBackup(){
+  const key=String(imageSourceState.stackKey||'').trim();
+  const info=imageSourceProgressInfo||{};
+  if(!key||!info.backup_cancel_available||info.backup_cancel_requested)return;
+  info.backup_cancel_requested=true;
+  info.phase='backup_cancelling';
+  imageSourceProgressInfo=info;
+  syncImageSourceBackupCancel();
+  try{
+    await requestBackupCancellation(key);
+  }catch(err){
+    info.backup_cancel_requested=false;
+    imageSourceProgressInfo=info;
+    imageSourceState.error=imageSourceText(
+      'Backup konnte nicht abgebrochen werden: '+String(err&&err.message||'-'),
+      'Could not cancel backup: '+String(err&&err.message||'-')
+    );
+    renderImageSourceDialog();
+  }
+}
 function applyImageSourceProgressToButton(){
   const button=document.getElementById('imageSourceApply');
   if(!button||!imageSourceState.busy)return;
@@ -22485,6 +22530,7 @@ function applyImageSourceProgressToButton(){
     button.style.removeProperty('--image-source-progress');
   }
   button.textContent=imageSourceProgressLabel(info);
+  syncImageSourceBackupCancel();
 }
 
 async function refreshImageSourceProgress(stackKey){
@@ -22936,7 +22982,7 @@ function renderImageSourceDialog(){
         ${imageSourceState.error?`<div class="image-source-error">${esc(imageSourceState.error)}</div>`:''}
 
         <div class="image-source-actions">
-          <button class="image-source-action secondary" id="imageSourceCancel" type="button" ${imageSourceState.busy?'disabled':''}>${esc(
+          <button class="image-source-action secondary" id="imageSourceCancel" type="button">${esc(
             imageSourceText('Abbrechen','Cancel')
           )}</button>
           <button class="image-source-action primary${progressClass}" id="imageSourceApply" type="button"${progressStyle}
@@ -22984,7 +23030,8 @@ function renderImageSourceDialog(){
   });
 
   const cancel=document.getElementById('imageSourceCancel');
-  if(cancel)cancel.onclick=()=>closeImageSourceDialog();
+  if(cancel){cancel.onclick=()=>imageSourceState.busy?cancelImageSourceBackup():closeImageSourceDialog();}
+  syncImageSourceBackupCancel();
 
   const apply=document.getElementById('imageSourceApply');
   if(apply)apply.onclick=()=>applyImageSourceSwitch();
@@ -23066,7 +23113,7 @@ async function applyImageSourceSwitch(){
   startImageSourceProgressPolling(stackKey);
 
   try{
-    await api('/api/image-source-switch',{
+    const switchResult=await api('/api/image-source-switch',{
       method:'POST',
       body:JSON.stringify({
         stack_key:stackKey,
@@ -23076,6 +23123,20 @@ async function applyImageSourceSwitch(){
         backup_mode:'full'
       })
     });
+    if(switchResult&&switchResult.cancelled){
+      stopImageSourceProgressPolling();
+      closeImageSourceDialog(true);
+      state.updateMessages.set(stackKey,{
+        ok:true,
+        kind:'backup_cancelled',
+        text:imageSourceText(
+          'Backup wurde abgebrochen. Image Quelle wurde nicht geändert.',
+          'Backup was cancelled. The image source was not changed.'
+        )
+      });
+      render();
+      return;
+    }
 
     await refreshImageSourceProgress(stackKey);
     if(
@@ -23343,6 +23404,15 @@ function applyActionProgressToDom(stackKey){
     }
     button.textContent=actionProgressLabel(kind,progress,String(info&&info.phase||''));
   });
+
+  document.querySelectorAll('[data-backup-cancel-stack]').forEach(button=>{
+    if(String(button.dataset.backupCancelStack||'')!==key)return;
+    const cancellable=!!(info&&info.kind==='update'&&!info.finished&&info.backup_cancel_available);
+    const requested=!!(info&&info.backup_cancel_requested);
+    button.hidden=!cancellable;
+    button.disabled=!cancellable||requested;
+    button.textContent=requested?t('backupCancelling'):t('backupCancelRunning');
+  });
 }
 
 async function refreshActionProgress(stackKey){
@@ -23391,6 +23461,40 @@ async function finishActionProgressPolling(stackKey){
   }
   stopActionProgressPolling(key);
 }
+
+async function requestBackupCancellation(stackKey){
+  const key=String(stackKey||'').trim();
+  if(!key)throw new Error('Missing app key');
+  return api('/api/backup-cancel',{method:'POST',body:JSON.stringify({stack_key:key})});
+}
+async function cancelBackupForStack(stackKey){
+  const key=String(stackKey||'').trim();
+  if(!key)return;
+  const info=state.actionProgress.get(key);
+  if(!info||!info.backup_cancel_available||info.backup_cancel_requested)return;
+  info.backup_cancel_requested=true;
+  info.phase='backup_cancelling';
+  state.actionProgress.set(key,info);
+  applyActionProgressToDom(key);
+  try{
+    await requestBackupCancellation(key);
+  }catch(err){
+    info.backup_cancel_requested=false;
+    state.actionProgress.set(key,info);
+    applyActionProgressToDom(key);
+    if(err.message!=='auth'){
+      state.updateMessages.set(key,{ok:false,kind:'backup_cancel',text:t('backupCancelFailed').replace('{error}',err.message||'-')});
+      render();
+    }
+  }
+}
+document.addEventListener('click',event=>{
+  const button=event.target&&event.target.closest?event.target.closest('[data-backup-cancel-stack]'):null;
+  if(!button)return;
+  event.preventDefault();
+  event.stopPropagation();
+  cancelBackupForStack(String(button.dataset.backupCancelStack||''));
+});
 
 async function executeUninstall(app,deleteFolder){
   if(!app||!app.compose_project||appSelfProtected(app)||state.uninstallingApps.has(app.stack_key))return;
@@ -23766,6 +23870,10 @@ async function installImageUpdate(app,backupMode='none'){
       method:'POST',
       body:JSON.stringify({stack_key:stackKey,backup_mode:normalizedBackupMode})
     });
+    if(updateResult&&updateResult.cancelled){
+      state.updateMessages.set(stackKey,{ok:true,kind:'backup_cancelled',text:t('backupCancelled')});
+      return;
+    }
     if(updateResult&&updateResult.self_update_handoff){
       selfUpdateHandoff=true;
       beginVerificationState(stackKey,baselineFinishedAt);
@@ -24239,6 +24347,13 @@ function syncAutomaticLiveActionsNoRender(actions){
       stopActionProgressPolling(key);
       state.autoLiveActions.delete(key);
       state.updatingApps.delete(key);
+      if(info.cancelled){
+        state.verifyingApps.delete(key);
+        state.verificationBaselines.delete(key);
+        state.updateMessages.set(key,{ok:true,kind:'backup_cancelled',text:t('backupCancelled')});
+        state.actionProgress.delete(key);
+        return;
+      }
       beginVerificationState(key,state.verificationBaselines.get(key));
 
       // Installation is finished, but the authoritative app recheck is not.
