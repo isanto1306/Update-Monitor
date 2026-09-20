@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.363"
+        href="favicon.ico?v=0.3.364"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.363"
+        href="favicon-16x16.png?v=0.3.364"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.363"
+        href="favicon-32x32.png?v=0.3.364"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.363"
+        href="apple-touch-icon.png?v=0.3.364"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.363"
+        href="site.webmanifest?v=0.3.364"
     >
 
     <meta
@@ -18268,16 +18268,23 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   }
 }
 </style>
-<style id="um-backup-cancel-v0363">
-.backup-cancel-running-button{
-    width:auto;align-self:center;margin-top:-12px;margin-bottom:12px;
-    padding:5px 8px;border:1px solid rgba(214,82,82,.62);border-radius:7px;
-    background:rgba(151,42,42,.12);color:#ffb2ad;font:inherit;
-    font-size:9.4px;font-weight:800;letter-spacing:.025em;white-space:nowrap;cursor:pointer;
+<style id="um-backup-cancel-v0364">
+/* v0.3.364: the existing update progress button is also the running-backup cancel control. */
+.update-install-button.backup-cancel-inline{
+    opacity:1!important;
+    cursor:pointer!important;
+    border-color:rgba(255,180,84,.82);
 }
-.backup-cancel-running-button:hover:not(:disabled){border-color:rgba(231,101,101,.78);background:rgba(163,47,47,.20);color:#ffd0cd}
-.backup-cancel-running-button:disabled{opacity:.58;cursor:wait}
-.backup-cancel-running-button[hidden]{display:none!important}
+.update-install-button.backup-cancel-inline:hover:not(:disabled){
+    border-color:rgba(231,101,101,.82);
+    background:rgba(163,47,47,.16);
+    color:#ffd0cd;
+}
+.update-install-button.backup-cancel-inline.is-cancelling{
+    cursor:wait!important;
+    border-color:rgba(231,101,101,.62);
+    color:#ffb2ad;
+}
 </style>
 </head>
 <body>
@@ -18396,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.363</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.364</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18745,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.363"></script>
+<script src="/update-channel.js?v=0.3.364"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.363';
+const UPDATE_MONITOR_VERSION = 'v0.3.364';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -18841,7 +18848,7 @@ const translations = {
     backupSettingsRetention:'Aufbewahrungsdauer', backupSettingsRetentionAll:'Gilt für alle Backups.', backupSettingsCount:'Backups behalten', backupSettingsCountAll:'Pro App.', backupCount1:'1 Backup', backupCount2:'2 Backups', backupCount3:'3 Backups', backupCountSaved:'Backup Anzahl gespeichert.', backupCountFailed:'Backup Anzahl konnte nicht gespeichert werden: {error}', backupRetention2:'2 Tage', backupRetention5:'5 Tage', backupRetention10:'10 Tage', backupRetentionForever:'Unbegrenzt', backupRetentionSaved:'Aufbewahrungsdauer gespeichert.', backupRetentionFailed:'Aufbewahrungsdauer konnte nicht gespeichert werden: {error}',
     backupDelete:'Löschen', backupDeleteConfirm:'Ausgewähltes Backup wirklich löschen?', backupDeleteSuccess:'Backup wurde gelöscht.', backupDeleteFailed:'Backup konnte nicht gelöscht werden: {error}',
     backupEncryptionLabel:'Backup Verschlüsselung', backupEncryptionHelp:'Optional. Neue Backups werden mit AES 256 GCM verschlüsselt. Das Passwort wird nicht gespeichert.', backupEncryptionOff:'Nicht aktiviert', backupEncryptionOn:'Aktiv · entsperrt', backupEncryptionLocked:'Aktiv · gesperrt', backupEncryptionPassword:'Backup Passwort', backupEncryptionConfirm:'Passwort bestätigen', backupEncryptionEnable:'Aktivieren / Passwort setzen', backupEncryptionChange:'Passwort ändern', backupEncryptionUnlock:'Entsperren', backupEncryptionDisable:'Ausschalten', backupEncryptionMismatch:'Die Passwörter stimmen nicht überein.', backupEncryptionSaved:'Backup Verschlüsselung ist aktiv.', backupEncryptionDisabled:'Backup Verschlüsselung ist ausgeschaltet.', backupEncryptionError:'Backup Verschlüsselung: {error}',
-    backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'BACKUP ABBRECHEN', backupCancelling:'BACKUP WIRD ABGEBROCHEN…', backupCancelled:'Backup wurde abgebrochen. Update wurde nicht gestartet.', backupCancelFailed:'Backup konnte nicht abgebrochen werden: {error}', installPhase:'UPDATE WIRD INSTALLIERT…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'UPDATE WIRD ÜBERPRÜFT…',
+    backupPhase:'BACKUP WIRD ERSTELLT…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'Backup abbrechen', backupCancelInline:'{progress} % · Backup abbrechen', backupCancelling:'BACKUP WIRD ABGEBROCHEN…', backupCancelled:'Backup wurde abgebrochen. Update wurde nicht gestartet.', backupCancelFailed:'Backup konnte nicht abgebrochen werden: {error}', installPhase:'UPDATE WIRD INSTALLIERT…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'UPDATE WIRD ÜBERPRÜFT…',
     portConflictBannerOne:'Port Konflikt erkannt · {count} Port', portConflictBannerMany:'Port Konflikte erkannt · {count} Ports', portConflictSummary:'Port Konflikt', portConflictTitle:'Port Konflikte', portConflictHelp:'Mehrere Docker-Apps verwenden denselben veröffentlichten Host-Port.', portConflictApps:'Betroffene Docker-Apps',
     policyLegendTitle:'Symbol-Erklärung', policyLegendSubtitle:'Die verschiedenen Update-Optionen im Überblick.', legendFixedTitle:'Fixiert', legendFixedText:'Version bleibt unverändert.', legendUpgradeTitle:'Neue Version', legendUpgradeText:'Eine verfügbare Version gezielt freigeben.', legendFollowTitle:'Folgen', legendFollowText:'Neuere Versionen automatisch als Update erkennen.', legendNotifyTitle:'Benachrichtigen', legendNotifyText:'Nur über verfügbare Updates informieren.', legendAutoTitle:'Auto-Update', legendAutoText:'Updates automatisch herunterladen und installieren.', policyTipTitle:'Tipp', policyTipText:'Mit automatischen Updates bleibt dein Container immer aktuell und sicher – ganz ohne manuellen Aufwand.',
     autoLastSuccess:'Letztes Auto-Update erfolgreich', autoLastError:'Letztes Auto-Update fehlgeschlagen',
@@ -18885,7 +18892,7 @@ const translations = {
     backupSettingsRetention:'Retention period', backupSettingsRetentionAll:'Applies to all backups.', backupSettingsCount:'Keep backups', backupSettingsCountAll:'Per app.', backupCount1:'1 backup', backupCount2:'2 backups', backupCount3:'3 backups', backupCountSaved:'Backup count saved.', backupCountFailed:'Could not save backup count: {error}', backupRetention2:'2 days', backupRetention5:'5 days', backupRetention10:'10 days', backupRetentionForever:'Unlimited', backupRetentionSaved:'Retention period saved.', backupRetentionFailed:'Could not save retention period: {error}',
     backupDelete:'Delete', backupDeleteConfirm:'Delete the selected backup?', backupDeleteSuccess:'Backup deleted.', backupDeleteFailed:'Could not delete backup: {error}',
     backupEncryptionLabel:'Backup encryption', backupEncryptionHelp:'Optional. New backups are encrypted with AES 256 GCM. The password is not stored.', backupEncryptionOff:'Not enabled', backupEncryptionOn:'Active · unlocked', backupEncryptionLocked:'Active · locked', backupEncryptionPassword:'Backup password', backupEncryptionConfirm:'Confirm password', backupEncryptionEnable:'Enable / set password', backupEncryptionChange:'Change password', backupEncryptionUnlock:'Unlock', backupEncryptionDisable:'Disable', backupEncryptionMismatch:'The passwords do not match.', backupEncryptionSaved:'Backup encryption is active.', backupEncryptionDisabled:'Backup encryption is disabled.', backupEncryptionError:'Backup encryption: {error}',
-    backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'CANCEL BACKUP', backupCancelling:'CANCELLING BACKUP…', backupCancelled:'Backup was cancelled. The update was not started.', backupCancelFailed:'Could not cancel backup: {error}', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
+    backupPhase:'CREATING BACKUP…', backupPhaseProgress:'BACKUP {progress} %', backupCancelRunning:'Cancel backup', backupCancelInline:'{progress} % · Cancel backup', backupCancelling:'CANCELLING BACKUP…', backupCancelled:'Backup was cancelled. The update was not started.', backupCancelFailed:'Could not cancel backup: {error}', installPhase:'INSTALLING UPDATE…', installPhaseProgress:'INSTALLATION {progress} %', verificationPhase:'VERIFYING UPDATE…',
     portConflictBannerOne:'Port conflict detected · {count} port', portConflictBannerMany:'Port conflicts detected · {count} ports', portConflictSummary:'Port conflict', portConflictTitle:'Port conflicts', portConflictHelp:'Multiple Docker apps use the same published host port.', portConflictApps:'Affected Docker apps',
     policyLegendTitle:'Symbol legend', policyLegendSubtitle:'Overview of the available update options.', legendFixedTitle:'Fixed', legendFixedText:'Keep the current version unchanged.', legendUpgradeTitle:'New version', legendUpgradeText:'Release a specific available version.', legendFollowTitle:'Follow', legendFollowText:'Automatically recognize newer versions as updates.', legendNotifyTitle:'Notify', legendNotifyText:'Only inform about available updates.', legendAutoTitle:'Auto update', legendAutoText:'Download and install updates automatically.', policyTipTitle:'Tip', policyTipText:'Automatic updates keep your container current and secure with almost no manual work.',
     autoLastSuccess:'Last automatic update succeeded', autoLastError:'Last automatic update failed',
@@ -21021,7 +21028,6 @@ function renderAppCard(app,index){
     : ((canInstall||isUpdateBusy)
       ? `<button class="update-install-button ${isUpdating?'action-progress':''}${updateProgressClass}"${updateProgressStyle} type="button" data-update-index="${index}" data-progress-stack="${esc(app.stack_key)}" data-progress-kind="update" ${isUpdateBusy?'disabled':''}>${esc(updateButtonLabel)}</button>`
       : `<button class="update-install-button" type="button" data-check-index="${index}">${esc(t('checkDocker'))}</button>`);
-  const backupCancelButton=`<button class="backup-cancel-running-button" type="button" data-backup-cancel-stack="${esc(app.stack_key)}" hidden>${esc(t('backupCancelRunning'))}</button>`;
   const storedAutoError=(
     !isChecking
     &&policy.auto_enabled
@@ -21064,7 +21070,7 @@ function renderAppCard(app,index){
         ${renderAppPortStat(app)}
       </div>
       ${primary}
-      <div class="update-card-actions">${cardActionButton}${backupCancelButton}<button class="update-details-button" type="button" data-details-index="${index}" aria-expanded="${isOpen?'true':'false'}">${esc(isOpen?t('detailsHide'):t('detailsShow'))}</button></div>
+      <div class="update-card-actions">${cardActionButton}<button class="update-details-button" type="button" data-details-index="${index}" aria-expanded="${isOpen?'true':'false'}">${esc(isOpen?t('detailsHide'):t('detailsShow'))}</button></div>
     </div>
     ${renderPolicyPanel(app,index)}
     ${messageHtml}
@@ -23395,6 +23401,14 @@ function applyActionProgressToDom(stackKey){
     const value=Number(info&&info.progress);
     const hasPercent=!!(info&&info.kind===kind&&info.determinate&&Number.isFinite(value));
     const progress=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
+    const cancellable=!!(
+      kind==='update'
+      &&info
+      &&info.kind==='update'
+      &&!info.finished
+      &&info.backup_cancel_available
+    );
+    const requested=!!(cancellable&&info.backup_cancel_requested);
 
     button.classList.toggle('has-percent',hasPercent);
     if(hasPercent){
@@ -23402,16 +23416,29 @@ function applyActionProgressToDom(stackKey){
     }else{
       button.style.removeProperty('--action-progress');
     }
-    button.textContent=actionProgressLabel(kind,progress,String(info&&info.phase||''));
-  });
 
-  document.querySelectorAll('[data-backup-cancel-stack]').forEach(button=>{
-    if(String(button.dataset.backupCancelStack||'')!==key)return;
-    const cancellable=!!(info&&info.kind==='update'&&!info.finished&&info.backup_cancel_available);
-    const requested=!!(info&&info.backup_cancel_requested);
-    button.hidden=!cancellable;
-    button.disabled=!cancellable||requested;
-    button.textContent=requested?t('backupCancelling'):t('backupCancelRunning');
+    if(cancellable){
+      const label=requested
+        ?t('backupCancelling')
+        :(progress===null
+          ?t('backupCancelRunning')
+          :t('backupCancelInline').replace('{progress}',progress));
+      button.dataset.backupCancelInline=key;
+      button.classList.add('backup-cancel-inline');
+      button.classList.toggle('is-cancelling',requested);
+      button.disabled=requested;
+      button.textContent=label;
+      button.title=label;
+      button.setAttribute('aria-label',label);
+      return;
+    }
+
+    delete button.dataset.backupCancelInline;
+    button.classList.remove('backup-cancel-inline','is-cancelling');
+    button.removeAttribute('title');
+    button.removeAttribute('aria-label');
+    button.disabled=true;
+    button.textContent=actionProgressLabel(kind,progress,String(info&&info.phase||''));
   });
 }
 
@@ -23489,12 +23516,12 @@ async function cancelBackupForStack(stackKey){
   }
 }
 document.addEventListener('click',event=>{
-  const button=event.target&&event.target.closest?event.target.closest('[data-backup-cancel-stack]'):null;
+  const button=event.target&&event.target.closest?event.target.closest('[data-backup-cancel-inline]'):null;
   if(!button)return;
   event.preventDefault();
-  event.stopPropagation();
-  cancelBackupForStack(String(button.dataset.backupCancelStack||''));
-});
+  event.stopImmediatePropagation();
+  cancelBackupForStack(String(button.dataset.backupCancelInline||''));
+},true);
 
 async function executeUninstall(app,deleteFolder){
   if(!app||!app.compose_project||appSelfProtected(app)||state.uninstallingApps.has(app.stack_key))return;
