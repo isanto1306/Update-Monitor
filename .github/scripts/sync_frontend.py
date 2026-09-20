@@ -167,13 +167,13 @@ document.addEventListener('click',event=>{
 
     replace_once(
         "  const storedAutoError=(",
-        """  const backupCancelButton=\`<button class="backup-cancel-running-button" type="button" data-backup-cancel-stack="\${esc(app.stack_key)}" hidden>\${esc(t('backupCancelRunning'))}</button>\`;
+        """  const backupCancelButton=`<button class="backup-cancel-running-button" type="button" data-backup-cancel-stack="${esc(app.stack_key)}" hidden>${esc(t('backupCancelRunning'))}</button>`;
   const storedAutoError=(""",
         "card backup cancel button",
     )
     replace_once(
-        '<div class="update-card-actions">\${cardActionButton}<button class="update-details-button"',
-        '<div class="update-card-actions">\${cardActionButton}\${backupCancelButton}<button class="update-details-button"',
+        '<div class="update-card-actions">${cardActionButton}<button class="update-details-button"',
+        '<div class="update-card-actions">${cardActionButton}${backupCancelButton}<button class="update-details-button"',
         "card backup cancel placement",
     )
 
@@ -278,11 +278,11 @@ function applyImageSourceProgressToButton(){
         "image source cancel live state",
     )
     replace_once(
-        """          <button class="image-source-action secondary" id="imageSourceCancel" type="button" \${imageSourceState.busy?'disabled':''}>\${esc(
+        """          <button class="image-source-action secondary" id="imageSourceCancel" type="button" ${imageSourceState.busy?'disabled':''}>${esc(
             imageSourceText('Abbrechen','Cancel')
           )}</button>
 """,
-        """          <button class="image-source-action secondary" id="imageSourceCancel" type="button">\${esc(
+        """          <button class="image-source-action secondary" id="imageSourceCancel" type="button">${esc(
             imageSourceText('Abbrechen','Cancel')
           )}</button>
 """,
