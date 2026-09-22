@@ -27,7 +27,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -11900,6 +11900,150 @@ def startup():
         ).start()
 
 
+# v0.3.366: keep the large self-contained UI file unchanged on disk.
+# The backend serves it with the current version marker and a very small runtime
+# bridge. Manual update POSTs now return immediately, while this bridge keeps the
+# existing frontend await alive through short progress requests. That prevents a
+# reverse proxy timeout from becoming a false HTTP 504 update failure.
+_INDEX_HTML_RUNTIME_LOCK = threading.Lock()
+_INDEX_HTML_RUNTIME_CACHE = {"mtime_ns": None, "html": None}
+
+_INDEX_ASYNC_UPDATE_BRIDGE = r'''<script id="um-async-update-bridge-v0366">
+(function(){
+  if(window.__umAsyncUpdateBridgeV0366)return;
+  window.__umAsyncUpdateBridgeV0366=true;
+
+  const baseApi=api;
+
+  async function waitForAcceptedUpdate(stackKey, timeoutMs){
+    const key=String(stackKey||'').trim();
+    if(!key)throw new Error('Missing app key');
+
+    const deadline=Date.now()+Math.max(30000,Number(timeoutMs)||30*60*1000);
+    let last=null;
+
+    while(Date.now()<deadline){
+      const payload=await baseApi(
+        '/api/action-progress?stack_key='+encodeURIComponent(key)
+      );
+      const info=payload&&payload.progress;
+
+      if(info&&info.kind==='update'){
+        last=info;
+        if(info.finished)return info;
+      }
+
+      await new Promise(resolve=>setTimeout(resolve,500));
+    }
+
+    if(last&&last.finished)return last;
+    throw new Error(
+      (typeof state!=='undefined'&&state.language==='en')
+        ?'The update process did not report completion within the time limit.'
+        :'Der Update Vorgang hat innerhalb des Zeitlimits keinen Abschluss gemeldet.'
+    );
+  }
+
+  api=async function(url,options={}){
+    const result=await baseApi(url,options);
+
+    if(
+      url==='/api/app-update'
+      &&result
+      &&result.accepted===true
+      &&result.self_update_handoff!==true
+    ){
+      let body={};
+      try{
+        body=JSON.parse(String(options&&options.body||'{}'));
+      }catch(_){}
+
+      const info=await waitForAcceptedUpdate(body.stack_key,30*60*1000);
+
+      if(info&&info.cancelled){
+        return {...result,accepted:false,cancelled:true};
+      }
+
+      if(info&&info.success===false){
+        throw new Error(String(info.error||'Update failed'));
+      }
+
+      return {...result,accepted:false,completed:true};
+    }
+
+    return result;
+  };
+
+  if(typeof imageSourceProgressLabel==='function'){
+    const originalImageSourceProgressLabel=imageSourceProgressLabel;
+    imageSourceProgressLabel=function(info){
+      const phase=String(info&&info.phase||'');
+      if(phase.startsWith('backup')){
+        const value=Number(info&&info.progress);
+        const hasPercent=!!(
+          info&&info.determinate&&Number.isFinite(value)
+        );
+        const percent=hasPercent
+          ?Math.max(0,Math.min(100,Math.round(value)))
+          :null;
+        const label=(typeof imageSourceText==='function')
+          ?imageSourceText('Backup','Backup')
+          :'Backup';
+        return percent===null?label+'…':label+' · '+percent+' %';
+      }
+      return originalImageSourceProgressLabel(info);
+    };
+  }
+})();
+</script>'''
+
+
+def _render_index_html():
+    path = STATIC_DIR / "index.html"
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Update Monitor UI not found") from exc
+
+    with _INDEX_HTML_RUNTIME_LOCK:
+        if (
+            _INDEX_HTML_RUNTIME_CACHE["mtime_ns"] == stat.st_mtime_ns
+            and _INDEX_HTML_RUNTIME_CACHE["html"] is not None
+        ):
+            return _INDEX_HTML_RUNTIME_CACHE["html"]
+
+        try:
+            html = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Update Monitor UI could not be read",
+            ) from exc
+
+        # The static UI is intentionally a large single file. Keep it byte-for-
+        # byte in the repository and only synchronize its visible/cache version
+        # with the running backend when it is served.
+        match = re.search(
+            r"const UPDATE_MONITOR_VERSION = 'v([^']+)';",
+            html,
+        )
+        if match:
+            static_version = str(match.group(1) or "").strip()
+            if static_version and static_version != VERSION:
+                html = html.replace(static_version, VERSION)
+
+        if 'id="um-async-update-bridge-v0366"' not in html:
+            html = html.replace(
+                "</body>",
+                _INDEX_ASYNC_UPDATE_BRIDGE + "\n</body>",
+                1,
+            )
+
+        _INDEX_HTML_RUNTIME_CACHE["mtime_ns"] = stat.st_mtime_ns
+        _INDEX_HTML_RUNTIME_CACHE["html"] = html
+        return html
+
+
 # Public application branding assets, independent of login.
 # Register only these exact filenames; never expose the entire static directory.
 WEB_ICON_ASSETS = {'update-channel.js': 'application/javascript', 'android-chrome-192x192.png': 'image/png', 'apple-touch-icon.png': 'image/png', 'favicon-128x128.png': 'image/png', 'favicon-16x16.png': 'image/png', 'favicon-32x32.png': 'image/png', 'favicon-48x48.png': 'image/png', 'favicon-64x64.png': 'image/png', 'favicon.ico': 'image/x-icon', 'icon-256x256.png': 'image/png', 'update-monitor-master-1024.png': 'image/png', 'update-monitor-source-highres.png': 'image/png', 'web-app-icon-512.png': 'image/png', 'site.webmanifest': 'application/manifest+json'}
@@ -11926,8 +12070,8 @@ for _icon_filename, _icon_media_type in WEB_ICON_ASSETS.items():
 
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(
-        STATIC_DIR / "index.html",
+    return HTMLResponse(
+        _render_index_html(),
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
