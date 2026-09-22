@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.365"
+        href="favicon.ico?v=0.3.366"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.365"
+        href="favicon-16x16.png?v=0.3.366"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.365"
+        href="favicon-32x32.png?v=0.3.366"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.365"
+        href="apple-touch-icon.png?v=0.3.366"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.365"
+        href="site.webmanifest?v=0.3.366"
     >
 
     <meta
@@ -18403,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.365</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.366</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18752,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.365"></script>
+<script src="/update-channel.js?v=0.3.366"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.365';
+const UPDATE_MONITOR_VERSION = 'v0.3.366';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -22470,7 +22470,7 @@ function imageSourceProgressLabel(info){
   const percent=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
 
   let label=imageSourceText('Wechsel läuft','Switching');
-  if(phase==='backup')label=imageSourceText('Backup','Backup');
+  if(phase.startsWith('backup'))label=imageSourceText('Backup','Backup');
   else if(['starting','preparing','compose_check'].includes(phase))label=imageSourceText('Vorbereiten','Preparing');
   else if(phase==='pulling')label=imageSourceText('Image laden','Pulling image');
   else if(phase==='pull_complete')label=imageSourceText('Image geladen','Image pulled');
@@ -25766,5 +25766,93 @@ document.addEventListener('keydown',event=>{
 
 </script>
   <div id="policyWorkbenchRoot"></div>
+<script id="um-async-update-bridge-v0366">
+(function(){
+  if(window.__umAsyncUpdateBridgeV0366)return;
+  window.__umAsyncUpdateBridgeV0366=true;
+
+  const baseApi=api;
+
+  async function waitForAcceptedUpdate(stackKey, timeoutMs){
+    const key=String(stackKey||'').trim();
+    if(!key)throw new Error('Missing app key');
+
+    const deadline=Date.now()+Math.max(30000,Number(timeoutMs)||30*60*1000);
+    let last=null;
+
+    while(Date.now()<deadline){
+      const payload=await baseApi(
+        '/api/action-progress?stack_key='+encodeURIComponent(key)
+      );
+      const info=payload&&payload.progress;
+
+      if(info&&info.kind==='update'){
+        last=info;
+        if(info.finished)return info;
+      }
+
+      await new Promise(resolve=>setTimeout(resolve,500));
+    }
+
+    if(last&&last.finished)return last;
+    throw new Error(
+      (typeof state!=='undefined'&&state.language==='en')
+        ?'The update process did not report completion within the time limit.'
+        :'Der Update Vorgang hat innerhalb des Zeitlimits keinen Abschluss gemeldet.'
+    );
+  }
+
+  api=async function(url,options={}){
+    const result=await baseApi(url,options);
+
+    if(
+      url==='/api/app-update'
+      &&result
+      &&result.accepted===true
+      &&result.self_update_handoff!==true
+    ){
+      let body={};
+      try{
+        body=JSON.parse(String(options&&options.body||'{}'));
+      }catch(_){}
+
+      const info=await waitForAcceptedUpdate(body.stack_key,30*60*1000);
+
+      if(info&&info.cancelled){
+        return {...result,accepted:false,cancelled:true};
+      }
+
+      if(info&&info.success===false){
+        throw new Error(String(info.error||'Update failed'));
+      }
+
+      return {...result,accepted:false,completed:true};
+    }
+
+    return result;
+  };
+
+  if(typeof imageSourceProgressLabel==='function'){
+    const originalImageSourceProgressLabel=imageSourceProgressLabel;
+    imageSourceProgressLabel=function(info){
+      const phase=String(info&&info.phase||'');
+      if(phase.startsWith('backup')){
+        const value=Number(info&&info.progress);
+        const hasPercent=!!(
+          info&&info.determinate&&Number.isFinite(value)
+        );
+        const percent=hasPercent
+          ?Math.max(0,Math.min(100,Math.round(value)))
+          :null;
+        const label=(typeof imageSourceText==='function')
+          ?imageSourceText('Backup','Backup')
+          :'Backup';
+        return percent===null?label+'…':label+' · '+percent+' %';
+      }
+      return originalImageSourceProgressLabel(info);
+    };
+  }
+})();
+</script>
 </body>
 </html>
