@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix-progress-504-v0366
   workflow_dispatch:
 
 permissions:
@@ -263,8 +264,12 @@ jobs:
           backup_cancel = function_source("backup_cancel")
           assert "request_backup_cancellation(data.stack_key)" in backup_cancel
           app_update = function_source("app_update")
-          assert "except BackupCancelledError" in app_update
-          assert '"cancelled": True' in app_update
+          manual_update_worker = function_source("_manual_app_update_worker")
+          assert "threading.Thread(" in app_update
+          assert '"accepted": True' in app_update
+          assert "except BackupCancelledError" in manual_update_worker
+          assert "finish_action_progress_cancelled(stack_key)" in manual_update_worker
+          assert "schedule_app_scan(" in manual_update_worker
           auto_update = function_source("run_due_auto_updates")
           assert 'current["last_auto_result"] = "cancelled"' in auto_update
           assert "if not cancelled:" in auto_update
@@ -276,6 +281,11 @@ jobs:
           assert "backup_cancel_available" in html
           assert "backupCancelled" in html
           assert "cancelImageSourceBackup" in html
+          assert "um-async-update-bridge-v0366" in html
+          assert "result.accepted===true" in html
+          assert "waitForAcceptedUpdate" in html
+          assert "phase.startsWith('backup')" in html
+          assert '100, determinate=True, phase="backup_done"' in backup_source
 
           # Frontend/release regression: all active version markers must agree.
           assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
