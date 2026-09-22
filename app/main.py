@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.365"
+VERSION = "0.3.366"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -443,6 +443,22 @@ def update_action_progress(stack_key, progress=None, *, determinate=None, phase=
             record["determinate"] = bool(determinate)
         if phase:
             record["phase"] = str(phase)
+        record["updated_at"] = utc_now()
+
+
+def reset_action_progress(stack_key, *, progress=None, determinate=False, phase="starting"):
+    """Start a new visible phase whose percentage may begin again at zero."""
+    stack_key = str(stack_key or "").strip()
+    if not stack_key:
+        return
+    with action_progress_lock:
+        record = action_progress.get(stack_key)
+        if not record or record.get("finished"):
+            return
+        parsed = _clamp_progress(progress) if progress is not None else None
+        record["progress"] = parsed
+        record["determinate"] = bool(determinate and parsed is not None)
+        record["phase"] = str(phase or "starting")
         record["updated_at"] = utc_now()
 
 
@@ -11630,7 +11646,13 @@ def run_due_auto_updates(now_utc=None):
                     auto_backup_mode,
                     stack_key=stack_key,
                 )
-                update_action_progress(stack_key, determinate=False, phase="starting")
+                time.sleep(0.65)
+                reset_action_progress(
+                    stack_key,
+                    progress=0,
+                    determinate=False,
+                    phase="starting",
+                )
 
             if app_item.get("can_version_update"):
                 update_result = perform_version_update(app_item)
@@ -15572,7 +15594,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
         _backup_check_cancel(stack_key, cancel_event)
 
     try:
-        update_action_progress(stack_key, 2, determinate=True, phase="backup_prepare")
+        update_action_progress(stack_key, 0, determinate=True, phase="backup_prepare")
         check_cancel()
         encryption_key = _backup_encryption_key_for_write()
         cleanup_expired_backups()
@@ -15646,7 +15668,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
             "running_containers_before_backup": running_before,
         }
         _write_backup_json(work_dir / "metadata.json", metadata)
-        update_action_progress(stack_key, 4, determinate=True, phase="backup_prepare")
+        update_action_progress(stack_key, 10, determinate=True, phase="backup_prepare")
         check_cancel()
 
         stopped = []
@@ -15654,7 +15676,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
         backup_error = None
         try:
             if mode == "full" and mounts:
-                update_action_progress(stack_key, 5, determinate=True, phase="backup_stop")
+                update_action_progress(stack_key, 15, determinate=True, phase="backup_stop")
                 total_running = max(1, len(running_before))
                 for stop_index, name in enumerate(running_before, start=1):
                     check_cancel()
@@ -15666,7 +15688,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
                     stopped.append(name)
                     update_action_progress(
                         stack_key,
-                        5 + round((stop_index / total_running) * 3),
+                        15 + round((stop_index / total_running) * 10),
                         determinate=True,
                         phase="backup_stop",
                     )
@@ -15683,7 +15705,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
                     target_path = data_root / target_name
                     update_action_progress(
                         stack_key,
-                        8 + round(((index - 1) / total_mounts) * 5),
+                        25 + round(((index - 1) / total_mounts) * 57),
                         determinate=True,
                         phase="backup_data",
                     )
@@ -15703,7 +15725,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
                     _write_backup_json(work_dir / "metadata.json", metadata)
                     update_action_progress(
                         stack_key,
-                        8 + round((index / total_mounts) * 5),
+                        25 + round((index / total_mounts) * 57),
                         determinate=True,
                         phase="backup_data",
                     )
@@ -15713,14 +15735,22 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
             if stopped:
                 update_action_progress(
                     stack_key,
-                    14,
+                    85,
                     determinate=True,
                     phase="backup_cancelling" if cancel_event.is_set() else "backup_restart",
                 )
-            for name in stopped:
+            restart_total = max(1, len(stopped))
+            for restart_index, name in enumerate(stopped, start=1):
                 rc, _, err = run(["docker", "start", name], timeout=60)
                 if rc != 0:
                     restart_errors.append(f"{name}: {err or 'docker start failed'}")
+                else:
+                    update_action_progress(
+                        stack_key,
+                        85 + round((restart_index / restart_total) * 7),
+                        determinate=True,
+                        phase="backup_restart",
+                    )
 
         if restart_errors:
             raise RuntimeError(
@@ -15730,6 +15760,12 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
         if backup_error is not None:
             raise backup_error
 
+        update_action_progress(
+            stack_key,
+            94 if mode == "full" else 90,
+            determinate=True,
+            phase="backup_finalize",
+        )
         check_cancel()
         if mode == "full":
             copied_volume_count = sum(
@@ -15755,15 +15791,22 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
         check_cancel()
         metadata["completed_at"] = utc_now()
         if encryption_key is not None:
-            update_action_progress(stack_key, 14, determinate=True, phase="backup_encrypt")
+            update_action_progress(stack_key, 95, determinate=True, phase="backup_encrypt")
             _encrypt_backup_payload(
                 work_dir,
                 metadata,
                 encryption_key,
                 cancel_check=check_cancel,
             )
+            update_action_progress(
+                stack_key,
+                97,
+                determinate=True,
+                phase="backup_encrypt",
+            )
 
         check_cancel()
+        update_action_progress(stack_key, 98, determinate=True, phase="backup_finalize")
         _write_backup_json(work_dir / "metadata.json", metadata)
         metadata["size_bytes"] = _backup_directory_size_bytes(
             work_dir,
@@ -15776,7 +15819,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
         work_dir.replace(final_dir)
         work_dir = None
         cleanup_expired_backups()
-        update_action_progress(stack_key, 15, determinate=True, phase="backup_done")
+        update_action_progress(stack_key, 100, determinate=True, phase="backup_done")
 
         return {
             "backup_id": backup_id,
@@ -19059,7 +19102,13 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
             backup_mode,
             stack_key=data.stack_key,
         )
-        update_action_progress(data.stack_key, 15, determinate=True, phase="starting")
+        time.sleep(0.65)
+        reset_action_progress(
+            data.stack_key,
+            progress=0,
+            determinate=False,
+            phase="starting",
+        )
         result = perform_image_channel_switch(
             app_item,
             data.image_key,
@@ -19176,10 +19225,11 @@ def image_source_switch(data: ImageSourceSwitchRequest, request: Request):
             backup_mode,
             stack_key=data.stack_key,
         )
-        update_action_progress(
+        time.sleep(0.65)
+        reset_action_progress(
             data.stack_key,
-            15,
-            determinate=True,
+            progress=0,
+            determinate=False,
             phase="starting",
         )
 
@@ -19224,6 +19274,68 @@ def image_source_switch(data: ImageSourceSwitchRequest, request: Request):
         "app": app_item.get("name"),
         **(result or {}),
     }
+
+
+def _manual_app_update_worker(stack_key, app_item, backup_mode):
+    """Run one manual update independently of the browser HTTP request."""
+    update_error = None
+    result = None
+    backup_result = None
+    cancelled = False
+
+    try:
+        if backup_mode != "none":
+            reset_action_progress(
+                stack_key,
+                progress=0,
+                determinate=True,
+                phase="backup_prepare",
+            )
+            backup_result = create_pre_update_backup(
+                app_item,
+                backup_mode,
+                stack_key=stack_key,
+            )
+            time.sleep(0.65)
+            reset_action_progress(
+                stack_key,
+                progress=0,
+                determinate=False,
+                phase="starting",
+            )
+        else:
+            reset_action_progress(
+                stack_key,
+                progress=None,
+                determinate=False,
+                phase="starting",
+            )
+
+        if app_item.get("can_version_update"):
+            result = perform_version_update(app_item)
+        else:
+            result = perform_image_update(app_item)
+
+        if isinstance(result, dict) and backup_result:
+            result["backup"] = backup_result
+    except BackupCancelledError:
+        cancelled = True
+    except Exception as exc:
+        update_error = exc
+    finally:
+        if not cancelled:
+            schedule_app_scan(
+                stack_key,
+                verification_result=result if update_error is None else None,
+            )
+        app_update_lock.release()
+
+        if cancelled:
+            finish_action_progress_cancelled(stack_key)
+        elif update_error is not None:
+            finish_action_progress(stack_key, False, str(update_error))
+        else:
+            finish_action_progress(stack_key, True)
 
 
 @app.post("/api/app-update")
@@ -19273,9 +19385,6 @@ def app_update(data: AppUpdateRequest, request: Request):
         app_update_lock.release()
         raise HTTPException(status_code=400, detail="Invalid backup mode")
 
-    # If this app is already configured for automatic updating, the user has
-    # already chosen the backup rule. A faster manual click must use exactly
-    # that saved rule instead of opening/accepting a second backup decision.
     auto_policy = get_monitor_policy(data.stack_key)
     auto_rule_applies = bool(auto_policy.get("auto_enabled")) and str(
         auto_policy.get("mode") or ""
@@ -19285,64 +19394,34 @@ def app_update(data: AppUpdateRequest, request: Request):
     else:
         backup_mode = _normalize_backup_mode(requested_backup_mode, "none")
 
-    update_error = None
-    result = None
-    backup_result = None
-    cancelled = False
-    begin_action_progress(data.stack_key, "update", app_item)
+    stack_key = str(data.stack_key or "").strip()
+    app_snapshot = copy.deepcopy(app_item)
+    begin_action_progress(stack_key, "update", app_snapshot)
 
+    worker = threading.Thread(
+        target=_manual_app_update_worker,
+        args=(stack_key, app_snapshot, backup_mode),
+        name=f"update-monitor-manual-{stack_key[:32]}",
+        daemon=True,
+    )
     try:
-        if backup_mode != "none":
-            update_action_progress(data.stack_key, determinate=False, phase="backup")
-            backup_result = create_pre_update_backup(
-                app_item,
-                backup_mode,
-                stack_key=data.stack_key,
-            )
-            update_action_progress(data.stack_key, determinate=False, phase="starting")
-
-        if app_item.get("can_version_update"):
-            result = perform_version_update(app_item)
-        else:
-            result = perform_image_update(app_item)
-        if isinstance(result, dict) and backup_result:
-            result["backup"] = backup_result
-        finish_action_progress(data.stack_key, True)
-    except BackupCancelledError:
-        cancelled = True
-        finish_action_progress_cancelled(data.stack_key)
-    except RuntimeError as exc:
-        update_error = exc
-        finish_action_progress(data.stack_key, False, str(exc))
-    finally:
-        # MANUAL UPDATE RULE:
-        # Never start a full/interval scan here. Queue exactly one targeted scan
-        # for this stack while the Docker-operation lock is still held. The
-        # pending marker then blocks the 1/6/12/24-hour scheduler until this one
-        # app verification has completed.
-        if not cancelled:
-            schedule_app_scan(
-                data.stack_key,
-                verification_result=result if update_error is None else None,
-            )
+        worker.start()
+    except Exception as exc:
         app_update_lock.release()
-
-    if cancelled:
-        return {
-            "success": False,
-            "cancelled": True,
-            "app": app_item.get("name"),
-        }
-
-    if update_error is not None:
-        raise HTTPException(status_code=500, detail=str(update_error)) from update_error
+        finish_action_progress(stack_key, False, str(exc))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not start update worker: {exc}",
+        ) from exc
 
     return {
         "success": True,
+        "accepted": True,
+        "started": True,
+        "stack_key": stack_key,
         "app": app_item.get("name"),
-        **result,
+        "self_update_handoff": bool(is_update_monitor_self_app(app_item)),
     }
-
 
 @app.put("/api/github-token")
 def github_token_save(data: GithubTokenRequest, request: Request):
