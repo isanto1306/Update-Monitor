@@ -1,3 +1,4 @@
+import ast
 import re
 from pathlib import Path
 
@@ -6,6 +7,22 @@ match = re.search(r'^VERSION = "([^"]+)"', main, re.MULTILINE)
 if not match:
     raise SystemExit("Backend VERSION marker not found")
 target = match.group(1)
+
+tree = ast.parse(main)
+runtime_bridge = None
+for node in tree.body:
+    if not isinstance(node, ast.Assign):
+        continue
+    if not any(
+        isinstance(target_node, ast.Name)
+        and target_node.id == "_INDEX_ASYNC_UPDATE_BRIDGE"
+        for target_node in node.targets
+    ):
+        continue
+    runtime_bridge = ast.literal_eval(node.value)
+    break
+if not isinstance(runtime_bridge, str) or "um-async-update-bridge-v0366" not in runtime_bridge:
+    raise SystemExit("Async update frontend bridge not found in backend source")
 
 path = Path("static/index.html")
 text = path.read_text(encoding="utf-8")
@@ -35,6 +52,24 @@ text = re.sub(
     lambda m: m.group(1) + target + m.group(2),
     text,
 )
+
+# v0.3.366: every backup phase belongs to the backup progress view.
+old_image_source_backup = "  if(phase==='backup')label=imageSourceText('Backup','Backup');"
+new_image_source_backup = "  if(phase.startsWith('backup'))label=imageSourceText('Backup','Backup');"
+if new_image_source_backup not in text:
+    replace_once(
+        old_image_source_backup,
+        new_image_source_backup,
+        "image source backup phase label",
+    )
+
+# Manual update POSTs return immediately in v0.3.366. The small runtime bridge
+# keeps the existing frontend await alive via short action-progress requests,
+# avoiding reverse-proxy timeouts without rewriting the application UI logic.
+if 'id="um-async-update-bridge-v0366"' not in text:
+    if "</body>" not in text:
+        raise SystemExit("Frontend marker not found: closing body")
+    text = text.replace("</body>", runtime_bridge + "\n</body>", 1)
 
 # Older migration guard kept idempotent.
 old_error = """  const storedAutoError=(
