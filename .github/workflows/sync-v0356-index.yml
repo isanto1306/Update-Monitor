@@ -30,6 +30,38 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/sync_frontend.py
 
+      - name: Validate async update bridge syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import ast
+          from pathlib import Path
+
+          source = Path("app/main.py").read_text(encoding="utf-8")
+          tree = ast.parse(source)
+          bridge = None
+          for node in tree.body:
+              if not isinstance(node, ast.Assign):
+                  continue
+              if any(
+                  isinstance(target, ast.Name)
+                  and target.id == "_INDEX_ASYNC_UPDATE_BRIDGE"
+                  for target in node.targets
+              ):
+                  bridge = ast.literal_eval(node.value)
+                  break
+
+          assert isinstance(bridge, str)
+          assert '<script id="um-async-update-bridge-v0366">' in bridge
+          javascript = bridge.split(">", 1)[1].rsplit("</script>", 1)[0]
+          Path("/tmp/um-async-update-bridge.js").write_text(
+              javascript,
+              encoding="utf-8",
+          )
+          PY
+          node --check /tmp/um-async-update-bridge.js
+
       - name: Run release regression checks
         shell: bash
         run: |
