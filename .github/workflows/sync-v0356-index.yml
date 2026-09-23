@@ -288,7 +288,13 @@ jobs:
           assert "acknowledge_auto_update_error(stack_key)" in app_scan
 
           backup_source = function_source("create_pre_update_backup")
+          backup_runner = function_source("_run_backup_process_cancellable")
           assert "_run_backup_process_cancellable(" in backup_source
+          assert "progress_callback=report_copy_progress" in backup_source
+          assert "_backup_local_path_size_bytes(target_path)" in backup_source
+          assert "elapsed / (elapsed + 4.0)" in backup_source
+          assert "progress_callback=None" in backup_runner
+          assert "progress_callback()" in backup_runner
           assert "except BackupCancelledError" in backup_source
           assert "shutil.rmtree(work_dir, ignore_errors=True)" in backup_source
           assert "work_dir.replace(final_dir)" in backup_source
