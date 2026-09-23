@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.367"
+        href="favicon.ico?v=0.3.368"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.367"
+        href="favicon-16x16.png?v=0.3.368"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.367"
+        href="favicon-32x32.png?v=0.3.368"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.367"
+        href="apple-touch-icon.png?v=0.3.368"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.367"
+        href="site.webmanifest?v=0.3.368"
     >
 
     <meta
@@ -7858,7 +7858,7 @@
     opacity: 1;
     transform: none;
     animation: none;
-    transition: width .22s linear;
+    transition: width .10s linear;
 }
 .update-install-button.action-progress.has-percent::before {
     background: rgba(255,180,84,.24);
@@ -18403,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.367</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.368</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18752,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.367"></script>
+<script src="/update-channel.js?v=0.3.368"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.367';
+const UPDATE_MONITOR_VERSION = 'v0.3.368';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -23373,6 +23373,88 @@ function requestUninstall(app,index){
 }
 
 const actionProgressTimers=new Map();
+const backupProgressVisuals=new Map();
+
+function resetBackupProgressVisual(stackKey,active=false){
+  const key=String(stackKey||'');
+  const current=backupProgressVisuals.get(key);
+  if(current&&current.raf)cancelAnimationFrame(current.raf);
+  backupProgressVisuals.delete(key);
+  if(active){
+    backupProgressVisuals.set(key,{
+      current:0,
+      target:0,
+      raf:0,
+      lastTs:performance.now()
+    });
+  }
+}
+
+function scheduleBackupProgressVisual(stackKey){
+  const key=String(stackKey||'');
+  const visual=backupProgressVisuals.get(key);
+  if(!visual||visual.raf||visual.current>=visual.target)return;
+
+  visual.raf=requestAnimationFrame(ts=>{
+    const live=backupProgressVisuals.get(key);
+    if(!live)return;
+    live.raf=0;
+
+    const previousTs=Number(live.lastTs||ts);
+    const elapsed=Math.max(0.008,Math.min(0.080,(ts-previousTs)/1000));
+    live.lastTs=ts;
+
+    const remaining=Math.max(0,live.target-live.current);
+    const speed=Math.min(140,Math.max(45,remaining*2.2));
+    live.current=Math.min(live.target,live.current+(speed*elapsed));
+    backupProgressVisuals.set(key,live);
+
+    applyActionProgressToDom(key);
+
+    if(live.current+0.01<live.target){
+      scheduleBackupProgressVisual(key);
+    }else{
+      live.current=live.target;
+      backupProgressVisuals.set(key,live);
+      applyActionProgressToDom(key);
+    }
+  });
+}
+
+function smoothConfirmedBackupProgress(stackKey,info,kind,rawProgress){
+  const key=String(stackKey||'');
+  const phase=String(info&&info.phase||'');
+  const isBackup=kind==='update'&&phase.startsWith('backup');
+
+  if(!isBackup||rawProgress===null){
+    resetBackupProgressVisual(key,false);
+    return rawProgress;
+  }
+
+  let visual=backupProgressVisuals.get(key);
+  if(!visual){
+    visual={
+      current:rawProgress,
+      target:rawProgress,
+      raf:0,
+      lastTs:performance.now()
+    };
+  }
+
+  if(rawProgress+1<visual.current){
+    if(visual.raf)cancelAnimationFrame(visual.raf);
+    visual.current=rawProgress;
+    visual.target=rawProgress;
+    visual.raf=0;
+    visual.lastTs=performance.now();
+  }else{
+    visual.target=Math.max(visual.target,rawProgress);
+  }
+
+  backupProgressVisuals.set(key,visual);
+  scheduleBackupProgressVisual(key);
+  return Math.max(0,Math.min(100,Math.round(visual.current)));
+}
 
 function stopActionProgressPolling(stackKey){
   const key=String(stackKey||'');
@@ -23381,6 +23463,7 @@ function stopActionProgressPolling(stackKey){
     clearInterval(timer);
     actionProgressTimers.delete(key);
   }
+  resetBackupProgressVisual(key,false);
 }
 
 function applyActionProgressToDom(stackKey){
@@ -23400,7 +23483,10 @@ function applyActionProgressToDom(stackKey){
 
     const value=Number(info&&info.progress);
     const hasPercent=!!(info&&info.kind===kind&&info.determinate&&Number.isFinite(value));
-    const progress=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
+    const rawProgress=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
+    const progress=hasPercent
+      ?smoothConfirmedBackupProgress(key,info,kind,rawProgress)
+      :rawProgress;
     const cancellable=!!(
       kind==='update'
       &&info
@@ -23469,6 +23555,10 @@ function startActionProgressPolling(stackKey,kind,initialPhase=''){
     finished:false,
     phase:String(initialPhase||'')
   });
+  resetBackupProgressVisual(
+    key,
+    kind==='update'&&String(initialPhase||'').startsWith('backup')
+  );
   applyActionProgressToDom(key);
   refreshActionProgress(key);
   actionProgressTimers.set(
