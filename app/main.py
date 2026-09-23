@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.367"
+VERSION = "0.3.368"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -11663,7 +11663,7 @@ def run_due_auto_updates(now_utc=None):
                     auto_backup_mode,
                     stack_key=stack_key,
                 )
-                time.sleep(0.65)
+                time.sleep(1.75)
                 reset_action_progress(
                     stack_key,
                     progress=0,
@@ -19350,7 +19350,7 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
             backup_mode,
             stack_key=data.stack_key,
         )
-        time.sleep(0.65)
+        time.sleep(1.75)
         reset_action_progress(
             data.stack_key,
             progress=0,
@@ -19473,7 +19473,7 @@ def image_source_switch(data: ImageSourceSwitchRequest, request: Request):
             backup_mode,
             stack_key=data.stack_key,
         )
-        time.sleep(0.65)
+        time.sleep(1.75)
         reset_action_progress(
             data.stack_key,
             progress=0,
@@ -19544,7 +19544,7 @@ def _manual_app_update_worker(stack_key, app_item, backup_mode):
                 backup_mode,
                 stack_key=stack_key,
             )
-            time.sleep(0.65)
+            time.sleep(1.75)
             reset_action_progress(
                 stack_key,
                 progress=0,
