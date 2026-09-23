@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.366"
+VERSION = "0.3.367"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -664,8 +664,13 @@ def request_backup_cancellation(stack_key):
     return True
 
 
-def _run_backup_process_cancellable(cmd, stack_key, event, timeout):
-    """Run docker cp while another request may cancel it."""
+def _run_backup_process_cancellable(cmd, stack_key, event, timeout, progress_callback=None):
+    """Run docker cp while another request may cancel it.
+
+    Docker CLI does not expose copy percentages. A lightweight callback may
+    therefore publish safe intermediate UI progress while the process is alive.
+    Completion itself is still reported only after docker cp really exits.
+    """
     process = None
     try:
         process = subprocess.Popen(
@@ -676,6 +681,7 @@ def _run_backup_process_cancellable(cmd, stack_key, event, timeout):
         )
         _backup_cancel_attach_process(stack_key, event, process)
         deadline = time.monotonic() + max(1.0, float(timeout or 1))
+        last_progress_tick = 0.0
         while True:
             _backup_check_cancel(stack_key, event)
             remaining = deadline - time.monotonic()
@@ -687,6 +693,17 @@ def _run_backup_process_cancellable(cmd, stack_key, event, timeout):
                 _backup_check_cancel(stack_key, event)
                 return process.returncode, (out or "").strip(), (err or "").strip()
             except subprocess.TimeoutExpired:
+                if progress_callback is not None:
+                    now = time.monotonic()
+                    if now - last_progress_tick >= 0.70:
+                        try:
+                            progress_callback()
+                        except BackupCancelledError:
+                            raise
+                        except Exception:
+                            # Progress reporting must never break a valid backup.
+                            pass
+                        last_progress_tick = now
                 continue
     except FileNotFoundError as exc:
         return 127, "", str(exc)
@@ -15669,6 +15686,52 @@ def _backup_image_snapshot(app_item, inspects):
         })
     return images
 
+def _backup_container_path_size_bytes(container_name, destination):
+    """Best-effort recursive source size used only to improve progress quality."""
+    container_name = str(container_name or "").strip()
+    destination = str(destination or "").strip()
+    if not container_name or not destination:
+        return None
+
+    # BusyBox and GNU coreutils both commonly support du -sk. Keep this probe
+    # short: an expensive size walk must not delay the backup itself.
+    rc, out, _err = run(
+        ["docker", "exec", container_name, "du", "-sk", destination],
+        timeout=1.5,
+    )
+    if rc != 0:
+        return None
+    try:
+        kib = int(str(out or "").splitlines()[0].split()[0])
+    except (IndexError, TypeError, ValueError):
+        return None
+    return max(0, kib * 1024)
+
+
+def _backup_local_path_size_bytes(path):
+    """Best-effort size of the in-progress local copy without Python tree walks."""
+    path = Path(path)
+    if not path.exists():
+        return 0
+    try:
+        probe = subprocess.run(
+            ["du", "-sk", str(path)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=1.0,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if probe.returncode != 0:
+        return None
+    try:
+        kib = int(str(probe.stdout or "").splitlines()[0].split()[0])
+    except (IndexError, TypeError, ValueError):
+        return None
+    return max(0, kib * 1024)
+
+
 def create_pre_update_backup(app_item, mode, stack_key=None):
     mode = _normalize_backup_mode(mode, "none")
     if mode == "full" and is_update_monitor_self_app(app_item):
@@ -15765,6 +15828,38 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
         update_action_progress(stack_key, 10, determinate=True, phase="backup_prepare")
         check_cancel()
 
+        # Try to measure each source quickly while its container is still
+        # running. When that succeeds, copy progress can be byte based.
+        # A failed or slow probe is harmless and falls back to a conservative
+        # time-based intermediate display below.
+        source_size_by_identity = {}
+        if mode == "full" and mounts:
+            running_names = set(running_before)
+            measure_total = max(1, len(mounts))
+            for measure_index, mount in enumerate(mounts, start=1):
+                check_cancel()
+                update_action_progress(
+                    stack_key,
+                    10 + round(((measure_index - 1) / measure_total) * 4),
+                    determinate=True,
+                    phase="backup_measure",
+                )
+                container_name = str(mount.get("container") or "").strip()
+                if container_name in running_names:
+                    measured = _backup_container_path_size_bytes(
+                        container_name,
+                        mount.get("destination"),
+                    )
+                    if measured is not None:
+                        source_size_by_identity[str(mount.get("identity") or "")] = measured
+                update_action_progress(
+                    stack_key,
+                    10 + round((measure_index / measure_total) * 4),
+                    determinate=True,
+                    phase="backup_measure",
+                )
+                check_cancel()
+
         stopped = []
         restart_errors = []
         backup_error = None
@@ -15797,17 +15892,73 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
                     destination = mount["destination"]
                     target_name = f"mount-{index:03d}"
                     target_path = data_root / target_name
+                    segment_start = 25 + round(((index - 1) / total_mounts) * 57)
+                    segment_end = 25 + round((index / total_mounts) * 57)
                     update_action_progress(
                         stack_key,
-                        25 + round(((index - 1) / total_mounts) * 57),
+                        segment_start,
                         determinate=True,
                         phase="backup_data",
                     )
+
+                    source_size = source_size_by_identity.get(
+                        str(mount.get("identity") or "")
+                    )
+                    copy_started = time.monotonic()
+                    last_reported = segment_start
+                    last_size_sample_at = 0.0
+                    copied_bytes = None
+
+                    def report_copy_progress():
+                        nonlocal last_reported, last_size_sample_at, copied_bytes
+                        if segment_end <= segment_start:
+                            return
+
+                        now = time.monotonic()
+                        fraction = None
+
+                        # A measured byte ratio is preferred when the quick
+                        # pre-copy source-size probe succeeded. Local du is
+                        # throttled so progress monitoring cannot dominate I/O.
+                        if source_size is not None and source_size > 0:
+                            if now - last_size_sample_at >= 2.0:
+                                last_size_sample_at = now
+                                sampled = _backup_local_path_size_bytes(target_path)
+                                if sampled is not None:
+                                    copied_bytes = sampled
+                            if copied_bytes is not None:
+                                fraction = min(
+                                    0.97,
+                                    max(0.0, copied_bytes / float(source_size)),
+                                )
+
+                        # docker cp has no native percentage. If byte
+                        # measurement is unavailable, keep the UI moving with a
+                        # conservative bounded estimate. It can approach the
+                        # end of this copy segment but can never complete it.
+                        if fraction is None:
+                            elapsed = max(0.0, now - copy_started)
+                            fraction = min(0.94, elapsed / (elapsed + 4.0))
+
+                        span = max(1, segment_end - segment_start)
+                        candidate = segment_start + round(span * fraction)
+                        upper = max(segment_start, segment_end - 1)
+                        candidate = max(segment_start, min(upper, candidate))
+                        if candidate > last_reported:
+                            update_action_progress(
+                                stack_key,
+                                candidate,
+                                determinate=True,
+                                phase="backup_data",
+                            )
+                            last_reported = candidate
+
                     rc, _, err = _run_backup_process_cancellable(
                         ["docker", "cp", "-a", f"{container_name}:{destination}", str(target_path)],
                         stack_key,
                         cancel_event,
                         timeout=60 * 60,
+                        progress_callback=report_copy_progress,
                     )
                     if rc != 0:
                         raise RuntimeError(
@@ -15819,7 +15970,7 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
                     _write_backup_json(work_dir / "metadata.json", metadata)
                     update_action_progress(
                         stack_key,
-                        25 + round((index / total_mounts) * 57),
+                        segment_end,
                         determinate=True,
                         phase="backup_data",
                     )
