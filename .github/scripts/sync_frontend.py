@@ -231,4 +231,160 @@ for marker in ("data-backup-cancel-inline", "backupCancelInline", "backup_cancel
 if "data-backup-cancel-stack" in text or "backup-cancel-running-button" in text:
     raise SystemExit("Legacy separate backup-cancel button is still present")
 
+
+# v0.3.368: visually interpolate only between backend-confirmed backup values.
+# The displayed percentage never advances beyond /api/action-progress.
+text = text.replace("transition: width .22s linear;", "transition: width .10s linear;")
+
+smooth_helpers = r"""const actionProgressTimers=new Map();
+const backupProgressVisuals=new Map();
+
+function resetBackupProgressVisual(stackKey,active=false){
+  const key=String(stackKey||'');
+  const current=backupProgressVisuals.get(key);
+  if(current&&current.raf)cancelAnimationFrame(current.raf);
+  backupProgressVisuals.delete(key);
+  if(active){
+    backupProgressVisuals.set(key,{
+      current:0,
+      target:0,
+      raf:0,
+      lastTs:performance.now()
+    });
+  }
+}
+
+function scheduleBackupProgressVisual(stackKey){
+  const key=String(stackKey||'');
+  const visual=backupProgressVisuals.get(key);
+  if(!visual||visual.raf||visual.current>=visual.target)return;
+
+  visual.raf=requestAnimationFrame(ts=>{
+    const live=backupProgressVisuals.get(key);
+    if(!live)return;
+    live.raf=0;
+
+    const previousTs=Number(live.lastTs||ts);
+    const elapsed=Math.max(0.008,Math.min(0.080,(ts-previousTs)/1000));
+    live.lastTs=ts;
+
+    const remaining=Math.max(0,live.target-live.current);
+    const speed=Math.min(140,Math.max(45,remaining*2.2));
+    live.current=Math.min(live.target,live.current+(speed*elapsed));
+    backupProgressVisuals.set(key,live);
+
+    applyActionProgressToDom(key);
+
+    if(live.current+0.01<live.target){
+      scheduleBackupProgressVisual(key);
+    }else{
+      live.current=live.target;
+      backupProgressVisuals.set(key,live);
+      applyActionProgressToDom(key);
+    }
+  });
+}
+
+function smoothConfirmedBackupProgress(stackKey,info,kind,rawProgress){
+  const key=String(stackKey||'');
+  const phase=String(info&&info.phase||'');
+  const isBackup=kind==='update'&&phase.startsWith('backup');
+
+  if(!isBackup||rawProgress===null){
+    resetBackupProgressVisual(key,false);
+    return rawProgress;
+  }
+
+  let visual=backupProgressVisuals.get(key);
+  if(!visual){
+    visual={
+      current:rawProgress,
+      target:rawProgress,
+      raf:0,
+      lastTs:performance.now()
+    };
+  }
+
+  if(rawProgress+1<visual.current){
+    if(visual.raf)cancelAnimationFrame(visual.raf);
+    visual.current=rawProgress;
+    visual.target=rawProgress;
+    visual.raf=0;
+    visual.lastTs=performance.now();
+  }else{
+    visual.target=Math.max(visual.target,rawProgress);
+  }
+
+  backupProgressVisuals.set(key,visual);
+  scheduleBackupProgressVisual(key);
+  return Math.max(0,Math.min(100,Math.round(visual.current)));
+}"""
+
+if "const backupProgressVisuals=new Map();" not in text:
+    replace_once(
+        "const actionProgressTimers=new Map();",
+        smooth_helpers,
+        "smooth backup progress helpers",
+    )
+
+old_stop = """function stopActionProgressPolling(stackKey){
+  const key=String(stackKey||'');
+  const timer=actionProgressTimers.get(key);
+  if(timer){
+    clearInterval(timer);
+    actionProgressTimers.delete(key);
+  }
+}"""
+new_stop = """function stopActionProgressPolling(stackKey){
+  const key=String(stackKey||'');
+  const timer=actionProgressTimers.get(key);
+  if(timer){
+    clearInterval(timer);
+    actionProgressTimers.delete(key);
+  }
+  resetBackupProgressVisual(key,false);
+}"""
+if new_stop not in text:
+    replace_once(old_stop, new_stop, "smooth backup polling cleanup")
+
+old_progress = """    const value=Number(info&&info.progress);
+    const hasPercent=!!(info&&info.kind===kind&&info.determinate&&Number.isFinite(value));
+    const progress=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;"""
+new_progress = """    const value=Number(info&&info.progress);
+    const hasPercent=!!(info&&info.kind===kind&&info.determinate&&Number.isFinite(value));
+    const rawProgress=hasPercent?Math.max(0,Math.min(100,Math.round(value))):null;
+    const progress=hasPercent
+      ?smoothConfirmedBackupProgress(key,info,kind,rawProgress)
+      :rawProgress;"""
+if new_progress not in text:
+    replace_once(old_progress, new_progress, "smoothed confirmed backup value")
+
+old_start = """  state.actionProgress.set(key,{
+    kind,
+    progress:null,
+    determinate:false,
+    finished:false,
+    phase:String(initialPhase||'')
+  });
+  applyActionProgressToDom(key);"""
+new_start = """  state.actionProgress.set(key,{
+    kind,
+    progress:null,
+    determinate:false,
+    finished:false,
+    phase:String(initialPhase||'')
+  });
+  resetBackupProgressVisual(
+    key,
+    kind==='update'&&String(initialPhase||'').startsWith('backup')
+  );
+  applyActionProgressToDom(key);"""
+if new_start not in text:
+    replace_once(old_start, new_start, "smooth backup initial state")
+
+for marker in ("backupProgressVisuals","smoothConfirmedBackupProgress","requestAnimationFrame"):
+    if marker not in text:
+        raise SystemExit(f"Frontend marker not found: {marker}")
+
+
 path.write_text(text, encoding="utf-8")
