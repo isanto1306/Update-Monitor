@@ -15944,6 +15944,9 @@ def create_pre_update_backup(app_item, mode, stack_key=None):
                         candidate = segment_start + round(span * fraction)
                         upper = max(segment_start, segment_end - 1)
                         candidate = max(segment_start, min(upper, candidate))
+                        # Keep the visible counter calm even when a size sample
+                        # suddenly catches up after several seconds.
+                        candidate = min(candidate, last_reported + 2)
                         if candidate > last_reported:
                             update_action_progress(
                                 stack_key,
