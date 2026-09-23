@@ -323,6 +323,10 @@ jobs:
           assert "waitForAcceptedUpdate" in html
           assert "phase.startsWith('backup')" in html
           assert '100, determinate=True, phase="backup_done"' in backup_source
+          assert "time.sleep(1.75)" in manual_update_worker
+          assert "backupProgressVisuals" in html
+          assert "smoothConfirmedBackupProgress" in html
+          assert "requestAnimationFrame" in html
 
           # Frontend/release regression: all active version markers must agree.
           assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
