@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.371"
+        href="favicon.ico?v=0.3.372"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.371"
+        href="favicon-16x16.png?v=0.3.372"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.371"
+        href="favicon-32x32.png?v=0.3.372"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.371"
+        href="apple-touch-icon.png?v=0.3.372"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.371"
+        href="site.webmanifest?v=0.3.372"
     >
 
     <meta
@@ -18403,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.371</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.372</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18752,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.371"></script>
+<script src="/update-channel.js?v=0.3.372"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.371';
+const UPDATE_MONITOR_VERSION = 'v0.3.372';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -25942,6 +25942,248 @@ document.addEventListener('keydown',event=>{
       return originalImageSourceProgressLabel(info);
     };
   }
+})();
+</script>
+<script id="um-error-localization-v0372">
+(function(){
+  if(window.__umErrorLocalizationV0372)return;
+  window.__umErrorLocalizationV0372=true;
+
+  const baseApi=api;
+
+  const deExact=new Map(Object.entries({
+    'Authentication required':'Authentifizierung erforderlich.',
+    'Invalid username or password':'Benutzername oder Passwort ist falsch.',
+    'Too many failed login attempts. Try again later.':'Zu viele fehlgeschlagene Anmeldeversuche. Bitte später erneut versuchen.',
+    'Wait until the current update check is finished':'Warte, bis die aktuelle Update Prüfung abgeschlossen ist.',
+    'Wait until the current post-action verification scan is finished':'Warte, bis die aktuelle Prüfung nach der Aktion abgeschlossen ist.',
+    'Wait until the current verification scan is finished':'Warte, bis die aktuelle Verifizierungsprüfung abgeschlossen ist.',
+    'Wait until the post-action verification is finished':'Warte, bis die Verifizierung nach der Aktion abgeschlossen ist.',
+    'Wait until the post-update verification scan is finished':'Warte, bis die Prüfung nach dem Update abgeschlossen ist.',
+    'Wait until the post-update verification scan is finished before checking versions':'Warte mit der Versionsprüfung, bis die Prüfung nach dem Update abgeschlossen ist.',
+    'Wait until the current scan or app operation is finished before checking versions':'Warte mit der Versionsprüfung, bis die aktuelle Prüfung oder App Aktion abgeschlossen ist.',
+    'Wait until the current Docker action is finished':'Warte, bis die aktuelle Docker Aktion abgeschlossen ist.',
+    'Another app update is already running':'Ein anderes App Update läuft bereits.',
+    'Another app update or runtime action is already running':'Ein anderes App Update oder eine Container Aktion läuft bereits.',
+    'Another app update, restore or uninstall is already running':'Ein anderes App Update, eine Wiederherstellung oder Deinstallation läuft bereits.',
+    'Another app update, uninstall or runtime action is already running':'Ein anderes App Update, eine Deinstallation oder Container Aktion läuft bereits.',
+    'A scan or Docker action is already active':'Eine Prüfung oder Docker Aktion läuft bereits.',
+    'A backup is already active for this app':'Für diese App läuft bereits ein Backup.',
+    'App not found in current scan':'Die App wurde in der aktuellen Prüfung nicht gefunden.',
+    'Docker image not found in current scan':'Das Docker Image wurde in der aktuellen Prüfung nicht gefunden.',
+    'Image not found in this app':'Das Image wurde in dieser App nicht gefunden.',
+    'This app is not managed by ZimaOS Compose':'Diese App wird nicht von ZimaOS Compose verwaltet.',
+    'This app has no registry-backed Compose images':'Diese App besitzt keine Registry basierten Compose Images.',
+    'This app has no registry-backed image that can switch versions':'Diese App besitzt kein Registry Image, bei dem die Version gewechselt werden kann.',
+    'No installable update is available':'Es ist kein installierbares Update verfügbar.',
+    'This update is currently blocked by its update policy':'Dieses Update ist durch die aktuelle Update Richtlinie gesperrt.',
+    'This version is not released for installation':'Diese Version ist nicht zur Installation freigegeben.',
+    'The selected version is already configured':'Die ausgewählte Version ist bereits konfiguriert.',
+    'The selected version is no longer available':'Die ausgewählte Version ist nicht mehr verfügbar.',
+    'The selected version is not available in the current scan':'Die ausgewählte Version ist in der aktuellen Prüfung nicht verfügbar.',
+    'The selected version is not available for every image in the version group':'Die ausgewählte Version ist nicht für jedes Image dieser Versionsgruppe verfügbar.',
+    'Select a target version':'Wähle eine Zielversion aus.',
+    'No selectable version group is available':'Es ist keine auswählbare Versionsgruppe verfügbar.',
+    'Invalid backup mode':'Ungültiger Backup Modus.',
+    'Invalid automatic backup mode':'Ungültiger automatischer Backup Modus.',
+    'Invalid automatic update time':'Ungültige Uhrzeit für automatische Updates.',
+    'Invalid automatic update timezone':'Ungültige Zeitzone für automatische Updates.',
+    'Invalid automatic update weekdays':'Ungültige Wochentage für automatische Updates.',
+    'Unsupported update policy':'Nicht unterstützte Update Richtlinie.',
+    'Unsupported scan interval':'Nicht unterstütztes Prüfintervall.',
+    'Unsupported container action':'Nicht unterstützte Container Aktion.',
+    'No cancellable backup is currently running for this app':'Für diese App läuft aktuell kein abbrechbares Backup.',
+    'Backup cancellation requires an app key':'Zum Abbrechen des Backups wird eine App Kennung benötigt.',
+    'Backup requires a ZimaOS Compose app':'Für ein Backup ist eine ZimaOS Compose App erforderlich.',
+    'Backup restore requires a ZimaOS Compose app':'Für die Wiederherstellung ist eine ZimaOS Compose App erforderlich.',
+    'No backup selected':'Kein Backup ausgewählt.',
+    'No restorable backup exists for this app':'Für diese App ist kein wiederherstellbares Backup vorhanden.',
+    'The selected backup no longer exists':'Das ausgewählte Backup existiert nicht mehr.',
+    'The selected backup path is unavailable':'Der Pfad des ausgewählten Backups ist nicht verfügbar.',
+    'Backup encryption is enabled but locked. Unlock it in Settings before creating a backup.':'Die Backup Verschlüsselung ist aktiv, aber gesperrt. Entsperre sie vor dem Erstellen eines Backups in den Einstellungen.',
+    'Backup encryption is not configured':'Die Backup Verschlüsselung ist nicht eingerichtet.',
+    'Backup encryption key is invalid':'Der Schlüssel der Backup Verschlüsselung ist ungültig.',
+    'Backup encryption password is incorrect':'Das Passwort der Backup Verschlüsselung ist falsch.',
+    'Backup encryption password must contain at least 8 characters':'Das Passwort der Backup Verschlüsselung muss mindestens 8 Zeichen enthalten.',
+    'Enter a backup password with at least 8 characters':'Gib ein Backup Passwort mit mindestens 8 Zeichen ein.',
+    'Enter the backup password to unlock encryption':'Gib das Backup Passwort ein, um die Verschlüsselung zu entsperren.',
+    'This backup is encrypted. Unlock backup encryption in Settings before restoring it.':'Dieses Backup ist verschlüsselt. Entsperre die Backup Verschlüsselung vor der Wiederherstellung in den Einstellungen.',
+    'Enter a GitHub token':'Gib einen GitHub Token ein.',
+    'No GitHub token is configured':'Es ist kein GitHub Token eingerichtet.',
+    'GitHub token is too long':'Der GitHub Token ist zu lang.',
+    'GitHub token must not contain whitespace':'Der GitHub Token darf keine Leerzeichen enthalten.',
+    'GitHub rejected the token (HTTP 401)':'GitHub hat den Token abgelehnt (HTTP 401).',
+    'No Docker containers found for backup':'Für das Backup wurden keine Docker Container gefunden.',
+    'No Docker containers found for this update':'Für dieses Update wurden keine Docker Container gefunden.',
+    'No current Docker containers found for this app':'Für diese App wurden keine aktuellen Docker Container gefunden.',
+    'No verified remote digest is available for the self update':'Für das Selbst Update ist kein verifizierter Remote Digest verfügbar.',
+    'No verified alternative image source is available':'Es ist keine verifizierte alternative Image Quelle verfügbar.',
+    'The selected image source is already active':'Die ausgewählte Image Quelle ist bereits aktiv.',
+    'The selected image source is no longer available':'Die ausgewählte Image Quelle ist nicht mehr verfügbar.',
+    'The selected image source is not compatible with the current Compose configuration':'Die ausgewählte Image Quelle ist mit der aktuellen Compose Konfiguration nicht kompatibel.',
+    'The selected update channel is already active':'Der ausgewählte Update Kanal ist bereits aktiv.',
+    'The selected tag is a concrete version, not an update channel':'Der ausgewählte Tag ist eine feste Version und kein Update Kanal.',
+    'Follow mode requires a moving Docker channel':'Tag folgen benötigt einen beweglichen Docker Kanal.',
+    'Image source switching requires a quick or full backup':'Der Wechsel der Image Quelle benötigt ein Schnell Backup oder vollständiges Backup.',
+    'Update channel switching requires a quick or full backup':'Der Wechsel des Update Kanals benötigt ein Schnell Backup oder vollständiges Backup.',
+    'Image source switching requires a ZimaOS Compose app':'Der Wechsel der Image Quelle benötigt eine ZimaOS Compose App.',
+    'Compatibility warnings must be accepted before switching this image source':'Die Kompatibilitätswarnungen müssen vor dem Wechsel dieser Image Quelle bestätigt werden.',
+    'Digest-pinned images cannot be changed by this path':'Per Digest festgelegte Images können über diesen Weg nicht geändert werden.',
+    'Image is explicitly pinned by digest in Compose':'Das Image ist in Compose ausdrücklich per Digest festgelegt.',
+    'No verified remote digest and no matching local RepoDigest':'Es ist kein verifizierter Remote Digest und kein passender lokaler RepoDigest vorhanden.',
+    'Unexpected ZimaOS App Management address':'Unerwartete Adresse für ZimaOS App Management.',
+    'ZimaOS App Management URL not found':'Die URL von ZimaOS App Management wurde nicht gefunden.',
+    'ZimaOS Compose app ID is missing':'Die ZimaOS Compose App ID fehlt.',
+    'ZimaOS Compose app ID is missing for this app':'Für diese App fehlt die ZimaOS Compose App ID.',
+    'Website icon not found':'Das Website Symbol wurde nicht gefunden.',
+    'Icon source is not known':'Die Quelle des Symbols ist nicht bekannt.',
+    'Icon download is temporarily unavailable':'Der Download des Symbols ist vorübergehend nicht verfügbar.',
+    'Icon is too large':'Das Symbol ist zu groß.',
+    'Invalid icon cache key':'Ungültiger Symbol Cache Schlüssel.',
+    'Unsupported icon URL':'Nicht unterstützte Symbol URL.',
+    'Private or non-public icon hosts are not cached':'Private oder nicht öffentliche Symbol Hosts werden nicht zwischengespeichert.',
+    'Timeout':'Zeitüberschreitung.',
+    'Update failed':'Update fehlgeschlagen.',
+    'Resource not accessible by personal access token':'Diese Ressource ist mit dem aktuellen Personal Access Token nicht zugänglich.'
+  }));
+
+  const dePatterns=[
+    [/^GitHub rejected the request \(HTTP (\d+)\):\s*(.*)$/i,(m)=>'GitHub hat die Anfrage abgelehnt (HTTP '+m[1]+'): '+localizeGerman(m[2],false)],
+    [/^GitHub token test failed \(HTTP (\d+)\)$/i,(m)=>'GitHub Token Test fehlgeschlagen (HTTP '+m[1]+').'],
+    [/^GitHub is not reachable:\s*(.*)$/i,(m)=>'GitHub ist nicht erreichbar: '+safeTechnicalDetail(m[1])],
+    [/^ZimaOS App Management not reachable:\s*(.*)$/i,(m)=>'ZimaOS App Management ist nicht erreichbar: '+safeTechnicalDetail(m[1])],
+    [/^ZimaOS App Management HTTP (\d+)(?::\s*(.*))?$/i,(m)=>'ZimaOS App Management Fehler (HTTP '+m[1]+')'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
+    [/^ZimaOS compose apply failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS Compose konnte nicht angewendet werden (HTTP '+m[1]+').'],
+    [/^ZimaOS compose read failed \(HTTP (\d+)\)(?::\s*(.*))?$/i,(m)=>'ZimaOS Compose konnte nicht gelesen werden (HTTP '+m[1]+')'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
+    [/^ZimaOS app uninstall failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS konnte die App nicht deinstallieren (HTTP '+m[1]+').'],
+    [/^ZimaOS app status change failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS konnte den App Status nicht ändern (HTTP '+m[1]+').'],
+    [/^ZimaOS container recreate failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS konnte den Container nicht neu erstellen (HTTP '+m[1]+').'],
+    [/^Docker pull failed for (.+?):\s*(.*)$/i,(m)=>'Docker Pull für '+m[1]+' fehlgeschlagen: '+safeTechnicalDetail(m[2])],
+    [/^Could not start update worker:\s*(.*)$/i,(m)=>'Der Update Prozess konnte nicht gestartet werden: '+safeTechnicalDetail(m[1])],
+    [/^Could not stop (.+?) for full backup:\s*(.*)$/i,(m)=>m[1]+' konnte für das vollständige Backup nicht gestoppt werden: '+safeTechnicalDetail(m[2])],
+    [/^Could not restore running state for (.+?):\s*(.*)$/i,(m)=>'Der laufende Zustand von '+m[1]+' konnte nicht wiederhergestellt werden: '+safeTechnicalDetail(m[2])],
+    [/^Could not restore stopped state for (.+?):\s*(.*)$/i,(m)=>'Der gestoppte Zustand von '+m[1]+' konnte nicht wiederhergestellt werden: '+safeTechnicalDetail(m[2])],
+    [/^Could not start container (.+?):\s*(.*)$/i,(m)=>'Container '+m[1]+' konnte nicht gestartet werden: '+safeTechnicalDetail(m[2])],
+    [/^Could not read registry tags for this image:\s*(.*)$/i,(m)=>'Die Registry Tags für dieses Image konnten nicht gelesen werden: '+safeTechnicalDetail(m[1])],
+    [/^Could not verify target version (.+?) in the registry(?:\s*(.*))?$/i,(m)=>'Die Zielversion '+m[1]+' konnte in der Registry nicht verifiziert werden'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
+    [/^No verified remote digest available for (.+)$/i,(m)=>'Für '+m[1]+' ist kein verifizierter Remote Digest verfügbar.'],
+    [/^No verified target digest is available for (.+)$/i,(m)=>'Für '+m[1]+' ist kein verifizierter Ziel Digest verfügbar.'],
+    [/^Container (.+?) did not reach the verified target digest(?:\s*(.*))?$/i,(m)=>'Container '+m[1]+' hat den verifizierten Ziel Digest nicht erreicht'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
+    [/^Container (.+?) did not reach the verified target image(?:\s*(.*))?$/i,(m)=>'Container '+m[1]+' hat das verifizierte Ziel Image nicht erreicht'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
+    [/^Update reached the target image, but (.+?) is not running(?:\s*(.*))?$/i,(m)=>'Das Update hat das Ziel Image erreicht, aber '+m[1]+' läuft nicht'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
+    [/^Update succeeded, but (.+?) did not return to a stopped state$/i,(m)=>'Das Update war erfolgreich, aber '+m[1]+' wurde danach nicht wieder gestoppt.'],
+    [/^Version update failed:\s*(.*)$/i,(m)=>'Versions Update fehlgeschlagen: '+safeTechnicalDetail(m[1])],
+    [/^Version update failed and the original Compose configuration was restored:\s*(.*)$/i,(m)=>'Versions Update fehlgeschlagen. Die ursprüngliche Compose Konfiguration wurde wiederhergestellt: '+safeTechnicalDetail(m[1])],
+    [/^Backup could not safely restore all stopped containers:\s*(.*)$/i,(m)=>'Das Backup konnte nicht alle zuvor gestoppten Container sicher wiederherstellen: '+safeTechnicalDetail(m[1])],
+    [/^Full backup failed while copying (.+?):\s*(.*)$/i,(m)=>'Vollständiges Backup beim Kopieren von '+m[1]+' fehlgeschlagen: '+safeTechnicalDetail(m[2])],
+    [/^Could not apply backup settings:\s*(.*)$/i,(m)=>'Backup Einstellungen konnten nicht übernommen werden: '+safeTechnicalDetail(m[1])],
+    [/^Icon download failed:\s*(.*)$/i,(m)=>'Download des Symbols fehlgeschlagen: '+safeTechnicalDetail(m[1])],
+    [/^Unsupported icon content type:\s*(.*)$/i,(m)=>'Nicht unterstützter Symbol Inhaltstyp: '+safeTechnicalDetail(m[1])],
+    [/^Another app (.+?) is already running$/i,(m)=>'Eine andere App Aktion läuft bereits.'],
+    [/^Cannot connect to the Docker daemon.*$/i,()=> 'Der Docker Daemon ist nicht erreichbar. Prüfe, ob der Docker Dienst läuft.'],
+    [/^Error response from daemon:\s*(.*)$/i,(m)=>'Docker Fehler: '+safeTechnicalDetail(m[1])],
+    [/^HTTP (\d+)(?::\s*(.*))?$/i,(m)=>'HTTP Fehler '+m[1]+(m[2]?': '+safeTechnicalDetail(m[2]):'.')]
+  ];
+
+  function currentLanguage(){
+    try{
+      return (typeof state!=='undefined'&&state&&state.language==='en')?'en':'de';
+    }catch(_){
+      return 'de';
+    }
+  }
+
+  function safeTechnicalDetail(value){
+    const raw=String(value||'').trim();
+    if(!raw)return '';
+    const exact=deExact.get(raw);
+    if(exact)return exact;
+    if(/^resource not accessible by personal access token$/i.test(raw)){
+      return 'Diese Ressource ist mit dem aktuellen Personal Access Token nicht zugänglich.';
+    }
+    if(/^permission denied$/i.test(raw))return 'Zugriff verweigert.';
+    if(/^not found$/i.test(raw))return 'Nicht gefunden.';
+    if(/^timeout$/i.test(raw))return 'Zeitüberschreitung.';
+    if(/^connection refused$/i.test(raw))return 'Verbindung abgelehnt.';
+    if(/^network (?:error|unreachable)$/i.test(raw))return 'Netzwerk nicht erreichbar.';
+    return raw;
+  }
+
+  function alreadyGerman(value){
+    return /[äöüßÄÖÜ]|(?:\b(?:konnte|nicht|wurde|läuft|Prüfung|Fehler|ungültig|verfügbar|ausgewählt|erforderlich|gesperrt|abgeschlossen|erreicht|gefunden|gestoppt|gestartet)\b)/i.test(value);
+  }
+
+  function localizeGerman(value,allowGeneric=true){
+    const raw=String(value==null?'':value).trim();
+    if(!raw||raw==='auth')return raw;
+    if(alreadyGerman(raw))return raw;
+
+    const exact=deExact.get(raw);
+    if(exact)return exact;
+
+    for(const [pattern,render] of dePatterns){
+      const match=raw.match(pattern);
+      if(match)return render(match);
+    }
+
+    const http=raw.match(/\bHTTP\s+(\d{3})\b/i);
+    if(http){
+      return 'Technischer Fehler (HTTP '+http[1]+').';
+    }
+
+    return allowGeneric
+      ?'Technischer Fehler bei der angeforderten Aktion.'
+      :raw;
+  }
+
+  function localizeBackendMessage(value,allowGeneric=true){
+    const raw=String(value==null?'':value).trim();
+    if(!raw||raw==='auth')return raw;
+    if(currentLanguage()==='en')return raw;
+    return localizeGerman(raw,allowGeneric);
+  }
+
+  function localizePayload(value,key=''){
+    if(currentLanguage()==='en'||value==null)return value;
+    if(Array.isArray(value))return value.map(item=>localizePayload(item,''));
+    if(typeof value==='object'){
+      const copy={};
+      for(const [childKey,childValue] of Object.entries(value)){
+        copy[childKey]=localizePayload(childValue,childKey);
+      }
+      return copy;
+    }
+    if(typeof value!=='string')return value;
+
+    if(key==='error'||key==='last_auto_error'||key==='scan_warning'){
+      return localizeBackendMessage(value,true);
+    }
+    if(key==='detail'){
+      return localizeBackendMessage(value,false);
+    }
+    return value;
+  }
+
+  window.updateMonitorLocalizeBackendMessage=localizeBackendMessage;
+
+  api=async function(url,options={}){
+    try{
+      const result=await baseApi(url,options);
+      return localizePayload(result);
+    }catch(error){
+      if(!error||String(error.message||'')==='auth')throw error;
+      const translated=localizeBackendMessage(error.message,true);
+      if(translated===String(error.message||''))throw error;
+      const wrapped=new Error(translated);
+      wrapped.name=error.name||'Error';
+      for(const key of ['status','code','cause']){
+        try{
+          if(error[key]!==undefined)wrapped[key]=error[key];
+        }catch(_){}
+      }
+      throw wrapped;
+    }
+  };
 })();
 </script>
 </body>
