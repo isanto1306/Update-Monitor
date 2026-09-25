@@ -309,6 +309,17 @@ jobs:
           assert "invalidate_version_caches_for_app(find_scanned_app(stack_key))" in schedule_source
           assert "isinstance(verification_result, dict) and verification_result" in schedule_source
 
+          # v0.3.375: a manual per-app "Docker prüfen" is also an explicit fresh
+          # version check, so it must invalidate only that app before scanning.
+          app_scan_source = function_source("app_scan")
+          assert "app_item = find_scanned_app(stack_key)" in app_scan_source
+          assert "invalidate_version_caches_for_app(app_item)" in app_scan_source
+          assert "started = start_app_scan(stack_key)" in app_scan_source
+          assert (
+              app_scan_source.index("invalidate_version_caches_for_app(app_item)")
+              < app_scan_source.index("started = start_app_scan(stack_key)")
+          )
+
           # Exact follow-policy helper: channel 2 must survive and legacy :2 must recover.
           channel_fn, _ = load_function(
               "_follow_policy_tag",
