@@ -29,6 +29,12 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/sync_frontend.py
 
+      - name: Audit all five translations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/audit_translations.py
+
       - name: Validate frontend bridge syntax
         shell: bash
         run: |
@@ -55,7 +61,7 @@ jobs:
           assert isinstance(async_bridge, str)
           assert isinstance(error_bridge, str)
           assert '<script id="um-async-update-bridge-v0366">' in async_bridge
-          assert '<script id="um-error-localization-v0372">' in error_bridge
+          assert '<script id="um-error-localization-v0373">' in error_bridge
 
           Path("/tmp/um-async-update-bridge.js").write_text(
               async_bridge.split(">", 1)[1].rsplit("</script>", 1)[0],
@@ -336,26 +342,38 @@ jobs:
           assert "smoothConfirmedBackupProgress" in html
           assert "requestAnimationFrame" in html
 
-          # v0.3.372: API and action errors must be localized before the
-          # translated UI prefix inserts {error}. German mode must never append
-          # the raw English scan-lock sentence from the backend.
-          assert "um-error-localization-v0372" in html
+          # v0.3.373: API and action errors follow all five UI languages.
+          # The concrete scan-lock error reported by the user must be present
+          # in every translated form and English must remain the protocol text.
+          assert "um-error-localization-v0373" in html
           assert "updateMonitorLocalizeBackendMessage" in html
+          assert "supportedLanguages=['de','en','fr','pt','es']" in html
           assert "Warte, bis die aktuelle Update Prüfung abgeschlossen ist." in html
+          assert "Attendez la fin de la vérification actuelle des mises à jour." in html
+          assert "Aguarde até terminar a verificação de atualizações atual." in html
+          assert "Espera a que finalice la comprobación de actualizaciones actual." in html
           assert "Technischer Fehler bei der angeforderten Aktion." in html
-          assert "currentLanguage()==='en'" in html
+          assert "Erreur technique lors de l’action demandée." in html
+          assert "Erro técnico ao executar a ação solicitada." in html
+          assert "Error técnico al realizar la acción solicitada." in html
           assert "localizePayload" in html
           assert "last_auto_error" in html
 
-          # Both original UI languages must still have exactly the same
-          # translation key set.
+          # The generated audit reads the actual runtime dictionaries from the
+          # synchronized frontend. Every language must have identical keys and
+          # placeholder structure.
           audit_payload = __import__("json").loads(
               Path("translation-audit-current.json").read_text(encoding="utf-8")
           )
-          assert audit_payload.get("languages") == ["de", "en"]
-          de_keys = set((audit_payload.get("translations") or {}).get("de") or {})
-          en_keys = set((audit_payload.get("translations") or {}).get("en") or {})
-          assert de_keys == en_keys
+          languages = ["de", "en", "fr", "pt", "es"]
+          assert audit_payload.get("languages") == languages
+          assert audit_payload.get("dictionary_parity") == "ok"
+          assert audit_payload.get("placeholder_parity") == "ok"
+          translations = audit_payload.get("translations") or {}
+          reference_keys = set((translations.get("en") or {}).keys())
+          assert len(reference_keys) >= 335
+          for language in languages:
+              assert set((translations.get(language) or {}).keys()) == reference_keys
 
           # Frontend/release regression: all active version markers must agree.
           assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
@@ -380,12 +398,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- static/index.html; then
-            echo "static/index.html is already synchronized"
+          if git diff --quiet -- static/index.html translation-audit-current.json; then
+            echo "Frontend and translation audit are already synchronized"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add static/index.html
-          git commit -m "Synchronize static UI for current release"
+          git add static/index.html translation-audit-current.json
+          git commit -m "Synchronize static UI and translation audit"
           git push

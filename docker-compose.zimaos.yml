@@ -151,7 +151,7 @@ x-casaos:
   category: Others
   architectures:
     - amd64
-  version: "0.3.372"
+  version: "0.3.373"
   update_at: "2026-09-25"
   repo: https://github.com/isanto1306/Update-Monitor
   support: https://github.com/isanto1306/Update-Monitor/issues

@@ -28,7 +28,7 @@ if not isinstance(runtime_bridge, str) or "um-async-update-bridge-v0366" not in 
     raise SystemExit("Async update frontend bridge not found in backend source")
 if (
     not isinstance(error_localization_bridge, str)
-    or "um-error-localization-v0372" not in error_localization_bridge
+    or "um-error-localization-v0373" not in error_localization_bridge
 ):
     raise SystemExit("Error localization frontend bridge not found in backend source")
 
@@ -79,7 +79,7 @@ if 'id="um-async-update-bridge-v0366"' not in text:
         raise SystemExit("Frontend marker not found: closing body")
     text = text.replace("</body>", runtime_bridge + "\n</body>", 1)
 
-# v0.3.372: every user-visible backend error passes through one shared
+# v0.3.373: every user-visible backend error passes through one shared
 # localization bridge. Keep it after the async update bridge so errors raised by
 # the background-update compatibility wrapper are translated as well.
 error_bridge_pattern = re.compile(
@@ -160,6 +160,41 @@ old_en = "backupCancelRunning:'CANCEL BACKUP', backupCancelling:"
 new_en = "backupCancelRunning:'Cancel backup', backupCancelInline:'{progress} % · Cancel backup', backupCancelling:"
 if new_en not in text:
     replace_once(old_en, new_en, "English inline backup cancellation translation")
+
+# v0.3.373: backup cancellation was added after the original five-language
+# translation layer. Fill the five new keys for French, Portuguese and Spanish
+# before getUiLocale() so the normal dictionary audit sees the final runtime
+# dictionaries exactly as the browser does.
+backup_cancel_i18n_marker = "/* um-backup-cancel-i18n-v0373 */"
+if backup_cancel_i18n_marker not in text:
+    translation_insert = """/* um-backup-cancel-i18n-v0373 */
+Object.assign(translations.fr,{
+  backupCancelFailed:"Impossible d’annuler la sauvegarde : {error}",
+  backupCancelInline:"{progress} % · Annuler la sauvegarde",
+  backupCancelRunning:"Annuler la sauvegarde",
+  backupCancelled:"La sauvegarde a été annulée. La mise à jour n’a pas démarré.",
+  backupCancelling:"ANNULATION DE LA SAUVEGARDE…"
+});
+Object.assign(translations.pt,{
+  backupCancelFailed:"Não foi possível cancelar a cópia de segurança: {error}",
+  backupCancelInline:"{progress} % · Cancelar cópia de segurança",
+  backupCancelRunning:"Cancelar cópia de segurança",
+  backupCancelled:"A cópia de segurança foi cancelada. A atualização não foi iniciada.",
+  backupCancelling:"A CANCELAR CÓPIA DE SEGURANÇA…"
+});
+Object.assign(translations.es,{
+  backupCancelFailed:"No se pudo cancelar la copia de seguridad: {error}",
+  backupCancelInline:"{progress} % · Cancelar copia de seguridad",
+  backupCancelRunning:"Cancelar copia de seguridad",
+  backupCancelled:"La copia de seguridad se canceló. La actualización no se inició.",
+  backupCancelling:"CANCELANDO COPIA DE SEGURIDAD…"
+});
+
+"""
+    get_locale_marker = "function getUiLocale(){"
+    if get_locale_marker not in text:
+        raise SystemExit("Frontend marker not found: getUiLocale")
+    text = text.replace(get_locale_marker, translation_insert + get_locale_marker, 1)
 
 legacy_button = """  const backupCancelButton=`<button class="backup-cancel-running-button" type="button" data-backup-cancel-stack="${esc(app.stack_key)}" hidden>${esc(t('backupCancelRunning'))}</button>`;
 """

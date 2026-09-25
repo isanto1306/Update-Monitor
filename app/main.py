@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.372"
+VERSION = "0.3.373"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -12015,207 +12015,1025 @@ _INDEX_ASYNC_UPDATE_BRIDGE = r'''<script id="um-async-update-bridge-v0366">
 # stay stable English protocol text. The browser translates user-visible API
 # failures according to the language selected in Update Monitor so a localized
 # prefix is never followed by a raw English backend sentence.
-_INDEX_ERROR_LOCALIZATION_BRIDGE = r'''<script id="um-error-localization-v0372">
+_INDEX_ERROR_LOCALIZATION_BRIDGE = r'''<script id="um-error-localization-v0373">
 (function(){
-  if(window.__umErrorLocalizationV0372)return;
-  window.__umErrorLocalizationV0372=true;
+  if(window.__umErrorLocalizationV0373)return;
+  window.__umErrorLocalizationV0373=true;
 
   const baseApi=api;
+  const supportedLanguages=['de','en','fr','pt','es'];
 
-  const deExact=new Map(Object.entries({
-    'Authentication required':'Authentifizierung erforderlich.',
-    'Invalid username or password':'Benutzername oder Passwort ist falsch.',
-    'Too many failed login attempts. Try again later.':'Zu viele fehlgeschlagene Anmeldeversuche. Bitte später erneut versuchen.',
-    'Wait until the current update check is finished':'Warte, bis die aktuelle Update Prüfung abgeschlossen ist.',
-    'Wait until the current post-action verification scan is finished':'Warte, bis die aktuelle Prüfung nach der Aktion abgeschlossen ist.',
-    'Wait until the current verification scan is finished':'Warte, bis die aktuelle Verifizierungsprüfung abgeschlossen ist.',
-    'Wait until the post-action verification is finished':'Warte, bis die Verifizierung nach der Aktion abgeschlossen ist.',
-    'Wait until the post-update verification scan is finished':'Warte, bis die Prüfung nach dem Update abgeschlossen ist.',
-    'Wait until the post-update verification scan is finished before checking versions':'Warte mit der Versionsprüfung, bis die Prüfung nach dem Update abgeschlossen ist.',
-    'Wait until the current scan or app operation is finished before checking versions':'Warte mit der Versionsprüfung, bis die aktuelle Prüfung oder App Aktion abgeschlossen ist.',
-    'Wait until the current Docker action is finished':'Warte, bis die aktuelle Docker Aktion abgeschlossen ist.',
-    'Another app update is already running':'Ein anderes App Update läuft bereits.',
-    'Another app update or runtime action is already running':'Ein anderes App Update oder eine Container Aktion läuft bereits.',
-    'Another app update, restore or uninstall is already running':'Ein anderes App Update, eine Wiederherstellung oder Deinstallation läuft bereits.',
-    'Another app update, uninstall or runtime action is already running':'Ein anderes App Update, eine Deinstallation oder Container Aktion läuft bereits.',
-    'A scan or Docker action is already active':'Eine Prüfung oder Docker Aktion läuft bereits.',
-    'A backup is already active for this app':'Für diese App läuft bereits ein Backup.',
-    'App not found in current scan':'Die App wurde in der aktuellen Prüfung nicht gefunden.',
-    'Docker image not found in current scan':'Das Docker Image wurde in der aktuellen Prüfung nicht gefunden.',
-    'Image not found in this app':'Das Image wurde in dieser App nicht gefunden.',
-    'This app is not managed by ZimaOS Compose':'Diese App wird nicht von ZimaOS Compose verwaltet.',
-    'This app has no registry-backed Compose images':'Diese App besitzt keine Registry basierten Compose Images.',
-    'This app has no registry-backed image that can switch versions':'Diese App besitzt kein Registry Image, bei dem die Version gewechselt werden kann.',
-    'No installable update is available':'Es ist kein installierbares Update verfügbar.',
-    'This update is currently blocked by its update policy':'Dieses Update ist durch die aktuelle Update Richtlinie gesperrt.',
-    'This version is not released for installation':'Diese Version ist nicht zur Installation freigegeben.',
-    'The selected version is already configured':'Die ausgewählte Version ist bereits konfiguriert.',
-    'The selected version is no longer available':'Die ausgewählte Version ist nicht mehr verfügbar.',
-    'The selected version is not available in the current scan':'Die ausgewählte Version ist in der aktuellen Prüfung nicht verfügbar.',
-    'The selected version is not available for every image in the version group':'Die ausgewählte Version ist nicht für jedes Image dieser Versionsgruppe verfügbar.',
-    'Select a target version':'Wähle eine Zielversion aus.',
-    'No selectable version group is available':'Es ist keine auswählbare Versionsgruppe verfügbar.',
-    'Invalid backup mode':'Ungültiger Backup Modus.',
-    'Invalid automatic backup mode':'Ungültiger automatischer Backup Modus.',
-    'Invalid automatic update time':'Ungültige Uhrzeit für automatische Updates.',
-    'Invalid automatic update timezone':'Ungültige Zeitzone für automatische Updates.',
-    'Invalid automatic update weekdays':'Ungültige Wochentage für automatische Updates.',
-    'Unsupported update policy':'Nicht unterstützte Update Richtlinie.',
-    'Unsupported scan interval':'Nicht unterstütztes Prüfintervall.',
-    'Unsupported container action':'Nicht unterstützte Container Aktion.',
-    'No cancellable backup is currently running for this app':'Für diese App läuft aktuell kein abbrechbares Backup.',
-    'Backup cancellation requires an app key':'Zum Abbrechen des Backups wird eine App Kennung benötigt.',
-    'Backup requires a ZimaOS Compose app':'Für ein Backup ist eine ZimaOS Compose App erforderlich.',
-    'Backup restore requires a ZimaOS Compose app':'Für die Wiederherstellung ist eine ZimaOS Compose App erforderlich.',
-    'No backup selected':'Kein Backup ausgewählt.',
-    'No restorable backup exists for this app':'Für diese App ist kein wiederherstellbares Backup vorhanden.',
-    'The selected backup no longer exists':'Das ausgewählte Backup existiert nicht mehr.',
-    'The selected backup path is unavailable':'Der Pfad des ausgewählten Backups ist nicht verfügbar.',
-    'Backup encryption is enabled but locked. Unlock it in Settings before creating a backup.':'Die Backup Verschlüsselung ist aktiv, aber gesperrt. Entsperre sie vor dem Erstellen eines Backups in den Einstellungen.',
-    'Backup encryption is not configured':'Die Backup Verschlüsselung ist nicht eingerichtet.',
-    'Backup encryption key is invalid':'Der Schlüssel der Backup Verschlüsselung ist ungültig.',
-    'Backup encryption password is incorrect':'Das Passwort der Backup Verschlüsselung ist falsch.',
-    'Backup encryption password must contain at least 8 characters':'Das Passwort der Backup Verschlüsselung muss mindestens 8 Zeichen enthalten.',
-    'Enter a backup password with at least 8 characters':'Gib ein Backup Passwort mit mindestens 8 Zeichen ein.',
-    'Enter the backup password to unlock encryption':'Gib das Backup Passwort ein, um die Verschlüsselung zu entsperren.',
-    'This backup is encrypted. Unlock backup encryption in Settings before restoring it.':'Dieses Backup ist verschlüsselt. Entsperre die Backup Verschlüsselung vor der Wiederherstellung in den Einstellungen.',
-    'Enter a GitHub token':'Gib einen GitHub Token ein.',
-    'No GitHub token is configured':'Es ist kein GitHub Token eingerichtet.',
-    'GitHub token is too long':'Der GitHub Token ist zu lang.',
-    'GitHub token must not contain whitespace':'Der GitHub Token darf keine Leerzeichen enthalten.',
-    'GitHub rejected the token (HTTP 401)':'GitHub hat den Token abgelehnt (HTTP 401).',
-    'No Docker containers found for backup':'Für das Backup wurden keine Docker Container gefunden.',
-    'No Docker containers found for this update':'Für dieses Update wurden keine Docker Container gefunden.',
-    'No current Docker containers found for this app':'Für diese App wurden keine aktuellen Docker Container gefunden.',
-    'No verified remote digest is available for the self update':'Für das Selbst Update ist kein verifizierter Remote Digest verfügbar.',
-    'No verified alternative image source is available':'Es ist keine verifizierte alternative Image Quelle verfügbar.',
-    'The selected image source is already active':'Die ausgewählte Image Quelle ist bereits aktiv.',
-    'The selected image source is no longer available':'Die ausgewählte Image Quelle ist nicht mehr verfügbar.',
-    'The selected image source is not compatible with the current Compose configuration':'Die ausgewählte Image Quelle ist mit der aktuellen Compose Konfiguration nicht kompatibel.',
-    'The selected update channel is already active':'Der ausgewählte Update Kanal ist bereits aktiv.',
-    'The selected tag is a concrete version, not an update channel':'Der ausgewählte Tag ist eine feste Version und kein Update Kanal.',
-    'Follow mode requires a moving Docker channel':'Tag folgen benötigt einen beweglichen Docker Kanal.',
-    'Image source switching requires a quick or full backup':'Der Wechsel der Image Quelle benötigt ein Schnell Backup oder vollständiges Backup.',
-    'Update channel switching requires a quick or full backup':'Der Wechsel des Update Kanals benötigt ein Schnell Backup oder vollständiges Backup.',
-    'Image source switching requires a ZimaOS Compose app':'Der Wechsel der Image Quelle benötigt eine ZimaOS Compose App.',
-    'Compatibility warnings must be accepted before switching this image source':'Die Kompatibilitätswarnungen müssen vor dem Wechsel dieser Image Quelle bestätigt werden.',
-    'Digest-pinned images cannot be changed by this path':'Per Digest festgelegte Images können über diesen Weg nicht geändert werden.',
-    'Image is explicitly pinned by digest in Compose':'Das Image ist in Compose ausdrücklich per Digest festgelegt.',
-    'No verified remote digest and no matching local RepoDigest':'Es ist kein verifizierter Remote Digest und kein passender lokaler RepoDigest vorhanden.',
-    'Unexpected ZimaOS App Management address':'Unerwartete Adresse für ZimaOS App Management.',
-    'ZimaOS App Management URL not found':'Die URL von ZimaOS App Management wurde nicht gefunden.',
-    'ZimaOS Compose app ID is missing':'Die ZimaOS Compose App ID fehlt.',
-    'ZimaOS Compose app ID is missing for this app':'Für diese App fehlt die ZimaOS Compose App ID.',
-    'Website icon not found':'Das Website Symbol wurde nicht gefunden.',
-    'Icon source is not known':'Die Quelle des Symbols ist nicht bekannt.',
-    'Icon download is temporarily unavailable':'Der Download des Symbols ist vorübergehend nicht verfügbar.',
-    'Icon is too large':'Das Symbol ist zu groß.',
-    'Invalid icon cache key':'Ungültiger Symbol Cache Schlüssel.',
-    'Unsupported icon URL':'Nicht unterstützte Symbol URL.',
-    'Private or non-public icon hosts are not cached':'Private oder nicht öffentliche Symbol Hosts werden nicht zwischengespeichert.',
-    'Timeout':'Zeitüberschreitung.',
-    'Update failed':'Update fehlgeschlagen.',
-    'Resource not accessible by personal access token':'Diese Ressource ist mit dem aktuellen Personal Access Token nicht zugänglich.'
-  }));
+  const genericErrors={
+    de:'Technischer Fehler bei der angeforderten Aktion.',
+    en:'Technical error while performing the requested action.',
+    fr:'Erreur technique lors de l’action demandée.',
+    pt:'Erro técnico ao executar a ação solicitada.',
+    es:'Error técnico al realizar la acción solicitada.'
+  };
+  const genericHttpErrors={
+    de:'Technischer Fehler',
+    en:'Technical error',
+    fr:'Erreur technique',
+    pt:'Erro técnico',
+    es:'Error técnico'
+  };
+  const simpleTechnical={
+    'permission denied':{
+      de:'Zugriff verweigert.',en:'Permission denied.',fr:'Accès refusé.',pt:'Acesso negado.',es:'Acceso denegado.'
+    },
+    'not found':{
+      de:'Nicht gefunden.',en:'Not found.',fr:'Introuvable.',pt:'Não encontrado.',es:'No encontrado.'
+    },
+    'timeout':{
+      de:'Zeitüberschreitung.',en:'Timeout.',fr:'Délai d’attente dépassé.',pt:'Tempo limite excedido.',es:'Tiempo de espera agotado.'
+    },
+    'connection refused':{
+      de:'Verbindung abgelehnt.',en:'Connection refused.',fr:'Connexion refusée.',pt:'Ligação recusada.',es:'Conexión rechazada.'
+    },
+    'network error':{
+      de:'Netzwerkfehler.',en:'Network error.',fr:'Erreur réseau.',pt:'Erro de rede.',es:'Error de red.'
+    },
+    'network unreachable':{
+      de:'Netzwerk nicht erreichbar.',en:'Network unreachable.',fr:'Réseau inaccessible.',pt:'Rede inacessível.',es:'Red inaccesible.'
+    },
+    'resource not accessible by personal access token':{
+      de:'Diese Ressource ist mit dem aktuellen Personal Access Token nicht zugänglich.',
+      en:'Resource not accessible by personal access token.',
+      fr:'Cette ressource n’est pas accessible avec le Personal Access Token actuel.',
+      pt:'Este recurso não está acessível com o Personal Access Token atual.',
+      es:'Este recurso no es accesible con el Personal Access Token actual.'
+    }
+  };
 
-  const dePatterns=[
-    [/^GitHub rejected the request \(HTTP (\d+)\):\s*(.*)$/i,(m)=>'GitHub hat die Anfrage abgelehnt (HTTP '+m[1]+'): '+localizeGerman(m[2],false)],
-    [/^GitHub token test failed \(HTTP (\d+)\)$/i,(m)=>'GitHub Token Test fehlgeschlagen (HTTP '+m[1]+').'],
-    [/^GitHub is not reachable:\s*(.*)$/i,(m)=>'GitHub ist nicht erreichbar: '+safeTechnicalDetail(m[1])],
-    [/^ZimaOS App Management not reachable:\s*(.*)$/i,(m)=>'ZimaOS App Management ist nicht erreichbar: '+safeTechnicalDetail(m[1])],
-    [/^ZimaOS App Management HTTP (\d+)(?::\s*(.*))?$/i,(m)=>'ZimaOS App Management Fehler (HTTP '+m[1]+')'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
-    [/^ZimaOS compose apply failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS Compose konnte nicht angewendet werden (HTTP '+m[1]+').'],
-    [/^ZimaOS compose read failed \(HTTP (\d+)\)(?::\s*(.*))?$/i,(m)=>'ZimaOS Compose konnte nicht gelesen werden (HTTP '+m[1]+')'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
-    [/^ZimaOS app uninstall failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS konnte die App nicht deinstallieren (HTTP '+m[1]+').'],
-    [/^ZimaOS app status change failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS konnte den App Status nicht ändern (HTTP '+m[1]+').'],
-    [/^ZimaOS container recreate failed \(HTTP (\d+)\)$/i,(m)=>'ZimaOS konnte den Container nicht neu erstellen (HTTP '+m[1]+').'],
-    [/^Docker pull failed for (.+?):\s*(.*)$/i,(m)=>'Docker Pull für '+m[1]+' fehlgeschlagen: '+safeTechnicalDetail(m[2])],
-    [/^Could not start update worker:\s*(.*)$/i,(m)=>'Der Update Prozess konnte nicht gestartet werden: '+safeTechnicalDetail(m[1])],
-    [/^Could not stop (.+?) for full backup:\s*(.*)$/i,(m)=>m[1]+' konnte für das vollständige Backup nicht gestoppt werden: '+safeTechnicalDetail(m[2])],
-    [/^Could not restore running state for (.+?):\s*(.*)$/i,(m)=>'Der laufende Zustand von '+m[1]+' konnte nicht wiederhergestellt werden: '+safeTechnicalDetail(m[2])],
-    [/^Could not restore stopped state for (.+?):\s*(.*)$/i,(m)=>'Der gestoppte Zustand von '+m[1]+' konnte nicht wiederhergestellt werden: '+safeTechnicalDetail(m[2])],
-    [/^Could not start container (.+?):\s*(.*)$/i,(m)=>'Container '+m[1]+' konnte nicht gestartet werden: '+safeTechnicalDetail(m[2])],
-    [/^Could not read registry tags for this image:\s*(.*)$/i,(m)=>'Die Registry Tags für dieses Image konnten nicht gelesen werden: '+safeTechnicalDetail(m[1])],
-    [/^Could not verify target version (.+?) in the registry(?:\s*(.*))?$/i,(m)=>'Die Zielversion '+m[1]+' konnte in der Registry nicht verifiziert werden'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
-    [/^No verified remote digest available for (.+)$/i,(m)=>'Für '+m[1]+' ist kein verifizierter Remote Digest verfügbar.'],
-    [/^No verified target digest is available for (.+)$/i,(m)=>'Für '+m[1]+' ist kein verifizierter Ziel Digest verfügbar.'],
-    [/^Container (.+?) did not reach the verified target digest(?:\s*(.*))?$/i,(m)=>'Container '+m[1]+' hat den verifizierten Ziel Digest nicht erreicht'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
-    [/^Container (.+?) did not reach the verified target image(?:\s*(.*))?$/i,(m)=>'Container '+m[1]+' hat das verifizierte Ziel Image nicht erreicht'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
-    [/^Update reached the target image, but (.+?) is not running(?:\s*(.*))?$/i,(m)=>'Das Update hat das Ziel Image erreicht, aber '+m[1]+' läuft nicht'+(m[2]?': '+safeTechnicalDetail(m[2]):'.')],
-    [/^Update succeeded, but (.+?) did not return to a stopped state$/i,(m)=>'Das Update war erfolgreich, aber '+m[1]+' wurde danach nicht wieder gestoppt.'],
-    [/^Version update failed:\s*(.*)$/i,(m)=>'Versions Update fehlgeschlagen: '+safeTechnicalDetail(m[1])],
-    [/^Version update failed and the original Compose configuration was restored:\s*(.*)$/i,(m)=>'Versions Update fehlgeschlagen. Die ursprüngliche Compose Konfiguration wurde wiederhergestellt: '+safeTechnicalDetail(m[1])],
-    [/^Backup could not safely restore all stopped containers:\s*(.*)$/i,(m)=>'Das Backup konnte nicht alle zuvor gestoppten Container sicher wiederherstellen: '+safeTechnicalDetail(m[1])],
-    [/^Full backup failed while copying (.+?):\s*(.*)$/i,(m)=>'Vollständiges Backup beim Kopieren von '+m[1]+' fehlgeschlagen: '+safeTechnicalDetail(m[2])],
-    [/^Could not apply backup settings:\s*(.*)$/i,(m)=>'Backup Einstellungen konnten nicht übernommen werden: '+safeTechnicalDetail(m[1])],
-    [/^Icon download failed:\s*(.*)$/i,(m)=>'Download des Symbols fehlgeschlagen: '+safeTechnicalDetail(m[1])],
-    [/^Unsupported icon content type:\s*(.*)$/i,(m)=>'Nicht unterstützter Symbol Inhaltstyp: '+safeTechnicalDetail(m[1])],
-    [/^Another app (.+?) is already running$/i,(m)=>'Eine andere App Aktion läuft bereits.'],
-    [/^Cannot connect to the Docker daemon.*$/i,()=> 'Der Docker Daemon ist nicht erreichbar. Prüfe, ob der Docker Dienst läuft.'],
-    [/^Error response from daemon:\s*(.*)$/i,(m)=>'Docker Fehler: '+safeTechnicalDetail(m[1])],
-    [/^HTTP (\d+)(?::\s*(.*))?$/i,(m)=>'HTTP Fehler '+m[1]+(m[2]?': '+safeTechnicalDetail(m[2]):'.')]
-  ];
+  const exact={
+    'Authentication required':{
+      de:'Authentifizierung erforderlich.',
+      fr:'Authentification requise.',
+      pt:'Autenticação necessária.',
+      es:'Se requiere autenticación.'
+    },
+    'Invalid username or password':{
+      de:'Benutzername oder Passwort ist falsch.',
+      fr:'Nom d’utilisateur ou mot de passe incorrect.',
+      pt:'Nome de utilizador ou palavra-passe incorretos.',
+      es:'El nombre de usuario o la contraseña son incorrectos.'
+    },
+    'Too many failed login attempts. Try again later.':{
+      de:'Zu viele fehlgeschlagene Anmeldeversuche. Bitte später erneut versuchen.',
+      fr:'Trop de tentatives de connexion ont échoué. Réessayez plus tard.',
+      pt:'Demasiadas tentativas de início de sessão falharam. Tente novamente mais tarde.',
+      es:'Demasiados intentos de inicio de sesión fallidos. Inténtalo de nuevo más tarde.'
+    },
+    'Wait until the current update check is finished':{
+      de:'Warte, bis die aktuelle Update Prüfung abgeschlossen ist.',
+      fr:'Attendez la fin de la vérification actuelle des mises à jour.',
+      pt:'Aguarde até terminar a verificação de atualizações atual.',
+      es:'Espera a que finalice la comprobación de actualizaciones actual.'
+    },
+    'Wait until the current post-action verification scan is finished':{
+      de:'Warte, bis die aktuelle Prüfung nach der Aktion abgeschlossen ist.',
+      fr:'Attendez la fin de la vérification actuelle après l’action.',
+      pt:'Aguarde até terminar a verificação atual após a ação.',
+      es:'Espera a que finalice la comprobación actual posterior a la acción.'
+    },
+    'Wait until the current verification scan is finished':{
+      de:'Warte, bis die aktuelle Verifizierungsprüfung abgeschlossen ist.',
+      fr:'Attendez la fin de la vérification actuelle.',
+      pt:'Aguarde até terminar a verificação atual.',
+      es:'Espera a que finalice la verificación actual.'
+    },
+    'Wait until the post-action verification is finished':{
+      de:'Warte, bis die Verifizierung nach der Aktion abgeschlossen ist.',
+      fr:'Attendez la fin de la vérification après l’action.',
+      pt:'Aguarde até terminar a verificação após a ação.',
+      es:'Espera a que finalice la verificación posterior a la acción.'
+    },
+    'Wait until the post-update verification scan is finished':{
+      de:'Warte, bis die Prüfung nach dem Update abgeschlossen ist.',
+      fr:'Attendez la fin de la vérification après la mise à jour.',
+      pt:'Aguarde até terminar a verificação após a atualização.',
+      es:'Espera a que finalice la comprobación posterior a la actualización.'
+    },
+    'Wait until the post-update verification scan is finished before checking versions':{
+      de:'Warte mit der Versionsprüfung, bis die Prüfung nach dem Update abgeschlossen ist.',
+      fr:'Attendez la fin de la vérification après la mise à jour avant de vérifier les versions.',
+      pt:'Aguarde até terminar a verificação após a atualização antes de verificar as versões.',
+      es:'Espera a que finalice la comprobación posterior a la actualización antes de comprobar las versiones.'
+    },
+    'Wait until the current scan or app operation is finished before checking versions':{
+      de:'Warte mit der Versionsprüfung, bis die aktuelle Prüfung oder App Aktion abgeschlossen ist.',
+      fr:'Attendez la fin de la vérification ou de l’action en cours avant de vérifier les versions.',
+      pt:'Aguarde até terminar a verificação ou ação da aplicação atual antes de verificar as versões.',
+      es:'Espera a que finalice la comprobación o la acción actual de la aplicación antes de comprobar las versiones.'
+    },
+    'Wait until the current Docker action is finished':{
+      de:'Warte, bis die aktuelle Docker Aktion abgeschlossen ist.',
+      fr:'Attendez la fin de l’action Docker en cours.',
+      pt:'Aguarde até terminar a ação Docker atual.',
+      es:'Espera a que finalice la acción de Docker actual.'
+    },
+    'Another app update is already running':{
+      de:'Ein anderes App Update läuft bereits.',
+      fr:'Une autre mise à jour d’application est déjà en cours.',
+      pt:'Já está em curso outra atualização de aplicação.',
+      es:'Ya hay otra actualización de aplicación en curso.'
+    },
+    'Another app update or runtime action is already running':{
+      de:'Ein anderes App Update oder eine Container Aktion läuft bereits.',
+      fr:'Une autre mise à jour d’application ou action de conteneur est déjà en cours.',
+      pt:'Já está em curso outra atualização de aplicação ou ação de contentor.',
+      es:'Ya hay otra actualización de aplicación o acción de contenedor en curso.'
+    },
+    'Another app update, restore or uninstall is already running':{
+      de:'Ein anderes App Update, eine Wiederherstellung oder Deinstallation läuft bereits.',
+      fr:'Une autre mise à jour, restauration ou désinstallation est déjà en cours.',
+      pt:'Já está em curso outra atualização, reposição ou desinstalação.',
+      es:'Ya hay otra actualización, restauración o desinstalación en curso.'
+    },
+    'Another app update, uninstall or runtime action is already running':{
+      de:'Ein anderes App Update, eine Deinstallation oder Container Aktion läuft bereits.',
+      fr:'Une autre mise à jour, désinstallation ou action de conteneur est déjà en cours.',
+      pt:'Já está em curso outra atualização, desinstalação ou ação de contentor.',
+      es:'Ya hay otra actualización, desinstalación o acción de contenedor en curso.'
+    },
+    'A scan or Docker action is already active':{
+      de:'Eine Prüfung oder Docker Aktion läuft bereits.',
+      fr:'Une vérification ou une action Docker est déjà en cours.',
+      pt:'Já está em curso uma verificação ou ação Docker.',
+      es:'Ya hay una comprobación o acción de Docker en curso.'
+    },
+    'A backup is already active for this app':{
+      de:'Für diese App läuft bereits ein Backup.',
+      fr:'Une sauvegarde est déjà en cours pour cette application.',
+      pt:'Já está em curso uma cópia de segurança para esta aplicação.',
+      es:'Ya hay una copia de seguridad en curso para esta aplicación.'
+    },
+    'App not found in current scan':{
+      de:'Die App wurde in der aktuellen Prüfung nicht gefunden.',
+      fr:'L’application n’a pas été trouvée dans la vérification actuelle.',
+      pt:'A aplicação não foi encontrada na verificação atual.',
+      es:'La aplicación no se encontró en la comprobación actual.'
+    },
+    'Docker image not found in current scan':{
+      de:'Das Docker Image wurde in der aktuellen Prüfung nicht gefunden.',
+      fr:'L’image Docker n’a pas été trouvée dans la vérification actuelle.',
+      pt:'A imagem Docker não foi encontrada na verificação atual.',
+      es:'La imagen Docker no se encontró en la comprobación actual.'
+    },
+    'Image not found in this app':{
+      de:'Das Image wurde in dieser App nicht gefunden.',
+      fr:'L’image n’a pas été trouvée dans cette application.',
+      pt:'A imagem não foi encontrada nesta aplicação.',
+      es:'La imagen no se encontró en esta aplicación.'
+    },
+    'This app is not managed by ZimaOS Compose':{
+      de:'Diese App wird nicht von ZimaOS Compose verwaltet.',
+      fr:'Cette application n’est pas gérée par ZimaOS Compose.',
+      pt:'Esta aplicação não é gerida pelo ZimaOS Compose.',
+      es:'Esta aplicación no está gestionada por ZimaOS Compose.'
+    },
+    'This app has no registry-backed Compose images':{
+      de:'Diese App besitzt keine Registry basierten Compose Images.',
+      fr:'Cette application ne possède aucune image Compose provenant d’un registre.',
+      pt:'Esta aplicação não possui imagens Compose provenientes de um registry.',
+      es:'Esta aplicación no tiene imágenes Compose procedentes de un registro.'
+    },
+    'This app has no registry-backed image that can switch versions':{
+      de:'Diese App besitzt kein Registry Image, bei dem die Version gewechselt werden kann.',
+      fr:'Cette application ne possède aucune image de registre permettant de changer de version.',
+      pt:'Esta aplicação não possui nenhuma imagem de registry que permita mudar de versão.',
+      es:'Esta aplicación no tiene ninguna imagen de registro que permita cambiar de versión.'
+    },
+    'No installable update is available':{
+      de:'Es ist kein installierbares Update verfügbar.',
+      fr:'Aucune mise à jour installable n’est disponible.',
+      pt:'Não está disponível nenhuma atualização instalável.',
+      es:'No hay ninguna actualización instalable disponible.'
+    },
+    'This update is currently blocked by its update policy':{
+      de:'Dieses Update ist durch die aktuelle Update Richtlinie gesperrt.',
+      fr:'Cette mise à jour est actuellement bloquée par sa politique de mise à jour.',
+      pt:'Esta atualização está atualmente bloqueada pela respetiva política de atualização.',
+      es:'Esta actualización está bloqueada actualmente por su política de actualización.'
+    },
+    'This version is not released for installation':{
+      de:'Diese Version ist nicht zur Installation freigegeben.',
+      fr:'Cette version n’est pas autorisée pour l’installation.',
+      pt:'Esta versão não está autorizada para instalação.',
+      es:'Esta versión no está autorizada para su instalación.'
+    },
+    'The selected version is already configured':{
+      de:'Die ausgewählte Version ist bereits konfiguriert.',
+      fr:'La version sélectionnée est déjà configurée.',
+      pt:'A versão selecionada já está configurada.',
+      es:'La versión seleccionada ya está configurada.'
+    },
+    'The selected version is no longer available':{
+      de:'Die ausgewählte Version ist nicht mehr verfügbar.',
+      fr:'La version sélectionnée n’est plus disponible.',
+      pt:'A versão selecionada já não está disponível.',
+      es:'La versión seleccionada ya no está disponible.'
+    },
+    'The selected version is not available in the current scan':{
+      de:'Die ausgewählte Version ist in der aktuellen Prüfung nicht verfügbar.',
+      fr:'La version sélectionnée n’est pas disponible dans la vérification actuelle.',
+      pt:'A versão selecionada não está disponível na verificação atual.',
+      es:'La versión seleccionada no está disponible en la comprobación actual.'
+    },
+    'The selected version is not available for every image in the version group':{
+      de:'Die ausgewählte Version ist nicht für jedes Image dieser Versionsgruppe verfügbar.',
+      fr:'La version sélectionnée n’est pas disponible pour toutes les images de ce groupe de versions.',
+      pt:'A versão selecionada não está disponível para todas as imagens deste grupo de versões.',
+      es:'La versión seleccionada no está disponible para todas las imágenes de este grupo de versiones.'
+    },
+    'Select a target version':{
+      de:'Wähle eine Zielversion aus.',
+      fr:'Sélectionnez une version cible.',
+      pt:'Selecione uma versão de destino.',
+      es:'Selecciona una versión de destino.'
+    },
+    'No selectable version group is available':{
+      de:'Es ist keine auswählbare Versionsgruppe verfügbar.',
+      fr:'Aucun groupe de versions sélectionnable n’est disponible.',
+      pt:'Não está disponível nenhum grupo de versões selecionável.',
+      es:'No hay ningún grupo de versiones seleccionable disponible.'
+    },
+    'Invalid backup mode':{
+      de:'Ungültiger Backup Modus.',
+      fr:'Mode de sauvegarde non valide.',
+      pt:'Modo de cópia de segurança inválido.',
+      es:'Modo de copia de seguridad no válido.'
+    },
+    'Invalid automatic backup mode':{
+      de:'Ungültiger automatischer Backup Modus.',
+      fr:'Mode de sauvegarde automatique non valide.',
+      pt:'Modo de cópia de segurança automática inválido.',
+      es:'Modo de copia de seguridad automática no válido.'
+    },
+    'Invalid automatic update time':{
+      de:'Ungültige Uhrzeit für automatische Updates.',
+      fr:'Heure non valide pour les mises à jour automatiques.',
+      pt:'Hora inválida para atualizações automáticas.',
+      es:'Hora no válida para las actualizaciones automáticas.'
+    },
+    'Invalid automatic update timezone':{
+      de:'Ungültige Zeitzone für automatische Updates.',
+      fr:'Fuseau horaire non valide pour les mises à jour automatiques.',
+      pt:'Fuso horário inválido para atualizações automáticas.',
+      es:'Zona horaria no válida para las actualizaciones automáticas.'
+    },
+    'Invalid automatic update weekdays':{
+      de:'Ungültige Wochentage für automatische Updates.',
+      fr:'Jours de la semaine non valides pour les mises à jour automatiques.',
+      pt:'Dias da semana inválidos para atualizações automáticas.',
+      es:'Días de la semana no válidos para las actualizaciones automáticas.'
+    },
+    'Unsupported update policy':{
+      de:'Nicht unterstützte Update Richtlinie.',
+      fr:'Politique de mise à jour non prise en charge.',
+      pt:'Política de atualização não suportada.',
+      es:'Política de actualización no compatible.'
+    },
+    'Unsupported scan interval':{
+      de:'Nicht unterstütztes Prüfintervall.',
+      fr:'Intervalle de vérification non pris en charge.',
+      pt:'Intervalo de verificação não suportado.',
+      es:'Intervalo de comprobación no compatible.'
+    },
+    'Unsupported container action':{
+      de:'Nicht unterstützte Container Aktion.',
+      fr:'Action de conteneur non prise en charge.',
+      pt:'Ação de contentor não suportada.',
+      es:'Acción de contenedor no compatible.'
+    },
+    'No cancellable backup is currently running for this app':{
+      de:'Für diese App läuft aktuell kein abbrechbares Backup.',
+      fr:'Aucune sauvegarde pouvant être annulée n’est actuellement en cours pour cette application.',
+      pt:'Não está atualmente em curso nenhuma cópia de segurança cancelável para esta aplicação.',
+      es:'Actualmente no hay ninguna copia de seguridad cancelable en curso para esta aplicación.'
+    },
+    'Backup cancellation requires an app key':{
+      de:'Zum Abbrechen des Backups wird eine App Kennung benötigt.',
+      fr:'L’annulation de la sauvegarde nécessite un identifiant d’application.',
+      pt:'O cancelamento da cópia de segurança requer uma identificação da aplicação.',
+      es:'La cancelación de la copia de seguridad requiere un identificador de aplicación.'
+    },
+    'Backup requires a ZimaOS Compose app':{
+      de:'Für ein Backup ist eine ZimaOS Compose App erforderlich.',
+      fr:'Une sauvegarde nécessite une application ZimaOS Compose.',
+      pt:'Uma cópia de segurança requer uma aplicação ZimaOS Compose.',
+      es:'Una copia de seguridad requiere una aplicación ZimaOS Compose.'
+    },
+    'Backup restore requires a ZimaOS Compose app':{
+      de:'Für die Wiederherstellung ist eine ZimaOS Compose App erforderlich.',
+      fr:'La restauration nécessite une application ZimaOS Compose.',
+      pt:'A reposição requer uma aplicação ZimaOS Compose.',
+      es:'La restauración requiere una aplicación ZimaOS Compose.'
+    },
+    'No backup selected':{
+      de:'Kein Backup ausgewählt.',
+      fr:'Aucune sauvegarde sélectionnée.',
+      pt:'Nenhuma cópia de segurança selecionada.',
+      es:'No se ha seleccionado ninguna copia de seguridad.'
+    },
+    'No restorable backup exists for this app':{
+      de:'Für diese App ist kein wiederherstellbares Backup vorhanden.',
+      fr:'Aucune sauvegarde restaurable n’existe pour cette application.',
+      pt:'Não existe nenhuma cópia de segurança restaurável para esta aplicação.',
+      es:'No existe ninguna copia de seguridad restaurable para esta aplicación.'
+    },
+    'The selected backup no longer exists':{
+      de:'Das ausgewählte Backup existiert nicht mehr.',
+      fr:'La sauvegarde sélectionnée n’existe plus.',
+      pt:'A cópia de segurança selecionada já não existe.',
+      es:'La copia de seguridad seleccionada ya no existe.'
+    },
+    'The selected backup path is unavailable':{
+      de:'Der Pfad des ausgewählten Backups ist nicht verfügbar.',
+      fr:'Le chemin de la sauvegarde sélectionnée n’est pas disponible.',
+      pt:'O caminho da cópia de segurança selecionada não está disponível.',
+      es:'La ruta de la copia de seguridad seleccionada no está disponible.'
+    },
+    'Backup encryption is enabled but locked. Unlock it in Settings before creating a backup.':{
+      de:'Die Backup Verschlüsselung ist aktiv, aber gesperrt. Entsperre sie vor dem Erstellen eines Backups in den Einstellungen.',
+      fr:'Le chiffrement des sauvegardes est activé mais verrouillé. Déverrouillez-le dans les paramètres avant de créer une sauvegarde.',
+      pt:'A encriptação das cópias de segurança está ativa, mas bloqueada. Desbloqueie-a nas definições antes de criar uma cópia de segurança.',
+      es:'El cifrado de las copias de seguridad está activo, pero bloqueado. Desbloquéalo en los ajustes antes de crear una copia de seguridad.'
+    },
+    'Backup encryption is not configured':{
+      de:'Die Backup Verschlüsselung ist nicht eingerichtet.',
+      fr:'Le chiffrement des sauvegardes n’est pas configuré.',
+      pt:'A encriptação das cópias de segurança não está configurada.',
+      es:'El cifrado de las copias de seguridad no está configurado.'
+    },
+    'Backup encryption key is invalid':{
+      de:'Der Schlüssel der Backup Verschlüsselung ist ungültig.',
+      fr:'La clé de chiffrement de la sauvegarde n’est pas valide.',
+      pt:'A chave de encriptação da cópia de segurança é inválida.',
+      es:'La clave de cifrado de la copia de seguridad no es válida.'
+    },
+    'Backup encryption password is incorrect':{
+      de:'Das Passwort der Backup Verschlüsselung ist falsch.',
+      fr:'Le mot de passe de chiffrement de la sauvegarde est incorrect.',
+      pt:'A palavra-passe de encriptação da cópia de segurança está incorreta.',
+      es:'La contraseña de cifrado de la copia de seguridad es incorrecta.'
+    },
+    'Backup encryption password must contain at least 8 characters':{
+      de:'Das Passwort der Backup Verschlüsselung muss mindestens 8 Zeichen enthalten.',
+      fr:'Le mot de passe de chiffrement de la sauvegarde doit contenir au moins 8 caractères.',
+      pt:'A palavra-passe de encriptação da cópia de segurança deve ter pelo menos 8 caracteres.',
+      es:'La contraseña de cifrado de la copia de seguridad debe tener al menos 8 caracteres.'
+    },
+    'Enter a backup password with at least 8 characters':{
+      de:'Gib ein Backup Passwort mit mindestens 8 Zeichen ein.',
+      fr:'Saisissez un mot de passe de sauvegarde d’au moins 8 caractères.',
+      pt:'Introduza uma palavra-passe de cópia de segurança com pelo menos 8 caracteres.',
+      es:'Introduce una contraseña de copia de seguridad de al menos 8 caracteres.'
+    },
+    'Enter the backup password to unlock encryption':{
+      de:'Gib das Backup Passwort ein, um die Verschlüsselung zu entsperren.',
+      fr:'Saisissez le mot de passe de sauvegarde pour déverrouiller le chiffrement.',
+      pt:'Introduza a palavra-passe da cópia de segurança para desbloquear a encriptação.',
+      es:'Introduce la contraseña de la copia de seguridad para desbloquear el cifrado.'
+    },
+    'This backup is encrypted. Unlock backup encryption in Settings before restoring it.':{
+      de:'Dieses Backup ist verschlüsselt. Entsperre die Backup Verschlüsselung vor der Wiederherstellung in den Einstellungen.',
+      fr:'Cette sauvegarde est chiffrée. Déverrouillez le chiffrement dans les paramètres avant de la restaurer.',
+      pt:'Esta cópia de segurança está encriptada. Desbloqueie a encriptação nas definições antes de a repor.',
+      es:'Esta copia de seguridad está cifrada. Desbloquea el cifrado en los ajustes antes de restaurarla.'
+    },
+    'Enter a GitHub token':{
+      de:'Gib einen GitHub Token ein.',
+      fr:'Saisissez un jeton GitHub.',
+      pt:'Introduza um token GitHub.',
+      es:'Introduce un token de GitHub.'
+    },
+    'No GitHub token is configured':{
+      de:'Es ist kein GitHub Token eingerichtet.',
+      fr:'Aucun jeton GitHub n’est configuré.',
+      pt:'Não está configurado nenhum token GitHub.',
+      es:'No hay ningún token de GitHub configurado.'
+    },
+    'GitHub token is too long':{
+      de:'Der GitHub Token ist zu lang.',
+      fr:'Le jeton GitHub est trop long.',
+      pt:'O token GitHub é demasiado longo.',
+      es:'El token de GitHub es demasiado largo.'
+    },
+    'GitHub token must not contain whitespace':{
+      de:'Der GitHub Token darf keine Leerzeichen enthalten.',
+      fr:'Le jeton GitHub ne doit pas contenir d’espaces.',
+      pt:'O token GitHub não pode conter espaços.',
+      es:'El token de GitHub no debe contener espacios.'
+    },
+    'GitHub rejected the token (HTTP 401)':{
+      de:'GitHub hat den Token abgelehnt (HTTP 401).',
+      fr:'GitHub a refusé le jeton (HTTP 401).',
+      pt:'O GitHub rejeitou o token (HTTP 401).',
+      es:'GitHub rechazó el token (HTTP 401).'
+    },
+    'No Docker containers found for backup':{
+      de:'Für das Backup wurden keine Docker Container gefunden.',
+      fr:'Aucun conteneur Docker n’a été trouvé pour la sauvegarde.',
+      pt:'Não foram encontrados contentores Docker para a cópia de segurança.',
+      es:'No se encontraron contenedores Docker para la copia de seguridad.'
+    },
+    'No Docker containers found for this update':{
+      de:'Für dieses Update wurden keine Docker Container gefunden.',
+      fr:'Aucun conteneur Docker n’a été trouvé pour cette mise à jour.',
+      pt:'Não foram encontrados contentores Docker para esta atualização.',
+      es:'No se encontraron contenedores Docker para esta actualización.'
+    },
+    'No current Docker containers found for this app':{
+      de:'Für diese App wurden keine aktuellen Docker Container gefunden.',
+      fr:'Aucun conteneur Docker actuel n’a été trouvé pour cette application.',
+      pt:'Não foram encontrados contentores Docker atuais para esta aplicação.',
+      es:'No se encontraron contenedores Docker actuales para esta aplicación.'
+    },
+    'No verified remote digest is available for the self update':{
+      de:'Für das Selbst Update ist kein verifizierter Remote Digest verfügbar.',
+      fr:'Aucun digest distant vérifié n’est disponible pour l’auto mise à jour.',
+      pt:'Não está disponível nenhum digest remoto verificado para a auto atualização.',
+      es:'No hay ningún digest remoto verificado disponible para la autoactualización.'
+    },
+    'No verified alternative image source is available':{
+      de:'Es ist keine verifizierte alternative Image Quelle verfügbar.',
+      fr:'Aucune source d’image alternative vérifiée n’est disponible.',
+      pt:'Não está disponível nenhuma fonte de imagem alternativa verificada.',
+      es:'No hay ninguna fuente de imagen alternativa verificada disponible.'
+    },
+    'The selected image source is already active':{
+      de:'Die ausgewählte Image Quelle ist bereits aktiv.',
+      fr:'La source d’image sélectionnée est déjà active.',
+      pt:'A fonte de imagem selecionada já está ativa.',
+      es:'La fuente de imagen seleccionada ya está activa.'
+    },
+    'The selected image source is no longer available':{
+      de:'Die ausgewählte Image Quelle ist nicht mehr verfügbar.',
+      fr:'La source d’image sélectionnée n’est plus disponible.',
+      pt:'A fonte de imagem selecionada já não está disponível.',
+      es:'La fuente de imagen seleccionada ya no está disponible.'
+    },
+    'The selected image source is not compatible with the current Compose configuration':{
+      de:'Die ausgewählte Image Quelle ist mit der aktuellen Compose Konfiguration nicht kompatibel.',
+      fr:'La source d’image sélectionnée n’est pas compatible avec la configuration Compose actuelle.',
+      pt:'A fonte de imagem selecionada não é compatível com a configuração Compose atual.',
+      es:'La fuente de imagen seleccionada no es compatible con la configuración Compose actual.'
+    },
+    'The selected update channel is already active':{
+      de:'Der ausgewählte Update Kanal ist bereits aktiv.',
+      fr:'Le canal de mise à jour sélectionné est déjà actif.',
+      pt:'O canal de atualização selecionado já está ativo.',
+      es:'El canal de actualización seleccionado ya está activo.'
+    },
+    'The selected tag is a concrete version, not an update channel':{
+      de:'Der ausgewählte Tag ist eine feste Version und kein Update Kanal.',
+      fr:'Le tag sélectionné est une version précise et non un canal de mise à jour.',
+      pt:'A tag selecionada é uma versão concreta e não um canal de atualização.',
+      es:'La etiqueta seleccionada es una versión concreta y no un canal de actualización.'
+    },
+    'Follow mode requires a moving Docker channel':{
+      de:'Tag folgen benötigt einen beweglichen Docker Kanal.',
+      fr:'Le mode de suivi nécessite un canal Docker évolutif.',
+      pt:'O modo de seguimento requer um canal Docker variável.',
+      es:'El modo de seguimiento requiere un canal Docker variable.'
+    },
+    'Image source switching requires a quick or full backup':{
+      de:'Der Wechsel der Image Quelle benötigt ein Schnell Backup oder vollständiges Backup.',
+      fr:'Le changement de source d’image nécessite une sauvegarde rapide ou complète.',
+      pt:'A mudança da fonte de imagem requer uma cópia de segurança rápida ou completa.',
+      es:'El cambio de fuente de imagen requiere una copia de seguridad rápida o completa.'
+    },
+    'Update channel switching requires a quick or full backup':{
+      de:'Der Wechsel des Update Kanals benötigt ein Schnell Backup oder vollständiges Backup.',
+      fr:'Le changement de canal de mise à jour nécessite une sauvegarde rapide ou complète.',
+      pt:'A mudança do canal de atualização requer uma cópia de segurança rápida ou completa.',
+      es:'El cambio del canal de actualización requiere una copia de seguridad rápida o completa.'
+    },
+    'Image source switching requires a ZimaOS Compose app':{
+      de:'Der Wechsel der Image Quelle benötigt eine ZimaOS Compose App.',
+      fr:'Le changement de source d’image nécessite une application ZimaOS Compose.',
+      pt:'A mudança da fonte de imagem requer uma aplicação ZimaOS Compose.',
+      es:'El cambio de fuente de imagen requiere una aplicación ZimaOS Compose.'
+    },
+    'Compatibility warnings must be accepted before switching this image source':{
+      de:'Die Kompatibilitätswarnungen müssen vor dem Wechsel dieser Image Quelle bestätigt werden.',
+      fr:'Les avertissements de compatibilité doivent être acceptés avant de changer cette source d’image.',
+      pt:'Os avisos de compatibilidade têm de ser aceites antes de mudar esta fonte de imagem.',
+      es:'Las advertencias de compatibilidad deben aceptarse antes de cambiar esta fuente de imagen.'
+    },
+    'Digest-pinned images cannot be changed by this path':{
+      de:'Per Digest festgelegte Images können über diesen Weg nicht geändert werden.',
+      fr:'Les images épinglées par digest ne peuvent pas être modifiées par cette méthode.',
+      pt:'As imagens fixadas por digest não podem ser alteradas por este método.',
+      es:'Las imágenes fijadas por digest no pueden modificarse por este método.'
+    },
+    'Image is explicitly pinned by digest in Compose':{
+      de:'Das Image ist in Compose ausdrücklich per Digest festgelegt.',
+      fr:'L’image est explicitement épinglée par digest dans Compose.',
+      pt:'A imagem está explicitamente fixada por digest no Compose.',
+      es:'La imagen está fijada explícitamente por digest en Compose.'
+    },
+    'No verified remote digest and no matching local RepoDigest':{
+      de:'Es ist kein verifizierter Remote Digest und kein passender lokaler RepoDigest vorhanden.',
+      fr:'Aucun digest distant vérifié ni RepoDigest local correspondant n’est disponible.',
+      pt:'Não está disponível nenhum digest remoto verificado nem RepoDigest local correspondente.',
+      es:'No hay ningún digest remoto verificado ni RepoDigest local coincidente.'
+    },
+    'Unexpected ZimaOS App Management address':{
+      de:'Unerwartete Adresse für ZimaOS App Management.',
+      fr:'Adresse inattendue pour ZimaOS App Management.',
+      pt:'Endereço inesperado do ZimaOS App Management.',
+      es:'Dirección inesperada de ZimaOS App Management.'
+    },
+    'ZimaOS App Management URL not found':{
+      de:'Die URL von ZimaOS App Management wurde nicht gefunden.',
+      fr:'L’URL de ZimaOS App Management est introuvable.',
+      pt:'O URL do ZimaOS App Management não foi encontrado.',
+      es:'No se encontró la URL de ZimaOS App Management.'
+    },
+    'ZimaOS Compose app ID is missing':{
+      de:'Die ZimaOS Compose App ID fehlt.',
+      fr:'L’identifiant de l’application ZimaOS Compose est manquant.',
+      pt:'Falta o ID da aplicação ZimaOS Compose.',
+      es:'Falta el ID de la aplicación ZimaOS Compose.'
+    },
+    'ZimaOS Compose app ID is missing for this app':{
+      de:'Für diese App fehlt die ZimaOS Compose App ID.',
+      fr:'L’identifiant ZimaOS Compose est manquant pour cette application.',
+      pt:'Falta o ID ZimaOS Compose para esta aplicação.',
+      es:'Falta el ID de ZimaOS Compose para esta aplicación.'
+    },
+    'Website icon not found':{
+      de:'Das Website Symbol wurde nicht gefunden.',
+      fr:'L’icône du site web est introuvable.',
+      pt:'O ícone do site não foi encontrado.',
+      es:'No se encontró el icono del sitio web.'
+    },
+    'Icon source is not known':{
+      de:'Die Quelle des Symbols ist nicht bekannt.',
+      fr:'La source de l’icône est inconnue.',
+      pt:'A fonte do ícone é desconhecida.',
+      es:'Se desconoce la fuente del icono.'
+    },
+    'Icon download is temporarily unavailable':{
+      de:'Der Download des Symbols ist vorübergehend nicht verfügbar.',
+      fr:'Le téléchargement de l’icône est temporairement indisponible.',
+      pt:'A transferência do ícone está temporariamente indisponível.',
+      es:'La descarga del icono no está disponible temporalmente.'
+    },
+    'Icon is too large':{
+      de:'Das Symbol ist zu groß.',
+      fr:'L’icône est trop grande.',
+      pt:'O ícone é demasiado grande.',
+      es:'El icono es demasiado grande.'
+    },
+    'Invalid icon cache key':{
+      de:'Ungültiger Symbol Cache Schlüssel.',
+      fr:'Clé de cache d’icône non valide.',
+      pt:'Chave de cache do ícone inválida.',
+      es:'Clave de caché de icono no válida.'
+    },
+    'Unsupported icon URL':{
+      de:'Nicht unterstützte Symbol URL.',
+      fr:'URL d’icône non prise en charge.',
+      pt:'URL de ícone não suportado.',
+      es:'URL de icono no compatible.'
+    },
+    'Private or non-public icon hosts are not cached':{
+      de:'Private oder nicht öffentliche Symbol Hosts werden nicht zwischengespeichert.',
+      fr:'Les hôtes d’icônes privés ou non publics ne sont pas mis en cache.',
+      pt:'Os hosts de ícones privados ou não públicos não são guardados em cache.',
+      es:'Los hosts de iconos privados o no públicos no se almacenan en caché.'
+    },
+    'Timeout':{
+      de:'Zeitüberschreitung.',
+      fr:'Délai d’attente dépassé.',
+      pt:'Tempo limite excedido.',
+      es:'Tiempo de espera agotado.'
+    },
+    'Update failed':{
+      de:'Update fehlgeschlagen.',
+      fr:'La mise à jour a échoué.',
+      pt:'A atualização falhou.',
+      es:'La actualización falló.'
+    },
+    'Resource not accessible by personal access token':simpleTechnical['resource not accessible by personal access token'],
+    'The update process did not report completion within the time limit.':{
+      de:'Der Update Vorgang hat innerhalb des Zeitlimits keinen Abschluss gemeldet.',
+      fr:'Le processus de mise à jour n’a pas signalé sa fin dans le délai imparti.',
+      pt:'O processo de atualização não comunicou a conclusão dentro do tempo limite.',
+      es:'El proceso de actualización no notificó su finalización dentro del tiempo límite.'
+    },
+    'Der Update Vorgang hat innerhalb des Zeitlimits keinen Abschluss gemeldet.':{
+      de:'Der Update Vorgang hat innerhalb des Zeitlimits keinen Abschluss gemeldet.',
+      fr:'Le processus de mise à jour n’a pas signalé sa fin dans le délai imparti.',
+      pt:'O processo de atualização não comunicou a conclusão dentro do tempo limite.',
+      es:'El proceso de actualización no notificó su finalización dentro del tiempo límite.'
+    }
+  };
 
   function currentLanguage(){
     try{
-      return (typeof state!=='undefined'&&state&&state.language==='en')?'en':'de';
+      const code=String(
+        typeof state!=='undefined'&&state&&state.language
+          ?state.language
+          :'en'
+      ).trim().toLowerCase();
+      return supportedLanguages.includes(code)?code:'en';
     }catch(_){
-      return 'de';
+      return 'en';
     }
   }
 
-  function safeTechnicalDetail(value){
+  function pickLocalized(entry,lang=currentLanguage()){
+    if(!entry||typeof entry!=='object')return '';
+    return String(entry[lang]??entry.en??entry.de??'').trim();
+  }
+
+  function safeTechnicalDetail(value,lang=currentLanguage()){
     const raw=String(value||'').trim();
     if(!raw)return '';
-    const exact=deExact.get(raw);
-    if(exact)return exact;
-    if(/^resource not accessible by personal access token$/i.test(raw)){
-      return 'Diese Ressource ist mit dem aktuellen Personal Access Token nicht zugänglich.';
+    const exactEntry=exact[raw];
+    if(exactEntry){
+      const found=pickLocalized(exactEntry,lang);
+      if(found)return found;
     }
-    if(/^permission denied$/i.test(raw))return 'Zugriff verweigert.';
-    if(/^not found$/i.test(raw))return 'Nicht gefunden.';
-    if(/^timeout$/i.test(raw))return 'Zeitüberschreitung.';
-    if(/^connection refused$/i.test(raw))return 'Verbindung abgelehnt.';
-    if(/^network (?:error|unreachable)$/i.test(raw))return 'Netzwerk nicht erreichbar.';
-    return raw;
-  }
-
-  function alreadyGerman(value){
-    return /[äöüßÄÖÜ]|(?:\b(?:konnte|nicht|wurde|läuft|Prüfung|Fehler|ungültig|verfügbar|ausgewählt|erforderlich|gesperrt|abgeschlossen|erreicht|gefunden|gestoppt|gestartet)\b)/i.test(value);
-  }
-
-  function localizeGerman(value,allowGeneric=true){
-    const raw=String(value==null?'':value).trim();
-    if(!raw||raw==='auth')return raw;
-    if(alreadyGerman(raw))return raw;
-
-    const exact=deExact.get(raw);
-    if(exact)return exact;
-
-    for(const [pattern,render] of dePatterns){
-      const match=raw.match(pattern);
-      if(match)return render(match);
+    const simple=simpleTechnical[raw.toLowerCase()];
+    if(simple){
+      const found=pickLocalized(simple,lang);
+      if(found)return found;
     }
-
     const http=raw.match(/\bHTTP\s+(\d{3})\b/i);
-    if(http){
-      return 'Technischer Fehler (HTTP '+http[1]+').';
-    }
+    if(http)return genericHttpErrors[lang]+' (HTTP '+http[1]+').';
 
-    return allowGeneric
-      ?'Technischer Fehler bei der angeforderten Aktion.'
-      :raw;
+    // Keep identifiers, paths, image refs, digests and short non-sentence
+    // diagnostics useful, but never append an unknown English sentence to a
+    // localized UI message.
+    if(
+      raw.length<=80
+      &&(
+        /^sha256:[0-9a-f]+$/i.test(raw)
+        ||/^[A-Za-z0-9_.:@/+\\-]+$/.test(raw)
+      )
+    )return raw;
+
+    return genericErrors[lang];
+  }
+
+  function renderPattern(raw,lang){
+    let m;
+    if((m=raw.match(/^GitHub rejected the request \(HTTP (\d+)\):\s*(.*)$/i))){
+      const prefix={
+        de:'GitHub hat die Anfrage abgelehnt',
+        en:'GitHub rejected the request',
+        fr:'GitHub a refusé la requête',
+        pt:'O GitHub rejeitou o pedido',
+        es:'GitHub rechazó la solicitud'
+      }[lang];
+      return prefix+' (HTTP '+m[1]+'): '+safeTechnicalDetail(m[2],lang);
+    }
+    if((m=raw.match(/^GitHub token test failed \(HTTP (\d+)\)$/i))){
+      return ({
+        de:'GitHub Token Test fehlgeschlagen',
+        en:'GitHub token test failed',
+        fr:'Le test du jeton GitHub a échoué',
+        pt:'O teste do token GitHub falhou',
+        es:'La prueba del token de GitHub falló'
+      }[lang])+' (HTTP '+m[1]+').';
+    }
+    if((m=raw.match(/^GitHub is not reachable:\s*(.*)$/i))){
+      return ({
+        de:'GitHub ist nicht erreichbar: ',
+        en:'GitHub is not reachable: ',
+        fr:'GitHub est inaccessible : ',
+        pt:'O GitHub não está acessível: ',
+        es:'GitHub no está accesible: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^ZimaOS App Management not reachable:\s*(.*)$/i))){
+      return ({
+        de:'ZimaOS App Management ist nicht erreichbar: ',
+        en:'ZimaOS App Management is not reachable: ',
+        fr:'ZimaOS App Management est inaccessible : ',
+        pt:'O ZimaOS App Management não está acessível: ',
+        es:'ZimaOS App Management no está accesible: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^ZimaOS App Management HTTP (\d+)(?::\s*(.*))?$/i))){
+      const prefix={
+        de:'ZimaOS App Management Fehler',
+        en:'ZimaOS App Management error',
+        fr:'Erreur ZimaOS App Management',
+        pt:'Erro do ZimaOS App Management',
+        es:'Error de ZimaOS App Management'
+      }[lang];
+      return prefix+' (HTTP '+m[1]+')'+(m[2]?': '+safeTechnicalDetail(m[2],lang):'.');
+    }
+    if((m=raw.match(/^ZimaOS compose apply failed \(HTTP (\d+)\)$/i))){
+      return ({
+        de:'ZimaOS Compose konnte nicht angewendet werden',
+        en:'ZimaOS Compose could not be applied',
+        fr:'ZimaOS Compose n’a pas pu être appliqué',
+        pt:'Não foi possível aplicar o ZimaOS Compose',
+        es:'No se pudo aplicar ZimaOS Compose'
+      }[lang])+' (HTTP '+m[1]+').';
+    }
+    if((m=raw.match(/^ZimaOS compose read failed \(HTTP (\d+)\)(?::\s*(.*))?$/i))){
+      const prefix={
+        de:'ZimaOS Compose konnte nicht gelesen werden',
+        en:'ZimaOS Compose could not be read',
+        fr:'ZimaOS Compose n’a pas pu être lu',
+        pt:'Não foi possível ler o ZimaOS Compose',
+        es:'No se pudo leer ZimaOS Compose'
+      }[lang];
+      return prefix+' (HTTP '+m[1]+')'+(m[2]?': '+safeTechnicalDetail(m[2],lang):'.');
+    }
+    if((m=raw.match(/^ZimaOS app uninstall failed \(HTTP (\d+)\)$/i))){
+      return ({
+        de:'ZimaOS konnte die App nicht deinstallieren',
+        en:'ZimaOS could not uninstall the app',
+        fr:'ZimaOS n’a pas pu désinstaller l’application',
+        pt:'O ZimaOS não conseguiu desinstalar a aplicação',
+        es:'ZimaOS no pudo desinstalar la aplicación'
+      }[lang])+' (HTTP '+m[1]+').';
+    }
+    if((m=raw.match(/^ZimaOS app status change failed \(HTTP (\d+)\)$/i))){
+      return ({
+        de:'ZimaOS konnte den App Status nicht ändern',
+        en:'ZimaOS could not change the app status',
+        fr:'ZimaOS n’a pas pu modifier l’état de l’application',
+        pt:'O ZimaOS não conseguiu alterar o estado da aplicação',
+        es:'ZimaOS no pudo cambiar el estado de la aplicación'
+      }[lang])+' (HTTP '+m[1]+').';
+    }
+    if((m=raw.match(/^ZimaOS container recreate failed \(HTTP (\d+)\)$/i))){
+      return ({
+        de:'ZimaOS konnte den Container nicht neu erstellen',
+        en:'ZimaOS could not recreate the container',
+        fr:'ZimaOS n’a pas pu recréer le conteneur',
+        pt:'O ZimaOS não conseguiu recriar o contentor',
+        es:'ZimaOS no pudo recrear el contenedor'
+      }[lang])+' (HTTP '+m[1]+').';
+    }
+    if((m=raw.match(/^Docker pull failed for (.+?):\s*(.*)$/i))){
+      return ({
+        de:'Docker Pull für ',
+        en:'Docker pull for ',
+        fr:'Le téléchargement Docker pour ',
+        pt:'O Docker pull para ',
+        es:'El Docker pull para '
+      }[lang])+m[1]+({
+        de:' ist fehlgeschlagen: ',
+        en:' failed: ',
+        fr:' a échoué : ',
+        pt:' falhou: ',
+        es:' falló: '
+      }[lang])+safeTechnicalDetail(m[2],lang);
+    }
+    if((m=raw.match(/^Could not start update worker:\s*(.*)$/i))){
+      return ({
+        de:'Der Update Prozess konnte nicht gestartet werden: ',
+        en:'The update process could not be started: ',
+        fr:'Le processus de mise à jour n’a pas pu démarrer : ',
+        pt:'Não foi possível iniciar o processo de atualização: ',
+        es:'No se pudo iniciar el proceso de actualización: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^Could not stop (.+?) for full backup:\s*(.*)$/i))){
+      return ({
+        de:m[1]+' konnte für das vollständige Backup nicht gestoppt werden: ',
+        en:m[1]+' could not be stopped for the full backup: ',
+        fr:m[1]+' n’a pas pu être arrêté pour la sauvegarde complète : ',
+        pt:'Não foi possível parar '+m[1]+' para a cópia de segurança completa: ',
+        es:'No se pudo detener '+m[1]+' para la copia de seguridad completa: '
+      }[lang])+safeTechnicalDetail(m[2],lang);
+    }
+    if((m=raw.match(/^Could not restore running state for (.+?):\s*(.*)$/i))){
+      return ({
+        de:'Der laufende Zustand von '+m[1]+' konnte nicht wiederhergestellt werden: ',
+        en:'The running state of '+m[1]+' could not be restored: ',
+        fr:'L’état en cours d’exécution de '+m[1]+' n’a pas pu être restauré : ',
+        pt:'Não foi possível repor o estado ativo de '+m[1]+': ',
+        es:'No se pudo restaurar el estado en ejecución de '+m[1]+': '
+      }[lang])+safeTechnicalDetail(m[2],lang);
+    }
+    if((m=raw.match(/^Could not restore stopped state for (.+?):\s*(.*)$/i))){
+      return ({
+        de:'Der gestoppte Zustand von '+m[1]+' konnte nicht wiederhergestellt werden: ',
+        en:'The stopped state of '+m[1]+' could not be restored: ',
+        fr:'L’état arrêté de '+m[1]+' n’a pas pu être restauré : ',
+        pt:'Não foi possível repor o estado parado de '+m[1]+': ',
+        es:'No se pudo restaurar el estado detenido de '+m[1]+': '
+      }[lang])+safeTechnicalDetail(m[2],lang);
+    }
+    if((m=raw.match(/^Could not start container (.+?):\s*(.*)$/i))){
+      return ({
+        de:'Container '+m[1]+' konnte nicht gestartet werden: ',
+        en:'Container '+m[1]+' could not be started: ',
+        fr:'Le conteneur '+m[1]+' n’a pas pu démarrer : ',
+        pt:'Não foi possível iniciar o contentor '+m[1]+': ',
+        es:'No se pudo iniciar el contenedor '+m[1]+': '
+      }[lang])+safeTechnicalDetail(m[2],lang);
+    }
+    if((m=raw.match(/^Could not read registry tags for this image:\s*(.*)$/i))){
+      return ({
+        de:'Die Registry Tags für dieses Image konnten nicht gelesen werden: ',
+        en:'The registry tags for this image could not be read: ',
+        fr:'Les tags du registre pour cette image n’ont pas pu être lus : ',
+        pt:'Não foi possível ler as tags do registry para esta imagem: ',
+        es:'No se pudieron leer las etiquetas del registro para esta imagen: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^Could not verify target version (.+?) in the registry(?:\s*(.*))?$/i))){
+      const head={
+        de:'Die Zielversion '+m[1]+' konnte in der Registry nicht verifiziert werden',
+        en:'Target version '+m[1]+' could not be verified in the registry',
+        fr:'La version cible '+m[1]+' n’a pas pu être vérifiée dans le registre',
+        pt:'Não foi possível verificar a versão de destino '+m[1]+' no registry',
+        es:'No se pudo verificar la versión de destino '+m[1]+' en el registro'
+      }[lang];
+      return head+(m[2]?': '+safeTechnicalDetail(m[2],lang):'.');
+    }
+    if((m=raw.match(/^No verified remote digest available for (.+)$/i))){
+      return ({
+        de:'Für '+m[1]+' ist kein verifizierter Remote Digest verfügbar.',
+        en:'No verified remote digest is available for '+m[1]+'.',
+        fr:'Aucun digest distant vérifié n’est disponible pour '+m[1]+'.',
+        pt:'Não está disponível nenhum digest remoto verificado para '+m[1]+'.',
+        es:'No hay ningún digest remoto verificado disponible para '+m[1]+'.'
+      }[lang]);
+    }
+    if((m=raw.match(/^No verified target digest is available for (.+)$/i))){
+      return ({
+        de:'Für '+m[1]+' ist kein verifizierter Ziel Digest verfügbar.',
+        en:'No verified target digest is available for '+m[1]+'.',
+        fr:'Aucun digest cible vérifié n’est disponible pour '+m[1]+'.',
+        pt:'Não está disponível nenhum digest de destino verificado para '+m[1]+'.',
+        es:'No hay ningún digest de destino verificado disponible para '+m[1]+'.'
+      }[lang]);
+    }
+    if((m=raw.match(/^Container (.+?) did not reach the verified target digest(?:\s*(.*))?$/i))){
+      const head={
+        de:'Container '+m[1]+' hat den verifizierten Ziel Digest nicht erreicht',
+        en:'Container '+m[1]+' did not reach the verified target digest',
+        fr:'Le conteneur '+m[1]+' n’a pas atteint le digest cible vérifié',
+        pt:'O contentor '+m[1]+' não atingiu o digest de destino verificado',
+        es:'El contenedor '+m[1]+' no alcanzó el digest de destino verificado'
+      }[lang];
+      return head+(m[2]?': '+safeTechnicalDetail(m[2],lang):'.');
+    }
+    if((m=raw.match(/^Container (.+?) did not reach the verified target image(?:\s*(.*))?$/i))){
+      const head={
+        de:'Container '+m[1]+' hat das verifizierte Ziel Image nicht erreicht',
+        en:'Container '+m[1]+' did not reach the verified target image',
+        fr:'Le conteneur '+m[1]+' n’a pas atteint l’image cible vérifiée',
+        pt:'O contentor '+m[1]+' não atingiu a imagem de destino verificada',
+        es:'El contenedor '+m[1]+' no alcanzó la imagen de destino verificada'
+      }[lang];
+      return head+(m[2]?': '+safeTechnicalDetail(m[2],lang):'.');
+    }
+    if((m=raw.match(/^Update reached the target image, but (.+?) is not running(?:\s*(.*))?$/i))){
+      const head={
+        de:'Das Update hat das Ziel Image erreicht, aber '+m[1]+' läuft nicht',
+        en:'The update reached the target image, but '+m[1]+' is not running',
+        fr:'La mise à jour a atteint l’image cible, mais '+m[1]+' n’est pas en cours d’exécution',
+        pt:'A atualização atingiu a imagem de destino, mas '+m[1]+' não está ativo',
+        es:'La actualización alcanzó la imagen de destino, pero '+m[1]+' no está en ejecución'
+      }[lang];
+      return head+(m[2]?': '+safeTechnicalDetail(m[2],lang):'.');
+    }
+    if((m=raw.match(/^Update succeeded, but (.+?) did not return to a stopped state$/i))){
+      return ({
+        de:'Das Update war erfolgreich, aber '+m[1]+' wurde danach nicht wieder gestoppt.',
+        en:'The update succeeded, but '+m[1]+' did not return to a stopped state.',
+        fr:'La mise à jour a réussi, mais '+m[1]+' n’est pas revenu à l’état arrêté.',
+        pt:'A atualização foi concluída, mas '+m[1]+' não regressou ao estado parado.',
+        es:'La actualización se completó, pero '+m[1]+' no volvió al estado detenido.'
+      }[lang]);
+    }
+    if((m=raw.match(/^Version update failed and the original Compose configuration was restored:\s*(.*)$/i))){
+      return ({
+        de:'Versions Update fehlgeschlagen. Die ursprüngliche Compose Konfiguration wurde wiederhergestellt: ',
+        en:'Version update failed. The original Compose configuration was restored: ',
+        fr:'La mise à jour de version a échoué. La configuration Compose d’origine a été restaurée : ',
+        pt:'A atualização de versão falhou. A configuração Compose original foi reposta: ',
+        es:'La actualización de versión falló. Se restauró la configuración Compose original: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^Version update failed:\s*(.*)$/i))){
+      return ({
+        de:'Versions Update fehlgeschlagen: ',
+        en:'Version update failed: ',
+        fr:'La mise à jour de version a échoué : ',
+        pt:'A atualização de versão falhou: ',
+        es:'La actualización de versión falló: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^Backup could not safely restore all stopped containers:\s*(.*)$/i))){
+      return ({
+        de:'Das Backup konnte nicht alle zuvor gestoppten Container sicher wiederherstellen: ',
+        en:'The backup could not safely restore all previously stopped containers: ',
+        fr:'La sauvegarde n’a pas pu restaurer en toute sécurité tous les conteneurs précédemment arrêtés : ',
+        pt:'A cópia de segurança não conseguiu repor em segurança todos os contentores anteriormente parados: ',
+        es:'La copia de seguridad no pudo restaurar de forma segura todos los contenedores que estaban detenidos: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^Full backup failed while copying (.+?):\s*(.*)$/i))){
+      return ({
+        de:'Vollständiges Backup beim Kopieren von '+m[1]+' fehlgeschlagen: ',
+        en:'Full backup failed while copying '+m[1]+': ',
+        fr:'La sauvegarde complète a échoué lors de la copie de '+m[1]+' : ',
+        pt:'A cópia de segurança completa falhou ao copiar '+m[1]+': ',
+        es:'La copia de seguridad completa falló al copiar '+m[1]+': '
+      }[lang])+safeTechnicalDetail(m[2],lang);
+    }
+    if((m=raw.match(/^Could not apply backup settings:\s*(.*)$/i))){
+      return ({
+        de:'Backup Einstellungen konnten nicht übernommen werden: ',
+        en:'Backup settings could not be applied: ',
+        fr:'Les paramètres de sauvegarde n’ont pas pu être appliqués : ',
+        pt:'Não foi possível aplicar as definições da cópia de segurança: ',
+        es:'No se pudieron aplicar los ajustes de la copia de seguridad: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^Icon download failed:\s*(.*)$/i))){
+      return ({
+        de:'Download des Symbols fehlgeschlagen: ',
+        en:'Icon download failed: ',
+        fr:'Le téléchargement de l’icône a échoué : ',
+        pt:'A transferência do ícone falhou: ',
+        es:'La descarga del icono falló: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^Unsupported icon content type:\s*(.*)$/i))){
+      return ({
+        de:'Nicht unterstützter Symbol Inhaltstyp: ',
+        en:'Unsupported icon content type: ',
+        fr:'Type de contenu d’icône non pris en charge : ',
+        pt:'Tipo de conteúdo do ícone não suportado: ',
+        es:'Tipo de contenido de icono no compatible: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if(/^Cannot connect to the Docker daemon.*$/i.test(raw)){
+      return {
+        de:'Der Docker Daemon ist nicht erreichbar. Prüfe, ob der Docker Dienst läuft.',
+        en:'The Docker daemon is not reachable. Check whether the Docker service is running.',
+        fr:'Le démon Docker est inaccessible. Vérifiez que le service Docker est en cours d’exécution.',
+        pt:'O daemon Docker não está acessível. Verifique se o serviço Docker está ativo.',
+        es:'El daemon de Docker no está accesible. Comprueba que el servicio Docker esté en ejecución.'
+      }[lang];
+    }
+    if((m=raw.match(/^Error response from daemon:\s*(.*)$/i))){
+      return ({
+        de:'Docker Fehler: ',
+        en:'Docker error: ',
+        fr:'Erreur Docker : ',
+        pt:'Erro Docker: ',
+        es:'Error de Docker: '
+      }[lang])+safeTechnicalDetail(m[1],lang);
+    }
+    if((m=raw.match(/^HTTP (\d+)(?::\s*(.*))?$/i))){
+      return genericHttpErrors[lang]+' '+m[1]+(m[2]?': '+safeTechnicalDetail(m[2],lang):'.');
+    }
+    return '';
+  }
+
+  function looksAlreadyLocalized(raw,lang){
+    if(lang==='en')return false;
+    if(lang==='de')return /[äöüßÄÖÜ]|\b(?:konnte|nicht|wurde|läuft|Prüfung|Fehler|ungültig|verfügbar|ausgewählt|erforderlich|gesperrt|abgeschlossen|erreicht|gefunden|gestoppt|gestartet)\b/i.test(raw);
+    if(lang==='fr')return /[àâçéèêëîïôûùüÿœ]|\b(?:erreur|attendez|impossible|introuvable|mise à jour|sauvegarde|conteneur|vérification)\b/i.test(raw);
+    if(lang==='pt')return /[áàâãçéêíóôõú]|\b(?:erro|aguarde|não|atualização|cópia de segurança|contentor|verificação|aplicação)\b/i.test(raw);
+    if(lang==='es')return /[áéíñóúü¿¡]|\b(?:error|espera|no |actualización|copia de seguridad|contenedor|comprobación|aplicación)\b/i.test(raw);
+    return false;
   }
 
   function localizeBackendMessage(value,allowGeneric=true){
     const raw=String(value==null?'':value).trim();
     if(!raw||raw==='auth')return raw;
-    if(currentLanguage()==='en')return raw;
-    return localizeGerman(raw,allowGeneric);
+
+    const lang=currentLanguage();
+    if(lang==='en')return raw;
+    if(looksAlreadyLocalized(raw,lang))return raw;
+
+    const entry=exact[raw];
+    if(entry){
+      const localized=pickLocalized(entry,lang);
+      if(localized)return localized;
+    }
+
+    const patterned=renderPattern(raw,lang);
+    if(patterned)return patterned;
+
+    const http=raw.match(/\bHTTP\s+(\d{3})\b/i);
+    if(http)return genericHttpErrors[lang]+' (HTTP '+http[1]+').';
+
+    return allowGeneric ? genericErrors[lang] : genericErrors[lang];
   }
 
   function localizePayload(value,key=''){
-    if(currentLanguage()==='en'||value==null)return value;
+    const lang=currentLanguage();
+    if(lang==='en'||value==null)return value;
     if(Array.isArray(value))return value.map(item=>localizePayload(item,''));
     if(typeof value==='object'){
       const copy={};
@@ -12226,11 +13044,13 @@ _INDEX_ERROR_LOCALIZATION_BRIDGE = r'''<script id="um-error-localization-v0372">
     }
     if(typeof value!=='string')return value;
 
-    if(key==='error'||key==='last_auto_error'||key==='scan_warning'){
+    if(
+      key==='error'
+      ||key==='last_auto_error'
+      ||key==='scan_warning'
+      ||key==='detail'
+    ){
       return localizeBackendMessage(value,true);
-    }
-    if(key==='detail'){
-      return localizeBackendMessage(value,false);
     }
     return value;
   }
@@ -12257,7 +13077,6 @@ _INDEX_ERROR_LOCALIZATION_BRIDGE = r'''<script id="um-error-localization-v0372">
   };
 })();
 </script>'''
-
 
 # Public application branding assets, independent of login.
 # Register only these exact filenames; never expose the entire static directory.
