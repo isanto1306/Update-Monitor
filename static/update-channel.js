@@ -17,7 +17,7 @@ function channelEsc(value){
 }
 
 var style=document.createElement('style');
-style.id='um-update-channel-v0368';
+style.id='um-update-channel-v0371';
 style.textContent=[
 '.update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}',
 '.update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}',
