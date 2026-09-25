@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.374"
+VERSION = "0.3.375"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -19658,7 +19658,8 @@ def app_scan(data: AppScanRequest, request: Request):
     stack_key = str(data.stack_key or "").strip()
     if not stack_key:
         raise HTTPException(status_code=400, detail="App is required")
-    if not find_scanned_app(stack_key):
+    app_item = find_scanned_app(stack_key)
+    if not app_item:
         raise HTTPException(status_code=404, detail="App not found in current scan")
 
     # A queued post-action verification must keep priority. A manual per-app
@@ -19673,6 +19674,15 @@ def app_scan(data: AppScanRequest, request: Request):
             status_code=409,
             detail="Wait until the current Docker action is finished",
         )
+
+    # v0.3.375: "Docker prüfen" explicitly requests fresh version information.
+    # Drop only this app's release/version mappings before the targeted scan so
+    # an already-updated moving tag cannot remain labeled with an older release.
+    try:
+        invalidate_version_caches_for_app(app_item)
+    except Exception:
+        # A damaged cache file must not prevent the actual Docker check.
+        pass
 
     started = start_app_scan(stack_key)
     if not started:
