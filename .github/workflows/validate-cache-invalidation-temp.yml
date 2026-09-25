@@ -1,0 +1,131 @@
+name: Validate targeted version cache invalidation
+
+on:
+  push:
+    branches:
+      - fix-targeted-version-cache-v0374
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate backend and synchronized frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Test targeted cache invalidation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import ast
+          import re
+          import threading
+          from pathlib import Path
+
+          main=Path("app/main.py").read_text(encoding="utf-8")
+          tree=ast.parse(main)
+          functions={
+              node.name:node
+              for node in tree.body
+              if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef))
+          }
+
+          def load_function(name,env):
+              node=functions[name]
+              module=ast.Module(body=[node],type_ignores=[])
+              ast.fix_missing_locations(module)
+              scope=dict(env)
+              exec(compile(module,"<cache-test>","exec"),scope)
+              return scope[name]
+
+          def parse_image_ref(value):
+              value=str(value or "").strip().split("@",1)[0]
+              slash=value.rfind("/")
+              colon=value.rfind(":")
+              repo=value[:colon] if colon>slash else value
+              tag=value[colon+1:] if colon>slash else "latest"
+              return {"normalized_repo":repo,"repo":repo,"tag":tag}
+
+          cache_store={
+              "github":{
+                  "itzg/docker-minecraft-server":{"tags":["2026.9.1"]},
+                  "other/project":{"tags":["1.0.0"]},
+              }
+          }
+          installed={
+              "minecraft":{"repo":"itzg/minecraft-server","tag":"2026.9.1"},
+              "other":{"repo":"other/project","tag":"1.0.0"},
+          }
+
+          def load_json(path,default):
+              value=cache_store.get(path,default)
+              return dict(value) if isinstance(value,dict) else value
+
+          def save_json(path,value):
+              cache_store[path]=dict(value)
+
+          fn=load_function("invalidate_version_caches_for_app",{
+              "github_repo_from_url":lambda value: (
+                  ("itzg","docker-minecraft-server")
+                  if "itzg/docker-minecraft-server" in str(value or "")
+                  else None
+              ),
+              "_github_cache_key":lambda owner,repo: str(owner).lower()+"/"+str(repo).lower(),
+              "github_url_from_image_ref":lambda value: None,
+              "parse_image_ref":parse_image_ref,
+              "GITHUB_VERSION_CACHE_LOCK":threading.Lock(),
+              "GITHUB_VERSION_CACHE_FILE":"github",
+              "INSTALLED_VERSION_CACHE_LOCK":threading.Lock(),
+              "INSTALLED_VERSION_CACHE_FILE":"installed",
+              "INSTALLED_VERSION_CACHE":installed,
+              "load_json":load_json,
+              "save_json":save_json,
+          })
+
+          result=fn({
+              "project_url":"https://github.com/itzg/docker-minecraft-server",
+              "items":[{
+                  "image_ref":"itzg/minecraft-server:latest",
+                  "runtime_image_refs":["itzg/minecraft-server:latest"],
+              }],
+          })
+
+          assert result=={
+              "github_repositories":["itzg/docker-minecraft-server"],
+              "installed_version_entries":1,
+          }
+          assert set(cache_store["github"])=={"other/project"}
+          assert set(installed)=={"other"}
+
+          schedule=ast.get_source_segment(main,functions["schedule_app_scan"]) or ""
+          assert "invalidate_version_caches_for_app(find_scanned_app(stack_key))" in schedule
+          assert "isinstance(verification_result, dict) and verification_result" in schedule
+
+          version=re.search(r'^VERSION = "([^"]+)"',main,re.M).group(1)
+          assert version=="0.3.374"
+
+          html=Path("static/index.html").read_text(encoding="utf-8")
+          audit=Path("translation-audit-current.json").read_text(encoding="utf-8")
+          compose=Path("docker-compose.zimaos.yml").read_text(encoding="utf-8")
+          manifest=Path("static/site.webmanifest").read_text(encoding="utf-8")
+          channel=Path("static/update-channel.js").read_text(encoding="utf-8")
+          readme=Path("README.md").read_text(encoding="utf-8")
+
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.374';" in html
+          assert '"version": "v0.3.374"' in audit
+          assert 'version: "0.3.374"' in compose
+          assert "0.3.374" in manifest
+          assert "um-update-channel-v0374" in channel
+          assert "Current release: **v0.3.374**" in readme
+          print("targeted cache invalidation validation passed")
+          PY
