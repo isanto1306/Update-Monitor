@@ -28,7 +28,7 @@ if not isinstance(runtime_bridge, str) or "um-async-update-bridge-v0366" not in 
     raise SystemExit("Async update frontend bridge not found in backend source")
 if (
     not isinstance(error_localization_bridge, str)
-    or "um-error-localization-v0372" not in error_localization_bridge
+    or "um-error-localization-v0373" not in error_localization_bridge
 ):
     raise SystemExit("Error localization frontend bridge not found in backend source")
 
@@ -79,7 +79,7 @@ if 'id="um-async-update-bridge-v0366"' not in text:
         raise SystemExit("Frontend marker not found: closing body")
     text = text.replace("</body>", runtime_bridge + "\n</body>", 1)
 
-# v0.3.372: every user-visible backend error passes through one shared
+# v0.3.373: every user-visible backend error passes through one shared
 # localization bridge. Keep it after the async update bridge so errors raised by
 # the background-update compatibility wrapper are translated as well.
 error_bridge_pattern = re.compile(
