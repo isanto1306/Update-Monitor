@@ -1,0 +1,66 @@
+name: Inspect current language code
+
+on:
+  push:
+    branches:
+      - restore-fr-pt-es-v0373
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract current language snippets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          text=Path("static/index.html").read_text(encoding="utf-8")
+          lines=text.splitlines()
+          wanted=[]
+          patterns=[
+              "state.language",
+              "languageSelect",
+              "languageEnglish",
+              "inlineLocalizedText",
+              "localizedBackendPair",
+              "toLocale",
+          ]
+          for i,line in enumerate(lines, start=1):
+              if any(p in line for p in patterns):
+                  start=max(1,i-2)
+                  end=min(len(lines),i+2)
+                  snippet="\n".join(f"{n}: {lines[n-1]}" for n in range(start,end+1))
+                  wanted.append(snippet)
+
+          # Preserve order but remove duplicate snippet blocks.
+          seen=set()
+          unique=[]
+          for item in wanted:
+              if item in seen:
+                  continue
+              seen.add(item)
+              unique.append(item)
+
+          out="\n\n---\n\n".join(unique)
+          Path(".github/tmp/current-language-snippets-v0372.txt").write_text(out+"\n",encoding="utf-8")
+          print(f"snippets={len(unique)} chars={len(out)}")
+          PY
+
+      - name: Commit language snippets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+isanto1306@users.noreply.github.com"
+          git add .github/tmp/current-language-snippets-v0372.txt
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Extract current language code snippets"
+          git push
