@@ -3,7 +3,6 @@ import base64
 import concurrent.futures
 import copy
 import hashlib
-import hmac
 import ipaddress
 import socket
 import ssl
@@ -34,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.370"
+VERSION = "0.3.371"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -58,8 +57,6 @@ GITHUB_VERSION_CACHE_TTL_SECONDS = 6 * 60 * 60
 GITHUB_VERSION_CACHE_STALE_SECONDS = 7 * 24 * 60 * 60
 GITHUB_VERSION_CACHE_LOCK = threading.Lock()
 GITHUB_TOKEN_FILE = CACHE_DIR / "github-token"
-GITHUB_WEBHOOK_STATE_FILE = CACHE_DIR / "github-webhooks.json"
-GITHUB_WEBHOOK_SECRET_FILE = CACHE_DIR / "github-webhook-secret"
 SESSION_SECRET_FILE = CACHE_DIR / "session-secret"
 UPDATE_MONITOR_GITHUB_TOKEN = os.getenv("UPDATE_MONITOR_GITHUB_TOKEN", "").strip()
 
@@ -240,11 +237,6 @@ class GithubTokenRequest(BaseModel):
     token: Optional[str] = None
 
 
-class WebhookSettingsRequest(BaseModel):
-    enabled: bool
-    callback_url: Optional[str] = None
-
-
 class AppUpdateRequest(BaseModel):
     stack_key: str
     backup_mode: Optional[str] = "none"
@@ -332,10 +324,6 @@ scan_state = {"state": "idle", "started_at": None, "finished_at": None, "results
 settings_lock = threading.Lock()
 app_update_lock = threading.Lock()
 policies_lock = threading.Lock()
-GITHUB_WEBHOOK_STATE_LOCK = threading.RLock()
-GITHUB_WEBHOOK_SYNC_LOCK = threading.Lock()
-GITHUB_WEBHOOK_RECONCILE_LOCK = threading.Lock()
-GITHUB_WEBHOOK_RECONCILE = {"signature": None, "checked_at": 0.0}
 # One deduplicated authoritative post-action scan per app. This prevents a
 # failed/retried automation from queueing several identical scans which then
 # execute one after another.
@@ -345,7 +333,7 @@ post_scan_pending = {}
 # scan after every installation has finished. Keeping this marker separate from
 # per-app post scans prevents scan -> update -> scan -> update interleaving.
 post_full_scan_pending = None
-settings = {"scan_interval_seconds": 21600, "backup_retention": BACKUP_RETENTION_DEFAULT, "backup_max_per_app": BACKUP_MAX_PER_APP_DEFAULT, "backup_max_per_app_by_stack": {}, "backup_max_per_app_migrated_v1": False, "github_webhook_auto": False, "github_webhook_callback_url": ""}
+settings = {"scan_interval_seconds": 21600, "backup_retention": BACKUP_RETENTION_DEFAULT, "backup_max_per_app": BACKUP_MAX_PER_APP_DEFAULT, "backup_max_per_app_by_stack": {}, "backup_max_per_app_migrated_v1": False}
 policies = {}
 SERVICE_STARTED_AT = datetime.now(timezone.utc).isoformat()
 
@@ -2028,514 +2016,6 @@ def test_github_token(token=None):
         "source": source,
     }
 
-
-
-def _normalize_github_webhook_callback_url(value):
-    value = str(value or "").strip()
-    if not value:
-        return ""
-    try:
-        parsed = urllib.parse.urlparse(value)
-    except Exception as exc:
-        raise ValueError("Invalid webhook address") from exc
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("Webhook address must be an HTTP or HTTPS URL")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError("Webhook address must not contain credentials, query parameters or fragments")
-    path = str(parsed.path or "").rstrip("/")
-    if path in {"", "/"}:
-        path = "/api/webhooks/github"
-    elif path != "/api/webhooks/github":
-        raise ValueError("Webhook address must end with /api/webhooks/github")
-    return urllib.parse.urlunparse(
-        (parsed.scheme.lower(), parsed.netloc, path, "", "", "")
-    )
-
-
-def _github_webhook_callback_public_hint(value):
-    try:
-        parsed = urllib.parse.urlparse(str(value or ""))
-        host = str(parsed.hostname or "").strip().lower()
-    except Exception:
-        return False
-    if parsed.scheme.lower() != "https" or not host:
-        return False
-    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-        return not (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_reserved
-            or address.is_unspecified
-        )
-    except ValueError:
-        return True
-
-
-def _github_webhook_secret():
-    try:
-        value = GITHUB_WEBHOOK_SECRET_FILE.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        value = ""
-    except Exception:
-        value = ""
-    if len(value) >= 32:
-        return value
-
-    value = secrets.token_hex(32)
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = GITHUB_WEBHOOK_SECRET_FILE.with_suffix(".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(value)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, GITHUB_WEBHOOK_SECRET_FILE)
-        os.chmod(GITHUB_WEBHOOK_SECRET_FILE, 0o600)
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except Exception:
-            pass
-    return value
-
-
-def _load_github_webhook_state():
-    with GITHUB_WEBHOOK_STATE_LOCK:
-        loaded = load_json(GITHUB_WEBHOOK_STATE_FILE, {})
-    if not isinstance(loaded, dict):
-        loaded = {}
-    repositories = loaded.get("repositories")
-    if not isinstance(repositories, dict):
-        repositories = {}
-    loaded["repositories"] = repositories
-    recent = loaded.get("recent_delivery_ids")
-    if not isinstance(recent, list):
-        recent = []
-    loaded["recent_delivery_ids"] = [
-        str(value) for value in recent if str(value or "").strip()
-    ][-50:]
-    return loaded
-
-
-def _save_github_webhook_state(value):
-    payload = dict(value or {})
-    payload["repositories"] = dict(payload.get("repositories") or {})
-    payload["recent_delivery_ids"] = list(payload.get("recent_delivery_ids") or [])[-50:]
-    with GITHUB_WEBHOOK_STATE_LOCK:
-        save_json(GITHUB_WEBHOOK_STATE_FILE, payload)
-
-
-def _github_api_json_request(method, path, body=None, timeout=25):
-    token, _source = active_github_token()
-    if not token:
-        return 401, {}, {"message": "No GitHub token configured"}
-
-    url = "https://api.github.com" + str(path)
-    headers = {
-        **_github_api_headers(token),
-        "User-Agent": f"Update-Monitor/{VERSION}",
-        "X-GitHub-Api-Version": "2026-03-10",
-    }
-    data = None
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(body, separators=(",", ":")).encode("utf-8")
-
-    request = urllib.request.Request(
-        url,
-        data=data,
-        headers=headers,
-        method=str(method or "GET").upper(),
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read(2 * 1024 * 1024).decode("utf-8", "replace")
-            payload = json.loads(raw) if raw else {}
-            return int(getattr(response, "status", 200) or 200), response.headers, payload
-    except urllib.error.HTTPError as exc:
-        raw = exc.read(2 * 1024 * 1024).decode("utf-8", "replace")
-        try:
-            payload = json.loads(raw) if raw else {}
-        except Exception:
-            payload = {"raw": raw}
-        return int(exc.code), exc.headers, payload
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        reason = getattr(exc, "reason", None) or str(exc)
-        return 0, {}, {"error": str(reason)[:300]}
-
-
-def _github_webhook_repository_map():
-    with scan_lock:
-        apps = copy.deepcopy(scan_state.get("apps") or [])
-
-    result = {}
-    for app_item in apps:
-        stack_key = str((app_item or {}).get("stack_key") or "").strip()
-        if not stack_key:
-            continue
-
-        candidates = []
-        app_url = str((app_item or {}).get("project_url") or "").strip()
-        if app_url:
-            candidates.append(app_url)
-
-        for item in (app_item or {}).get("items") or []:
-            item_url = str((item or {}).get("project_url") or "").strip()
-            if item_url:
-                candidates.append(item_url)
-            image_ref = str((item or {}).get("tracking_image_ref") or (item or {}).get("image_ref") or "").strip()
-            if image_ref:
-                inferred = github_url_from_image_ref(image_ref)
-                if inferred:
-                    candidates.append(inferred)
-
-        seen = set()
-        for candidate in candidates:
-            repo_info = github_repo_from_url(candidate)
-            if not repo_info:
-                continue
-            owner, repo = repo_info
-            full_name = f"{owner}/{repo}"
-            key = full_name.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            bucket = result.setdefault(
-                key,
-                {"full_name": full_name, "owner": owner, "repo": repo, "stack_keys": set()},
-            )
-            bucket["stack_keys"].add(stack_key)
-
-    for value in result.values():
-        value["stack_keys"] = sorted(value["stack_keys"])
-    return result
-
-
-def _github_webhook_state_error(payload, status):
-    if isinstance(payload, dict):
-        message = str(payload.get("message") or payload.get("error") or "").strip()
-        if message:
-            return f"HTTP {status}: {message[:220]}" if status else message[:220]
-    return f"HTTP {status}" if status else "GitHub is not reachable"
-
-
-def _github_webhook_permission_fallback(status, headers, payload):
-    """Return True when webhook administration is simply unavailable.
-
-    Most installed Docker images point at upstream GitHub repositories that the
-    Update Monitor user does not administer. GitHub correctly answers the hooks
-    endpoint with 403/404 in that case. That is an expected Registry fallback,
-    not a broken update-detection state.
-    """
-    try:
-        remaining = str((headers or {}).get("X-RateLimit-Remaining") or "").strip()
-    except Exception:
-        remaining = ""
-    if status == 403 and remaining == "0":
-        return False
-
-    message = ""
-    if isinstance(payload, dict):
-        message = str(payload.get("message") or payload.get("error") or "").strip().lower()
-
-    if status == 404:
-        return True
-    if status != 403:
-        return False
-
-    permission_markers = (
-        "resource not accessible by personal access token",
-        "resource not accessible by integration",
-        "must have admin rights",
-        "admin access",
-        "must have push access",
-        "forbidden",
-    )
-    return any(marker in message for marker in permission_markers) or not message
-
-
-def sync_github_webhooks():
-    if not GITHUB_WEBHOOK_SYNC_LOCK.acquire(blocking=False):
-        return github_webhook_public_status()
-
-    try:
-        enabled = bool(settings.get("github_webhook_auto"))
-        callback = str(settings.get("github_webhook_callback_url") or "").strip()
-        state = _load_github_webhook_state()
-        state["last_sync_started_at"] = utc_now()
-        state["last_error"] = None
-
-        if not enabled:
-            state["last_sync_at"] = utc_now()
-            _save_github_webhook_state(state)
-            return github_webhook_public_status()
-
-        try:
-            callback = _normalize_github_webhook_callback_url(callback)
-        except ValueError as exc:
-            state["last_error"] = str(exc)
-            state["last_sync_at"] = utc_now()
-            _save_github_webhook_state(state)
-            return github_webhook_public_status()
-
-        if not callback or not _github_webhook_callback_public_hint(callback):
-            state["last_error"] = (
-                "A public HTTPS address is required before GitHub webhooks can be registered"
-            )
-            state["last_sync_at"] = utc_now()
-            _save_github_webhook_state(state)
-            return github_webhook_public_status()
-
-        token, _source = active_github_token()
-        if not token:
-            state["last_error"] = "A GitHub token is required to register repository webhooks"
-            state["last_sync_at"] = utc_now()
-            _save_github_webhook_state(state)
-            return github_webhook_public_status()
-
-        secret = _github_webhook_secret()
-        repo_map = _github_webhook_repository_map()
-        repository_state = dict(state.get("repositories") or {})
-        errors = []
-
-        for repo_key, info in sorted(repo_map.items()):
-            owner = info["owner"]
-            repo = info["repo"]
-            encoded_owner = urllib.parse.quote(owner, safe="")
-            encoded_repo = urllib.parse.quote(repo, safe="")
-            hooks_path = f"/repos/{encoded_owner}/{encoded_repo}/hooks?per_page=100"
-
-            status, hook_headers, hooks = _github_api_json_request("GET", hooks_path)
-            entry = {
-                "repository": info["full_name"],
-                "stack_keys": list(info.get("stack_keys") or []),
-                "callback_url": callback,
-                "status": "fallback",
-                "hook_id": None,
-                "last_sync_at": utc_now(),
-                "error": None,
-            }
-
-            if status != 200 or not isinstance(hooks, list):
-                if _github_webhook_permission_fallback(status, hook_headers, hooks):
-                    entry["status"] = "registry_fallback_permission"
-                    entry["fallback_reason"] = "webhook_permission_unavailable"
-                else:
-                    entry["error"] = _github_webhook_state_error(hooks, status)
-                    errors.append(f"{info['full_name']}: {entry['error']}")
-                repository_state[repo_key] = entry
-                continue
-
-            existing = None
-            for hook in hooks:
-                if not isinstance(hook, dict):
-                    continue
-                config = hook.get("config") if isinstance(hook.get("config"), dict) else {}
-                if str(config.get("url") or "").rstrip("/") == callback.rstrip("/"):
-                    existing = hook
-                    break
-
-            payload = {
-                "name": "web",
-                "active": True,
-                "events": ["package"],
-                "config": {
-                    "url": callback,
-                    "content_type": "json",
-                    "secret": secret,
-                    "insecure_ssl": "0",
-                },
-            }
-
-            if existing is None:
-                create_path = f"/repos/{encoded_owner}/{encoded_repo}/hooks"
-                create_status, create_headers, created = _github_api_json_request(
-                    "POST",
-                    create_path,
-                    payload,
-                )
-                if create_status != 201 or not isinstance(created, dict):
-                    if _github_webhook_permission_fallback(
-                        create_status, create_headers, created
-                    ):
-                        entry["status"] = "registry_fallback_permission"
-                        entry["fallback_reason"] = "webhook_permission_unavailable"
-                    else:
-                        entry["error"] = _github_webhook_state_error(
-                            created, create_status
-                        )
-                        errors.append(f"{info['full_name']}: {entry['error']}")
-                    repository_state[repo_key] = entry
-                    continue
-                existing = created
-            else:
-                hook_id = existing.get("id")
-                events = {
-                    str(value or "").strip()
-                    for value in (existing.get("events") or [])
-                    if str(value or "").strip()
-                }
-                if hook_id and (existing.get("active") is not True or "package" not in events):
-                    patch_path = (
-                        f"/repos/{encoded_owner}/{encoded_repo}/hooks/"
-                        + urllib.parse.quote(str(hook_id), safe="")
-                    )
-                    patch_status, patch_headers, patched = _github_api_json_request(
-                        "PATCH",
-                        patch_path,
-                        payload,
-                    )
-                    if patch_status != 200 or not isinstance(patched, dict):
-                        if _github_webhook_permission_fallback(
-                            patch_status, patch_headers, patched
-                        ):
-                            entry["status"] = "registry_fallback_permission"
-                            entry["fallback_reason"] = "webhook_permission_unavailable"
-                        else:
-                            entry["error"] = _github_webhook_state_error(
-                                patched, patch_status
-                            )
-                            errors.append(f"{info['full_name']}: {entry['error']}")
-                        repository_state[repo_key] = entry
-                        continue
-                    existing = patched
-
-            entry["hook_id"] = existing.get("id")
-            entry["status"] = "active"
-            repository_state[repo_key] = entry
-
-        for repo_key, entry in list(repository_state.items()):
-            if repo_key not in repo_map and isinstance(entry, dict):
-                entry = dict(entry)
-                entry["status"] = "unused"
-                entry["stack_keys"] = []
-                repository_state[repo_key] = entry
-
-        state["repositories"] = repository_state
-        state["last_sync_at"] = utc_now()
-        state["last_error"] = errors[0] if errors else None
-        _save_github_webhook_state(state)
-        return github_webhook_public_status()
-    finally:
-        GITHUB_WEBHOOK_SYNC_LOCK.release()
-
-
-def github_webhook_public_status():
-    enabled = bool(settings.get("github_webhook_auto"))
-    callback = str(settings.get("github_webhook_callback_url") or "").strip()
-    repo_map = _github_webhook_repository_map()
-    state = _load_github_webhook_state()
-    repositories = state.get("repositories") or {}
-
-    covered_stack_keys = set()
-    permission_fallback_stack_keys = set()
-    permission_fallback_repositories = 0
-    active_hooks = 0
-    for repo_key, info in repo_map.items():
-        entry = repositories.get(repo_key)
-        if not isinstance(entry, dict):
-            continue
-        if (
-            entry.get("status") == "active"
-            and str(entry.get("callback_url") or "").rstrip("/") == callback.rstrip("/")
-        ):
-            active_hooks += 1
-            covered_stack_keys.update(info.get("stack_keys") or [])
-        elif entry.get("status") == "registry_fallback_permission":
-            permission_fallback_repositories += 1
-            permission_fallback_stack_keys.update(info.get("stack_keys") or [])
-
-    with scan_lock:
-        all_stack_keys = {
-            str((app_item or {}).get("stack_key") or "").strip()
-            for app_item in (scan_state.get("apps") or [])
-            if str((app_item or {}).get("stack_key") or "").strip()
-        }
-
-    token, _source = active_github_token()
-    return {
-        "enabled": enabled,
-        "callback_url": callback or None,
-        "public_reachable_hint": bool(callback and _github_webhook_callback_public_hint(callback)),
-        "token_configured": bool(token),
-        "eligible_repositories": len(repo_map),
-        "active_hooks": active_hooks,
-        "covered_apps": len(covered_stack_keys),
-        "fallback_apps": max(0, len(all_stack_keys - covered_stack_keys)),
-        "permission_fallback_repositories": permission_fallback_repositories,
-        "permission_fallback_apps": len(permission_fallback_stack_keys),
-        "last_sync_at": state.get("last_sync_at"),
-        "last_event_at": state.get("last_event_at"),
-        "last_event_repository": state.get("last_event_repository"),
-        "last_error": state.get("last_error"),
-        "syncing": GITHUB_WEBHOOK_SYNC_LOCK.locked(),
-    }
-
-
-def github_webhook_reconcile_iteration():
-    if not bool(settings.get("github_webhook_auto")):
-        return False
-
-    repo_map = _github_webhook_repository_map()
-    token, _source = active_github_token()
-    signature_payload = {
-        "callback": str(settings.get("github_webhook_callback_url") or ""),
-        "token": bool(token),
-        "repositories": sorted(
-            (key, tuple(value.get("stack_keys") or []))
-            for key, value in repo_map.items()
-        ),
-    }
-    signature = hashlib.sha256(
-        json.dumps(signature_payload, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    now = time.monotonic()
-
-    with GITHUB_WEBHOOK_RECONCILE_LOCK:
-        changed = signature != GITHUB_WEBHOOK_RECONCILE.get("signature")
-        due = (now - float(GITHUB_WEBHOOK_RECONCILE.get("checked_at") or 0.0)) >= 21600
-        if not changed and not due:
-            return False
-        GITHUB_WEBHOOK_RECONCILE["signature"] = signature
-        GITHUB_WEBHOOK_RECONCILE["checked_at"] = now
-
-    threading.Thread(
-        target=sync_github_webhooks,
-        name="update-monitor-github-webhook-sync",
-        daemon=True,
-    ).start()
-    return True
-
-
-def _remember_github_webhook_delivery(delivery_id, repository):
-    state = _load_github_webhook_state()
-    delivery_id = str(delivery_id or "").strip()
-    recent = list(state.get("recent_delivery_ids") or [])
-    duplicate = bool(delivery_id and delivery_id in recent)
-    if delivery_id and not duplicate:
-        recent.append(delivery_id)
-    state["recent_delivery_ids"] = recent[-50:]
-    state["last_event_at"] = utc_now()
-    state["last_event_repository"] = str(repository or "").strip() or None
-    _save_github_webhook_state(state)
-    return duplicate
-
-
-def clear_github_version_cache_repository(owner, repo):
-    key = _github_cache_key(owner, repo)
-    with GITHUB_VERSION_CACHE_LOCK:
-        cache = load_json(GITHUB_VERSION_CACHE_FILE, {})
-        if not isinstance(cache, dict):
-            return
-        if key in cache:
-            cache.pop(key, None)
-            save_json(GITHUB_VERSION_CACHE_FILE, cache)
 
 
 def registry_tags(normalized, max_pages=5):
@@ -12351,10 +11831,6 @@ def scheduler_loop():
             scheduler_iteration()
         except Exception:
             pass
-        try:
-            github_webhook_reconcile_iteration()
-        except Exception:
-            pass
 
 
 @app.on_event("startup")
@@ -12375,13 +11851,6 @@ def startup():
     settings["backup_max_per_app_by_stack"] = _normalize_backup_max_per_app_map(
         settings.get("backup_max_per_app_by_stack")
     )
-    settings["github_webhook_auto"] = bool(settings.get("github_webhook_auto"))
-    try:
-        settings["github_webhook_callback_url"] = _normalize_github_webhook_callback_url(
-            settings.get("github_webhook_callback_url")
-        )
-    except ValueError:
-        settings["github_webhook_callback_url"] = ""
 
     try:
         load_backup_encryption_state()
@@ -12432,8 +11901,6 @@ def startup():
     threading.Thread(target=scheduler_loop, name="update-monitor-scheduler", daemon=True).start()
     threading.Thread(target=message_bus_listener_loop, name="update-monitor-message-bus", daemon=True).start()
     threading.Timer(1.0, reconcile_self_update_after_restart).start()
-    if settings.get("github_webhook_auto"):
-        threading.Timer(6.0, sync_github_webhooks).start()
 
     for index, stack_key in enumerate(false_pin_stacks):
         schedule_app_scan(
@@ -12540,183 +12007,6 @@ _INDEX_ASYNC_UPDATE_BRIDGE = r'''<script id="um-async-update-bridge-v0366">
       return originalImageSourceProgressLabel(info);
     };
   }
-})();
-</script>'''
-
-
-
-_INDEX_WEBHOOK_AUTOMATION_BRIDGE = r'''<script id="um-webhook-automation-v0370">
-(function(){
-  if(window.__umWebhookAutomationV0370)return;
-  window.__umWebhookAutomationV0369=true;
-
-  const words={
-    de:{
-      label:'Update Erkennung',
-      help:'GitHub Webhooks lösen eine gezielte App Prüfung aus. Andere Apps verwenden weiter die Registry Prüfung.',
-      enable:'Webhook Automatik aktivieren',
-      disable:'Webhook Automatik ausschalten',
-      reconnect:'Neu verbinden',
-      off:'Aus · Registry Prüfung aktiv',
-      noToken:'GitHub Token benötigt · Registry Prüfung aktiv',
-      noPublic:'Öffentliche HTTPS Adresse benötigt · Registry Prüfung aktiv',
-      none:'Keine geeigneten GitHub Repositorys · Registry Prüfung aktiv',
-      syncing:'Webhook Einrichtung läuft…',
-      active:'{hooks} Webhooks aktiv · {fallback} Apps Registry Prüfung',
-      permissionFallback:'{repos} GitHub Repositorys ohne Webhook Berechtigung · {fallback} Apps Registry Prüfung',
-      error:'Webhook Fehler: {error}'
-    },
-    en:{
-      label:'Update detection',
-      help:'GitHub webhooks trigger a targeted app check. Other apps continue to use registry checks.',
-      enable:'Enable webhook automation',
-      disable:'Disable webhook automation',
-      reconnect:'Reconnect',
-      off:'Off · Registry checks active',
-      noToken:'GitHub token required · Registry checks active',
-      noPublic:'Public HTTPS address required · Registry checks active',
-      none:'No eligible GitHub repositories · Registry checks active',
-      syncing:'Setting up webhooks…',
-      active:'{hooks} webhooks active · {fallback} apps using registry checks',
-      permissionFallback:'{repos} GitHub repositories without webhook permission · {fallback} apps using registry checks',
-      error:'Webhook error: {error}'
-    }
-  };
-  let current={enabled:false};
-
-  function copy(){
-    return words[(typeof state==='object'&&state.language==='en')?'en':'de'];
-  }
-  function format(template,values){
-    return String(template||'').replace(/\{(\w+)\}/g,(_,key)=>String(values[key]??''));
-  }
-  function ensureUi(){
-    if(document.getElementById('webhookAutomationSetting'))return true;
-    const github=document.querySelector('.github-token-setting');
-    if(!github||!github.parentNode)return false;
-
-    const row=document.createElement('div');
-    row.className='setting webhook-automation-setting';
-    row.id='webhookAutomationSetting';
-    row.innerHTML=
-      '<label id="webhookAutomationLabel">Update Erkennung</label>'+
-      '<div class="setting-help" id="webhookAutomationHelp"></div>'+
-      '<div class="github-token-status" id="webhookAutomationStatus"></div>'+
-      '<div class="github-token-status" id="webhookAutomationUrl"></div>'+
-      '<div class="github-token-actions">'+
-        '<button class="github-token-button" id="webhookAutomationToggle" type="button"></button>'+
-        '<button class="github-token-button" id="webhookAutomationReconnect" type="button"></button>'+
-      '</div>';
-    github.parentNode.insertBefore(row,github);
-
-    document.getElementById('webhookAutomationToggle').addEventListener('click',toggle);
-    document.getElementById('webhookAutomationReconnect').addEventListener('click',reconnect);
-    return true;
-  }
-  function render(status){
-    if(!ensureUi())return;
-    current=status&&typeof status==='object'?status:{enabled:false};
-    const w=copy();
-    document.getElementById('webhookAutomationLabel').textContent=w.label;
-    document.getElementById('webhookAutomationHelp').textContent=w.help;
-
-    let text=w.off;
-    if(current.enabled){
-      if(current.syncing)text=w.syncing;
-      else if(!current.token_configured)text=w.noToken;
-      else if(!current.public_reachable_hint)text=w.noPublic;
-      else if(Number(current.active_hooks||0)>0){
-        text=format(w.active,{
-          hooks:Number(current.active_hooks||0),
-          fallback:Number(current.fallback_apps||0)
-        });
-      }else if(Number(current.eligible_repositories||0)===0){
-        text=w.none;
-      }else if(current.last_error){
-        text=format(w.error,{error:String(current.last_error||'')});
-      }else if(Number(current.permission_fallback_repositories||0)>0){
-        text=format(w.permissionFallback,{
-          repos:Number(current.permission_fallback_repositories||0),
-          fallback:Number(current.fallback_apps||0)
-        });
-      }else{
-        text=format(w.active,{
-          hooks:Number(current.active_hooks||0),
-          fallback:Number(current.fallback_apps||0)
-        });
-      }
-    }
-    document.getElementById('webhookAutomationStatus').textContent=text;
-    document.getElementById('webhookAutomationUrl').textContent=
-      current.callback_url?String(current.callback_url):'';
-
-    const toggle=document.getElementById('webhookAutomationToggle');
-    toggle.textContent=current.enabled?w.disable:w.enable;
-    const reconnect=document.getElementById('webhookAutomationReconnect');
-    reconnect.textContent=w.reconnect;
-    reconnect.hidden=!current.enabled;
-  }
-  async function refresh(){
-    try{
-      const data=await api('/api/status');
-      render(data&&data.webhooks);
-      return data&&data.webhooks;
-    }catch(err){
-      if(err&&err.message!=='auth')console.error(err);
-      return null;
-    }
-  }
-  async function toggle(){
-    const button=document.getElementById('webhookAutomationToggle');
-    if(button)button.disabled=true;
-    try{
-      const result=await api('/api/webhooks/configure',{
-        method:'PUT',
-        body:JSON.stringify({
-          enabled:!current.enabled,
-          callback_url:window.location.origin+'/api/webhooks/github'
-        })
-      });
-      render(result&&result.webhooks);
-      if(!current.enabled)return;
-      setTimeout(refresh,1200);
-      setTimeout(refresh,3500);
-    }catch(err){
-      if(err&&err.message!=='auth')console.error(err);
-    }finally{
-      if(button)button.disabled=false;
-    }
-  }
-  async function reconnect(){
-    const button=document.getElementById('webhookAutomationReconnect');
-    if(button)button.disabled=true;
-    try{
-      const result=await api('/api/webhooks/configure',{
-        method:'PUT',
-        body:JSON.stringify({
-          enabled:true,
-          callback_url:window.location.origin+'/api/webhooks/github'
-        })
-      });
-      render(result&&result.webhooks);
-      await api('/api/webhooks/sync',{method:'POST',body:'{}'});
-      setTimeout(refresh,1200);
-      setTimeout(refresh,3500);
-    }catch(err){
-      if(err&&err.message!=='auth')console.error(err);
-    }finally{
-      if(button)button.disabled=false;
-    }
-  }
-
-  ensureUi();
-  refresh();
-  document.getElementById('settingsButton')?.addEventListener('click',()=>{
-    setTimeout(refresh,80);
-  });
-  document.getElementById('languageSelect')?.addEventListener('change',()=>{
-    setTimeout(()=>{render(current);},0);
-  });
 })();
 </script>'''
 
@@ -18962,123 +18252,7 @@ def status(request: Request):
         scan_payload = copy.deepcopy(scan_state)
     annotate_self_protection(scan_payload)
     annotate_version_confirmations(scan_payload)
-    return {"version": VERSION, "docker_version": docker_version(), "zimaos_app_management_detected": casaos_detected(), "settings": dict(settings), "github": github_token_public_status(), "webhooks": github_webhook_public_status(), "backup_encryption": backup_encryption_public_status(), "project_links": {"cache_file": str(PROJECT_LINK_CACHE_FILE), "cached_repositories": len(PROJECT_LINK_CACHE)}, "resource_usage": container_resource_usage(), "service_runtime": {"started_at": SERVICE_STARTED_AT}, "automation": {"pending_post_scans": pending_app_scan_keys()}, "scan": scan_payload}
-
-
-@app.put("/api/webhooks/configure")
-def github_webhook_configure(data: WebhookSettingsRequest, request: Request):
-    require_auth(request)
-    reject_mutation_during_scan()
-
-    callback = str(settings.get("github_webhook_callback_url") or "")
-    if data.callback_url is not None:
-        try:
-            callback = _normalize_github_webhook_callback_url(data.callback_url)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if data.enabled and not callback:
-        raise HTTPException(
-            status_code=400,
-            detail="A public Update Monitor address is required for webhook automation",
-        )
-
-    with settings_lock:
-        settings["github_webhook_auto"] = bool(data.enabled)
-        settings["github_webhook_callback_url"] = callback
-        save_json(SETTINGS_FILE, settings)
-
-    if data.enabled:
-        threading.Thread(
-            target=sync_github_webhooks,
-            name="update-monitor-github-webhook-configure",
-            daemon=True,
-        ).start()
-
-    return {
-        "success": True,
-        "webhooks": github_webhook_public_status(),
-    }
-
-
-@app.post("/api/webhooks/sync")
-def github_webhook_sync_now(request: Request):
-    require_auth(request)
-    reject_mutation_during_scan()
-    if not settings.get("github_webhook_auto"):
-        raise HTTPException(status_code=409, detail="Webhook automation is disabled")
-    threading.Thread(
-        target=sync_github_webhooks,
-        name="update-monitor-github-webhook-manual-sync",
-        daemon=True,
-    ).start()
-    return {"success": True, "webhooks": github_webhook_public_status()}
-
-
-@app.post("/api/webhooks/github")
-async def github_webhook_receiver(request: Request):
-    body = await request.body()
-    signature = str(request.headers.get("X-Hub-Signature-256") or "").strip()
-    expected = "sha256=" + hmac.new(
-        _github_webhook_secret().encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
-    if not signature or not hmac.compare_digest(signature, expected):
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
-
-    event = str(request.headers.get("X-GitHub-Event") or "").strip().lower()
-    delivery_id = str(request.headers.get("X-GitHub-Delivery") or "").strip()
-    try:
-        payload = json.loads(body.decode("utf-8")) if body else {}
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
-
-    repository = payload.get("repository") if isinstance(payload, dict) else None
-    if not isinstance(repository, dict):
-        package = payload.get("package") if isinstance(payload, dict) else None
-        repository = package.get("repository") if isinstance(package, dict) else None
-    full_name = str((repository or {}).get("full_name") or "").strip()
-    repo_key = full_name.casefold()
-
-    if _remember_github_webhook_delivery(delivery_id, full_name):
-        return {"accepted": True, "duplicate": True, "triggered_apps": 0}
-
-    if event == "ping":
-        return {"accepted": True, "event": "ping", "triggered_apps": 0}
-
-    action = str(payload.get("action") or "").strip().lower() if isinstance(payload, dict) else ""
-    if event != "package" or action != "published":
-        return {
-            "accepted": True,
-            "event": event,
-            "action": action,
-            "triggered_apps": 0,
-        }
-
-    repo_map = _github_webhook_repository_map()
-    info = repo_map.get(repo_key)
-    stack_keys = list((info or {}).get("stack_keys") or [])
-
-    if info:
-        clear_github_version_cache_repository(info["owner"], info["repo"])
-
-    scheduled = []
-    for index, stack_key in enumerate(stack_keys):
-        if schedule_app_scan(
-            stack_key,
-            delay=2.0 + (index * 0.35),
-            max_wait_seconds=900,
-        ):
-            scheduled.append(stack_key)
-
-    return {
-        "accepted": True,
-        "event": event,
-        "action": action,
-        "repository": full_name or None,
-        "triggered_apps": len(scheduled),
-    }
+    return {"version": VERSION, "docker_version": docker_version(), "zimaos_app_management_detected": casaos_detected(), "settings": dict(settings), "github": github_token_public_status(), "backup_encryption": backup_encryption_public_status(), "project_links": {"cache_file": str(PROJECT_LINK_CACHE_FILE), "cached_repositories": len(PROJECT_LINK_CACHE)}, "resource_usage": container_resource_usage(), "service_runtime": {"started_at": SERVICE_STARTED_AT}, "automation": {"pending_post_scans": pending_app_scan_keys()}, "scan": scan_payload}
 
 
 @app.post("/api/version-confirmation")
@@ -20507,12 +19681,6 @@ def github_token_save(data: GithubTokenRequest, request: Request):
             raise RuntimeError("Enter a GitHub token")
         test = test_github_token(token)
         save_github_token_secret(token)
-        if settings.get("github_webhook_auto"):
-            threading.Thread(
-                target=sync_github_webhooks,
-                name="update-monitor-github-webhook-token-sync",
-                daemon=True,
-            ).start()
         # Refill repository version data under the authenticated quota instead
         # of keeping entries originally populated through anonymous fallbacks.
         clear_github_version_cache()

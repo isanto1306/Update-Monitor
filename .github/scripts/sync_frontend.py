@@ -10,23 +10,19 @@ target = match.group(1)
 
 tree = ast.parse(main)
 runtime_bridge = None
-webhook_bridge = None
 for node in tree.body:
     if not isinstance(node, ast.Assign):
         continue
-    names = {
-        target_node.id
+    if not any(
+        isinstance(target_node, ast.Name)
+        and target_node.id == "_INDEX_ASYNC_UPDATE_BRIDGE"
         for target_node in node.targets
-        if isinstance(target_node, ast.Name)
-    }
-    if "_INDEX_ASYNC_UPDATE_BRIDGE" in names:
-        runtime_bridge = ast.literal_eval(node.value)
-    if "_INDEX_WEBHOOK_AUTOMATION_BRIDGE" in names:
-        webhook_bridge = ast.literal_eval(node.value)
+    ):
+        continue
+    runtime_bridge = ast.literal_eval(node.value)
+    break
 if not isinstance(runtime_bridge, str) or "um-async-update-bridge-v0366" not in runtime_bridge:
     raise SystemExit("Async update frontend bridge not found in backend source")
-if not isinstance(webhook_bridge, str) or "um-webhook-automation-v0370" not in webhook_bridge:
-    raise SystemExit("Webhook automation frontend bridge not found in backend source")
 
 path = Path("static/index.html")
 text = path.read_text(encoding="utf-8")
@@ -74,20 +70,6 @@ if 'id="um-async-update-bridge-v0366"' not in text:
     if "</body>" not in text:
         raise SystemExit("Frontend marker not found: closing body")
     text = text.replace("</body>", runtime_bridge + "\n</body>", 1)
-
-# v0.3.370: keep the Webhook + Registry Settings bridge synchronized.
-# Replace an older bridge revision in place so UI-only fixes are not skipped
-# merely because a previous bridge id already exists in static/index.html.
-webhook_pattern = re.compile(
-    r'<script id="um-webhook-automation-v\d+">.*?</script>',
-    re.DOTALL,
-)
-if webhook_pattern.search(text):
-    text = webhook_pattern.sub(lambda _match: webhook_bridge, text, count=1)
-else:
-    if "</body>" not in text:
-        raise SystemExit("Frontend marker not found: closing body for webhook bridge")
-    text = text.replace("</body>", webhook_bridge + "\n</body>", 1)
 
 # Older migration guard kept idempotent.
 old_error = """  const storedAutoError=(
