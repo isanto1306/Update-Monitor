@@ -25,7 +25,7 @@ for node in tree.body:
         webhook_bridge = ast.literal_eval(node.value)
 if not isinstance(runtime_bridge, str) or "um-async-update-bridge-v0366" not in runtime_bridge:
     raise SystemExit("Async update frontend bridge not found in backend source")
-if not isinstance(webhook_bridge, str) or "um-webhook-automation-v0369" not in webhook_bridge:
+if not isinstance(webhook_bridge, str) or "um-webhook-automation-v0370" not in webhook_bridge:
     raise SystemExit("Webhook automation frontend bridge not found in backend source")
 
 path = Path("static/index.html")
@@ -75,10 +75,16 @@ if 'id="um-async-update-bridge-v0366"' not in text:
         raise SystemExit("Frontend marker not found: closing body")
     text = text.replace("</body>", runtime_bridge + "\n</body>", 1)
 
-# v0.3.369: add one global Webhook + Registry hybrid control to Settings.
-# The bridge only adds UI; webhook registration and signature verification live
-# in the backend and the existing registry checks remain the fallback.
-if 'id="um-webhook-automation-v0369"' not in text:
+# v0.3.370: keep the Webhook + Registry Settings bridge synchronized.
+# Replace an older bridge revision in place so UI-only fixes are not skipped
+# merely because a previous bridge id already exists in static/index.html.
+webhook_pattern = re.compile(
+    r'<script id="um-webhook-automation-v\d+">.*?</script>',
+    re.DOTALL,
+)
+if webhook_pattern.search(text):
+    text = webhook_pattern.sub(webhook_bridge, text, count=1)
+else:
     if "</body>" not in text:
         raise SystemExit("Frontend marker not found: closing body for webhook bridge")
     text = text.replace("</body>", webhook_bridge + "\n</body>", 1)
