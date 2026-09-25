@@ -83,7 +83,7 @@ webhook_pattern = re.compile(
     re.DOTALL,
 )
 if webhook_pattern.search(text):
-    text = webhook_pattern.sub(webhook_bridge, text, count=1)
+    text = webhook_pattern.sub(lambda _match: webhook_bridge, text, count=1)
 else:
     if "</body>" not in text:
         raise SystemExit("Frontend marker not found: closing body for webhook bridge")
