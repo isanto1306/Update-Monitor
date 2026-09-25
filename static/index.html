@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.368"
+        href="favicon.ico?v=0.3.369"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.368"
+        href="favicon-16x16.png?v=0.3.369"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.368"
+        href="favicon-32x32.png?v=0.3.369"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.368"
+        href="apple-touch-icon.png?v=0.3.369"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.368"
+        href="site.webmanifest?v=0.3.369"
     >
 
     <meta
@@ -18403,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.368</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.369</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18752,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.368"></script>
+<script src="/update-channel.js?v=0.3.369"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.368';
+const UPDATE_MONITOR_VERSION = 'v0.3.369';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -25942,6 +25942,170 @@ document.addEventListener('keydown',event=>{
       return originalImageSourceProgressLabel(info);
     };
   }
+})();
+</script>
+<script id="um-webhook-automation-v0369">
+(function(){
+  if(window.__umWebhookAutomationV0369)return;
+  window.__umWebhookAutomationV0369=true;
+
+  const words={
+    de:{
+      label:'Update Erkennung',
+      help:'GitHub Webhooks lösen eine gezielte App Prüfung aus. Andere Apps verwenden weiter die Registry Prüfung.',
+      enable:'Webhook Automatik aktivieren',
+      disable:'Webhook Automatik ausschalten',
+      reconnect:'Neu verbinden',
+      off:'Aus · Registry Prüfung aktiv',
+      noToken:'GitHub Token benötigt · Registry Prüfung aktiv',
+      noPublic:'Öffentliche HTTPS Adresse benötigt · Registry Prüfung aktiv',
+      none:'Keine geeigneten GitHub Repositorys · Registry Prüfung aktiv',
+      syncing:'Webhook Einrichtung läuft…',
+      active:'{hooks} Webhooks aktiv · {fallback} Apps Registry Prüfung',
+      error:'Webhook Fehler: {error}'
+    },
+    en:{
+      label:'Update detection',
+      help:'GitHub webhooks trigger a targeted app check. Other apps continue to use registry checks.',
+      enable:'Enable webhook automation',
+      disable:'Disable webhook automation',
+      reconnect:'Reconnect',
+      off:'Off · Registry checks active',
+      noToken:'GitHub token required · Registry checks active',
+      noPublic:'Public HTTPS address required · Registry checks active',
+      none:'No eligible GitHub repositories · Registry checks active',
+      syncing:'Setting up webhooks…',
+      active:'{hooks} webhooks active · {fallback} apps using registry checks',
+      error:'Webhook error: {error}'
+    }
+  };
+  let current={enabled:false};
+
+  function copy(){
+    return words[(typeof state==='object'&&state.language==='en')?'en':'de'];
+  }
+  function format(template,values){
+    return String(template||'').replace(/\{(\w+)\}/g,(_,key)=>String(values[key]??''));
+  }
+  function ensureUi(){
+    if(document.getElementById('webhookAutomationSetting'))return true;
+    const github=document.querySelector('.github-token-setting');
+    if(!github||!github.parentNode)return false;
+
+    const row=document.createElement('div');
+    row.className='setting webhook-automation-setting';
+    row.id='webhookAutomationSetting';
+    row.innerHTML=
+      '<label id="webhookAutomationLabel">Update Erkennung</label>'+
+      '<div class="setting-help" id="webhookAutomationHelp"></div>'+
+      '<div class="github-token-status" id="webhookAutomationStatus"></div>'+
+      '<div class="github-token-status" id="webhookAutomationUrl"></div>'+
+      '<div class="github-token-actions">'+
+        '<button class="github-token-button" id="webhookAutomationToggle" type="button"></button>'+
+        '<button class="github-token-button" id="webhookAutomationReconnect" type="button"></button>'+
+      '</div>';
+    github.parentNode.insertBefore(row,github);
+
+    document.getElementById('webhookAutomationToggle').addEventListener('click',toggle);
+    document.getElementById('webhookAutomationReconnect').addEventListener('click',reconnect);
+    return true;
+  }
+  function render(status){
+    if(!ensureUi())return;
+    current=status&&typeof status==='object'?status:{enabled:false};
+    const w=copy();
+    document.getElementById('webhookAutomationLabel').textContent=w.label;
+    document.getElementById('webhookAutomationHelp').textContent=w.help;
+
+    let text=w.off;
+    if(current.enabled){
+      if(current.syncing)text=w.syncing;
+      else if(!current.token_configured)text=w.noToken;
+      else if(!current.public_reachable_hint)text=w.noPublic;
+      else if(Number(current.active_hooks||0)>0){
+        text=format(w.active,{
+          hooks:Number(current.active_hooks||0),
+          fallback:Number(current.fallback_apps||0)
+        });
+      }else if(Number(current.eligible_repositories||0)===0){
+        text=w.none;
+      }else if(current.last_error){
+        text=format(w.error,{error:String(current.last_error||'')});
+      }else{
+        text=w.syncing;
+      }
+    }
+    document.getElementById('webhookAutomationStatus').textContent=text;
+    document.getElementById('webhookAutomationUrl').textContent=
+      current.callback_url?String(current.callback_url):'';
+
+    const toggle=document.getElementById('webhookAutomationToggle');
+    toggle.textContent=current.enabled?w.disable:w.enable;
+    const reconnect=document.getElementById('webhookAutomationReconnect');
+    reconnect.textContent=w.reconnect;
+    reconnect.hidden=!current.enabled;
+  }
+  async function refresh(){
+    try{
+      const data=await api('/api/status');
+      render(data&&data.webhooks);
+      return data&&data.webhooks;
+    }catch(err){
+      if(err&&err.message!=='auth')console.error(err);
+      return null;
+    }
+  }
+  async function toggle(){
+    const button=document.getElementById('webhookAutomationToggle');
+    if(button)button.disabled=true;
+    try{
+      const result=await api('/api/webhooks/configure',{
+        method:'PUT',
+        body:JSON.stringify({
+          enabled:!current.enabled,
+          callback_url:window.location.origin+'/api/webhooks/github'
+        })
+      });
+      render(result&&result.webhooks);
+      if(!current.enabled)return;
+      setTimeout(refresh,1200);
+      setTimeout(refresh,3500);
+    }catch(err){
+      if(err&&err.message!=='auth')console.error(err);
+    }finally{
+      if(button)button.disabled=false;
+    }
+  }
+  async function reconnect(){
+    const button=document.getElementById('webhookAutomationReconnect');
+    if(button)button.disabled=true;
+    try{
+      const result=await api('/api/webhooks/configure',{
+        method:'PUT',
+        body:JSON.stringify({
+          enabled:true,
+          callback_url:window.location.origin+'/api/webhooks/github'
+        })
+      });
+      render(result&&result.webhooks);
+      await api('/api/webhooks/sync',{method:'POST',body:'{}'});
+      setTimeout(refresh,1200);
+      setTimeout(refresh,3500);
+    }catch(err){
+      if(err&&err.message!=='auth')console.error(err);
+    }finally{
+      if(button)button.disabled=false;
+    }
+  }
+
+  ensureUi();
+  refresh();
+  document.getElementById('settingsButton')?.addEventListener('click',()=>{
+    setTimeout(refresh,80);
+  });
+  document.getElementById('languageSelect')?.addEventListener('change',()=>{
+    setTimeout(()=>{render(current);},0);
+  });
 })();
 </script>
 </body>
