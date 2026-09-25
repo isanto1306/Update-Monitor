@@ -34,7 +34,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.369"
+VERSION = "0.3.370"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -2225,6 +2225,41 @@ def _github_webhook_state_error(payload, status):
     return f"HTTP {status}" if status else "GitHub is not reachable"
 
 
+def _github_webhook_permission_fallback(status, headers, payload):
+    """Return True when webhook administration is simply unavailable.
+
+    Most installed Docker images point at upstream GitHub repositories that the
+    Update Monitor user does not administer. GitHub correctly answers the hooks
+    endpoint with 403/404 in that case. That is an expected Registry fallback,
+    not a broken update-detection state.
+    """
+    try:
+        remaining = str((headers or {}).get("X-RateLimit-Remaining") or "").strip()
+    except Exception:
+        remaining = ""
+    if status == 403 and remaining == "0":
+        return False
+
+    message = ""
+    if isinstance(payload, dict):
+        message = str(payload.get("message") or payload.get("error") or "").strip().lower()
+
+    if status == 404:
+        return True
+    if status != 403:
+        return False
+
+    permission_markers = (
+        "resource not accessible by personal access token",
+        "resource not accessible by integration",
+        "must have admin rights",
+        "admin access",
+        "must have push access",
+        "forbidden",
+    )
+    return any(marker in message for marker in permission_markers) or not message
+
+
 def sync_github_webhooks():
     if not GITHUB_WEBHOOK_SYNC_LOCK.acquire(blocking=False):
         return github_webhook_public_status()
@@ -2276,7 +2311,7 @@ def sync_github_webhooks():
             encoded_repo = urllib.parse.quote(repo, safe="")
             hooks_path = f"/repos/{encoded_owner}/{encoded_repo}/hooks?per_page=100"
 
-            status, _headers, hooks = _github_api_json_request("GET", hooks_path)
+            status, hook_headers, hooks = _github_api_json_request("GET", hooks_path)
             entry = {
                 "repository": info["full_name"],
                 "stack_keys": list(info.get("stack_keys") or []),
@@ -2288,8 +2323,12 @@ def sync_github_webhooks():
             }
 
             if status != 200 or not isinstance(hooks, list):
-                entry["error"] = _github_webhook_state_error(hooks, status)
-                errors.append(f"{info['full_name']}: {entry['error']}")
+                if _github_webhook_permission_fallback(status, hook_headers, hooks):
+                    entry["status"] = "registry_fallback_permission"
+                    entry["fallback_reason"] = "webhook_permission_unavailable"
+                else:
+                    entry["error"] = _github_webhook_state_error(hooks, status)
+                    errors.append(f"{info['full_name']}: {entry['error']}")
                 repository_state[repo_key] = entry
                 continue
 
@@ -2316,14 +2355,22 @@ def sync_github_webhooks():
 
             if existing is None:
                 create_path = f"/repos/{encoded_owner}/{encoded_repo}/hooks"
-                create_status, _create_headers, created = _github_api_json_request(
+                create_status, create_headers, created = _github_api_json_request(
                     "POST",
                     create_path,
                     payload,
                 )
                 if create_status != 201 or not isinstance(created, dict):
-                    entry["error"] = _github_webhook_state_error(created, create_status)
-                    errors.append(f"{info['full_name']}: {entry['error']}")
+                    if _github_webhook_permission_fallback(
+                        create_status, create_headers, created
+                    ):
+                        entry["status"] = "registry_fallback_permission"
+                        entry["fallback_reason"] = "webhook_permission_unavailable"
+                    else:
+                        entry["error"] = _github_webhook_state_error(
+                            created, create_status
+                        )
+                        errors.append(f"{info['full_name']}: {entry['error']}")
                     repository_state[repo_key] = entry
                     continue
                 existing = created
@@ -2339,14 +2386,22 @@ def sync_github_webhooks():
                         f"/repos/{encoded_owner}/{encoded_repo}/hooks/"
                         + urllib.parse.quote(str(hook_id), safe="")
                     )
-                    patch_status, _patch_headers, patched = _github_api_json_request(
+                    patch_status, patch_headers, patched = _github_api_json_request(
                         "PATCH",
                         patch_path,
                         payload,
                     )
                     if patch_status != 200 or not isinstance(patched, dict):
-                        entry["error"] = _github_webhook_state_error(patched, patch_status)
-                        errors.append(f"{info['full_name']}: {entry['error']}")
+                        if _github_webhook_permission_fallback(
+                            patch_status, patch_headers, patched
+                        ):
+                            entry["status"] = "registry_fallback_permission"
+                            entry["fallback_reason"] = "webhook_permission_unavailable"
+                        else:
+                            entry["error"] = _github_webhook_state_error(
+                                patched, patch_status
+                            )
+                            errors.append(f"{info['full_name']}: {entry['error']}")
                         repository_state[repo_key] = entry
                         continue
                     existing = patched
@@ -2379,6 +2434,8 @@ def github_webhook_public_status():
     repositories = state.get("repositories") or {}
 
     covered_stack_keys = set()
+    permission_fallback_stack_keys = set()
+    permission_fallback_repositories = 0
     active_hooks = 0
     for repo_key, info in repo_map.items():
         entry = repositories.get(repo_key)
@@ -2390,6 +2447,9 @@ def github_webhook_public_status():
         ):
             active_hooks += 1
             covered_stack_keys.update(info.get("stack_keys") or [])
+        elif entry.get("status") == "registry_fallback_permission":
+            permission_fallback_repositories += 1
+            permission_fallback_stack_keys.update(info.get("stack_keys") or [])
 
     with scan_lock:
         all_stack_keys = {
@@ -2408,6 +2468,8 @@ def github_webhook_public_status():
         "active_hooks": active_hooks,
         "covered_apps": len(covered_stack_keys),
         "fallback_apps": max(0, len(all_stack_keys - covered_stack_keys)),
+        "permission_fallback_repositories": permission_fallback_repositories,
+        "permission_fallback_apps": len(permission_fallback_stack_keys),
         "last_sync_at": state.get("last_sync_at"),
         "last_event_at": state.get("last_event_at"),
         "last_event_repository": state.get("last_event_repository"),
@@ -12483,9 +12545,9 @@ _INDEX_ASYNC_UPDATE_BRIDGE = r'''<script id="um-async-update-bridge-v0366">
 
 
 
-_INDEX_WEBHOOK_AUTOMATION_BRIDGE = r'''<script id="um-webhook-automation-v0369">
+_INDEX_WEBHOOK_AUTOMATION_BRIDGE = r'''<script id="um-webhook-automation-v0370">
 (function(){
-  if(window.__umWebhookAutomationV0369)return;
+  if(window.__umWebhookAutomationV0370)return;
   window.__umWebhookAutomationV0369=true;
 
   const words={
@@ -12501,6 +12563,7 @@ _INDEX_WEBHOOK_AUTOMATION_BRIDGE = r'''<script id="um-webhook-automation-v0369">
       none:'Keine geeigneten GitHub Repositorys · Registry Prüfung aktiv',
       syncing:'Webhook Einrichtung läuft…',
       active:'{hooks} Webhooks aktiv · {fallback} Apps Registry Prüfung',
+      permissionFallback:'{repos} GitHub Repositorys ohne Webhook Berechtigung · {fallback} Apps Registry Prüfung',
       error:'Webhook Fehler: {error}'
     },
     en:{
@@ -12515,6 +12578,7 @@ _INDEX_WEBHOOK_AUTOMATION_BRIDGE = r'''<script id="um-webhook-automation-v0369">
       none:'No eligible GitHub repositories · Registry checks active',
       syncing:'Setting up webhooks…',
       active:'{hooks} webhooks active · {fallback} apps using registry checks',
+      permissionFallback:'{repos} GitHub repositories without webhook permission · {fallback} apps using registry checks',
       error:'Webhook error: {error}'
     }
   };
@@ -12570,8 +12634,16 @@ _INDEX_WEBHOOK_AUTOMATION_BRIDGE = r'''<script id="um-webhook-automation-v0369">
         text=w.none;
       }else if(current.last_error){
         text=format(w.error,{error:String(current.last_error||'')});
+      }else if(Number(current.permission_fallback_repositories||0)>0){
+        text=format(w.permissionFallback,{
+          repos:Number(current.permission_fallback_repositories||0),
+          fallback:Number(current.fallback_apps||0)
+        });
       }else{
-        text=w.syncing;
+        text=format(w.active,{
+          hooks:Number(current.active_hooks||0),
+          fallback:Number(current.fallback_apps||0)
+        });
       }
     }
     document.getElementById('webhookAutomationStatus').textContent=text;

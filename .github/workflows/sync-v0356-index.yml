@@ -55,7 +55,7 @@ jobs:
           assert isinstance(async_bridge, str)
           assert isinstance(webhook_bridge, str)
           assert '<script id="um-async-update-bridge-v0366">' in async_bridge
-          assert '<script id="um-webhook-automation-v0369">' in webhook_bridge
+          assert '<script id="um-webhook-automation-v0370">' in webhook_bridge
 
           Path("/tmp/um-async-update-bridge.js").write_text(
               async_bridge.split(">", 1)[1].rsplit("</script>", 1)[0],
@@ -347,10 +347,16 @@ jobs:
           assert '"events": ["package"]' in webhook_sync
           assert "hooks?per_page=100" in webhook_sync
           assert "github_webhook_callback_url" in webhook_configure
-          assert "um-webhook-automation-v0369" in html
+          webhook_permission_fallback = function_source("_github_webhook_permission_fallback")
+          assert "X-RateLimit-Remaining" in webhook_permission_fallback
+          assert "resource not accessible by personal access token" in webhook_permission_fallback
+          assert "registry_fallback_permission" in webhook_sync
+          assert "permission_fallback_repositories" in function_source("github_webhook_public_status")
+          assert "um-webhook-automation-v0370" in html
           assert "/api/webhooks/configure" in html
           assert "/api/webhooks/sync" in html
           assert "Registry Prüfung" in html
+          assert "ohne Webhook Berechtigung" in html
 
           # Frontend/release regression: all active version markers must agree.
           assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
