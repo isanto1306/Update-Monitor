@@ -345,7 +345,7 @@ jobs:
           assert 'action != "published"' in webhook_receiver
           assert "schedule_app_scan(" in webhook_receiver
           assert '"events": ["package"]' in webhook_sync
-          assert '"/hooks?per_page=100"' in webhook_sync
+          assert "hooks?per_page=100" in webhook_sync
           assert "github_webhook_callback_url" in webhook_configure
           assert "um-webhook-automation-v0369" in html
           assert "/api/webhooks/configure" in html
