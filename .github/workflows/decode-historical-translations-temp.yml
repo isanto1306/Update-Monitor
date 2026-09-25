@@ -1,0 +1,64 @@
+name: Decode historical translation dictionaries
+
+on:
+  push:
+    branches:
+      - restore-fr-pt-es-v0373
+
+permissions:
+  contents: write
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode embedded dictionaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import ast
+          import base64
+          import json
+          import zlib
+          from pathlib import Path
+
+          source = Path(".github/tmp/restored-translation-patcher-v0323.py").read_text(encoding="utf-8")
+          tree = ast.parse(source)
+          payload_b64 = None
+          for node in tree.body:
+              if not isinstance(node, ast.Assign):
+                  continue
+              if any(isinstance(t, ast.Name) and t.id == "_PAYLOAD_B64" for t in node.targets):
+                  payload_b64 = ast.literal_eval(node.value)
+                  break
+          if not payload_b64:
+              raise SystemExit("historical payload not found")
+
+          payload = json.loads(zlib.decompress(base64.b64decode(payload_b64)).decode("utf-8"))
+          Path(".github/tmp/historical-translations-v0323.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print({
+              "fr": len(payload.get("fr") or {}),
+              "pt": len(payload.get("pt") or {}),
+              "es": len(payload.get("es") or {}),
+              "inline_fr": len((payload.get("inline") or {}).get("fr") or {}),
+          })
+          PY
+
+      - name: Commit decoded dictionaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+isanto1306@users.noreply.github.com"
+          git add .github/tmp/historical-translations-v0323.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Decode historical FR PT ES dictionaries"
+          git push
