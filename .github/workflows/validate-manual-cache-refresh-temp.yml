@@ -1,0 +1,67 @@
+name: Validate manual Docker cache refresh
+
+on:
+  push:
+    branches:
+      - fix-manual-scan-cache-v0375
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate backend and synchronized frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate manual targeted cache refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import ast
+          import re
+          from pathlib import Path
+
+          main=Path("app/main.py").read_text(encoding="utf-8")
+          tree=ast.parse(main)
+          functions={
+              node.name:node
+              for node in tree.body
+              if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef))
+          }
+          app_scan=ast.get_source_segment(main,functions["app_scan"]) or ""
+          assert "app_item = find_scanned_app(stack_key)" in app_scan
+          assert "invalidate_version_caches_for_app(app_item)" in app_scan
+          assert "started = start_app_scan(stack_key)" in app_scan
+          assert app_scan.index("invalidate_version_caches_for_app(app_item)") < app_scan.index("started = start_app_scan(stack_key)")
+
+          schedule=ast.get_source_segment(main,functions["schedule_app_scan"]) or ""
+          assert "invalidate_version_caches_for_app(find_scanned_app(stack_key))" in schedule
+
+          version=re.search(r'^VERSION = "([^"]+)"',main,re.M).group(1)
+          assert version=="0.3.375"
+
+          html=Path("static/index.html").read_text(encoding="utf-8")
+          audit=Path("translation-audit-current.json").read_text(encoding="utf-8")
+          compose=Path("docker-compose.zimaos.yml").read_text(encoding="utf-8")
+          manifest=Path("static/site.webmanifest").read_text(encoding="utf-8")
+          channel=Path("static/update-channel.js").read_text(encoding="utf-8")
+          readme=Path("README.md").read_text(encoding="utf-8")
+
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.375';" in html
+          assert '"version": "v0.3.375"' in audit
+          assert 'version: "0.3.375"' in compose
+          assert "0.3.375" in manifest
+          assert "um-update-channel-v0375" in channel
+          assert "Current release: **v0.3.375**" in readme
+          print("manual Docker cache refresh validation passed")
+          PY
