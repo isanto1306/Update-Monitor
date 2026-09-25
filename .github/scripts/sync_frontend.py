@@ -10,19 +10,23 @@ target = match.group(1)
 
 tree = ast.parse(main)
 runtime_bridge = None
+webhook_bridge = None
 for node in tree.body:
     if not isinstance(node, ast.Assign):
         continue
-    if not any(
-        isinstance(target_node, ast.Name)
-        and target_node.id == "_INDEX_ASYNC_UPDATE_BRIDGE"
+    names = {
+        target_node.id
         for target_node in node.targets
-    ):
-        continue
-    runtime_bridge = ast.literal_eval(node.value)
-    break
+        if isinstance(target_node, ast.Name)
+    }
+    if "_INDEX_ASYNC_UPDATE_BRIDGE" in names:
+        runtime_bridge = ast.literal_eval(node.value)
+    if "_INDEX_WEBHOOK_AUTOMATION_BRIDGE" in names:
+        webhook_bridge = ast.literal_eval(node.value)
 if not isinstance(runtime_bridge, str) or "um-async-update-bridge-v0366" not in runtime_bridge:
     raise SystemExit("Async update frontend bridge not found in backend source")
+if not isinstance(webhook_bridge, str) or "um-webhook-automation-v0369" not in webhook_bridge:
+    raise SystemExit("Webhook automation frontend bridge not found in backend source")
 
 path = Path("static/index.html")
 text = path.read_text(encoding="utf-8")
@@ -70,6 +74,14 @@ if 'id="um-async-update-bridge-v0366"' not in text:
     if "</body>" not in text:
         raise SystemExit("Frontend marker not found: closing body")
     text = text.replace("</body>", runtime_bridge + "\n</body>", 1)
+
+# v0.3.369: add one global Webhook + Registry hybrid control to Settings.
+# The bridge only adds UI; webhook registration and signature verification live
+# in the backend and the existing registry checks remain the fallback.
+if 'id="um-webhook-automation-v0369"' not in text:
+    if "</body>" not in text:
+        raise SystemExit("Frontend marker not found: closing body for webhook bridge")
+    text = text.replace("</body>", webhook_bridge + "\n</body>", 1)
 
 # Older migration guard kept idempotent.
 old_error = """  const storedAutoError=(
