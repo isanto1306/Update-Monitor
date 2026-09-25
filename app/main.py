@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.373"
+VERSION = "0.3.374"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -2643,6 +2643,94 @@ def _github_api_headers(token_override=None):
 
 def _github_cache_key(owner, repo):
     return f"{str(owner).lower()}/{str(repo).lower()}"
+
+
+def invalidate_version_caches_for_app(app_item):
+    """Invalidate only version caches that belong to one successfully updated app.
+
+    A targeted post-update scan must not reuse a GitHub release catalogue or a
+    digest-to-version mapping that was populated before the update.  This is
+    especially important for moving tags such as :latest when a publisher
+    releases a numbered tag shortly before or during the image update.
+
+    Other applications keep their cache entries.
+    """
+    app_item = app_item if isinstance(app_item, dict) else {}
+    github_repositories = set()
+    image_repositories = set()
+
+    def remember_project_url(value):
+        repo_info = github_repo_from_url(value)
+        if repo_info:
+            owner, repo = repo_info
+            github_repositories.add(_github_cache_key(owner, repo))
+
+    remember_project_url(app_item.get("project_url"))
+
+    for item in app_item.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+
+        remember_project_url(item.get("project_url"))
+
+        refs = []
+        for key in ("image_ref", "tracking_image_ref"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                refs.append(value)
+        refs.extend(
+            str(value or "").strip()
+            for value in (item.get("runtime_image_refs") or [])
+            if str(value or "").strip()
+        )
+
+        for image_ref in refs:
+            try:
+                parsed = parse_image_ref(image_ref)
+            except Exception:
+                continue
+
+            repo_key = str(parsed.get("normalized_repo") or "").strip().lower()
+            if repo_key:
+                image_repositories.add(repo_key)
+
+            inferred_github = github_url_from_image_ref(image_ref)
+            if inferred_github:
+                remember_project_url(inferred_github)
+
+    removed_github = []
+    if github_repositories:
+        with GITHUB_VERSION_CACHE_LOCK:
+            cache = load_json(GITHUB_VERSION_CACHE_FILE, {})
+            if not isinstance(cache, dict):
+                cache = {}
+            for key in sorted(github_repositories):
+                if key in cache:
+                    cache.pop(key, None)
+                    removed_github.append(key)
+            if removed_github:
+                save_json(GITHUB_VERSION_CACHE_FILE, cache)
+
+    removed_installed = 0
+    if image_repositories:
+        with INSTALLED_VERSION_CACHE_LOCK:
+            for key, entry in list(INSTALLED_VERSION_CACHE.items()):
+                if not isinstance(entry, dict):
+                    continue
+                repo_key = str(entry.get("repo") or "").strip().lower()
+                if repo_key in image_repositories:
+                    INSTALLED_VERSION_CACHE.pop(key, None)
+                    removed_installed += 1
+            if removed_installed:
+                save_json(
+                    INSTALLED_VERSION_CACHE_FILE,
+                    INSTALLED_VERSION_CACHE,
+                )
+
+    return {
+        "github_repositories": removed_github,
+        "installed_version_entries": removed_installed,
+    }
 
 
 def _github_cache_read(owner, repo, max_age):
@@ -11260,6 +11348,18 @@ def schedule_app_scan(
 
     requested_at = utc_now()
     verified_targets = _post_update_verified_targets(verification_result)
+
+    # v0.3.374: a successful Docker/Compose action must not let the targeted
+    # verification scan reuse version metadata fetched before that action.
+    # Invalidate only this app's GitHub catalogue and digest->version entries;
+    # all unrelated applications keep their caches.
+    if isinstance(verification_result, dict) and verification_result:
+        try:
+            invalidate_version_caches_for_app(find_scanned_app(stack_key))
+        except Exception:
+            # Cache invalidation is best effort. Never suppress the mandatory
+            # post-update verification scan because a cache file is unreadable.
+            pass
 
     with post_scan_lock:
         if stack_key in post_scan_pending:
