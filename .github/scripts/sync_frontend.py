@@ -10,19 +10,27 @@ target = match.group(1)
 
 tree = ast.parse(main)
 runtime_bridge = None
+error_localization_bridge = None
 for node in tree.body:
     if not isinstance(node, ast.Assign):
         continue
-    if not any(
-        isinstance(target_node, ast.Name)
-        and target_node.id == "_INDEX_ASYNC_UPDATE_BRIDGE"
+    names = {
+        target_node.id
         for target_node in node.targets
-    ):
-        continue
-    runtime_bridge = ast.literal_eval(node.value)
-    break
+        if isinstance(target_node, ast.Name)
+    }
+    if "_INDEX_ASYNC_UPDATE_BRIDGE" in names:
+        runtime_bridge = ast.literal_eval(node.value)
+    if "_INDEX_ERROR_LOCALIZATION_BRIDGE" in names:
+        error_localization_bridge = ast.literal_eval(node.value)
+
 if not isinstance(runtime_bridge, str) or "um-async-update-bridge-v0366" not in runtime_bridge:
     raise SystemExit("Async update frontend bridge not found in backend source")
+if (
+    not isinstance(error_localization_bridge, str)
+    or "um-error-localization-v0372" not in error_localization_bridge
+):
+    raise SystemExit("Error localization frontend bridge not found in backend source")
 
 path = Path("static/index.html")
 text = path.read_text(encoding="utf-8")
@@ -70,6 +78,28 @@ if 'id="um-async-update-bridge-v0366"' not in text:
     if "</body>" not in text:
         raise SystemExit("Frontend marker not found: closing body")
     text = text.replace("</body>", runtime_bridge + "\n</body>", 1)
+
+# v0.3.372: every user-visible backend error passes through one shared
+# localization bridge. Keep it after the async update bridge so errors raised by
+# the background-update compatibility wrapper are translated as well.
+error_bridge_pattern = re.compile(
+    r'<script id="um-error-localization-v\d+">.*?</script>',
+    re.DOTALL,
+)
+if error_bridge_pattern.search(text):
+    text = error_bridge_pattern.sub(
+        lambda _match: error_localization_bridge,
+        text,
+        count=1,
+    )
+else:
+    if "</body>" not in text:
+        raise SystemExit("Frontend marker not found: closing body for error localization")
+    text = text.replace(
+        "</body>",
+        error_localization_bridge + "\n</body>",
+        1,
+    )
 
 # Older migration guard kept idempotent.
 old_error = """  const storedAutoError=(
