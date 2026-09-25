@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.369"
+        href="favicon.ico?v=0.3.370"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.369"
+        href="favicon-16x16.png?v=0.3.370"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.369"
+        href="favicon-32x32.png?v=0.3.370"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.369"
+        href="apple-touch-icon.png?v=0.3.370"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.369"
+        href="site.webmanifest?v=0.3.370"
     >
 
     <meta
@@ -18403,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.369</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.370</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18752,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.369"></script>
+<script src="/update-channel.js?v=0.3.370"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.369';
+const UPDATE_MONITOR_VERSION = 'v0.3.370';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -25944,9 +25944,9 @@ document.addEventListener('keydown',event=>{
   }
 })();
 </script>
-<script id="um-webhook-automation-v0369">
+<script id="um-webhook-automation-v0370">
 (function(){
-  if(window.__umWebhookAutomationV0369)return;
+  if(window.__umWebhookAutomationV0370)return;
   window.__umWebhookAutomationV0369=true;
 
   const words={
@@ -25962,6 +25962,7 @@ document.addEventListener('keydown',event=>{
       none:'Keine geeigneten GitHub Repositorys · Registry Prüfung aktiv',
       syncing:'Webhook Einrichtung läuft…',
       active:'{hooks} Webhooks aktiv · {fallback} Apps Registry Prüfung',
+      permissionFallback:'{repos} GitHub Repositorys ohne Webhook Berechtigung · {fallback} Apps Registry Prüfung',
       error:'Webhook Fehler: {error}'
     },
     en:{
@@ -25976,6 +25977,7 @@ document.addEventListener('keydown',event=>{
       none:'No eligible GitHub repositories · Registry checks active',
       syncing:'Setting up webhooks…',
       active:'{hooks} webhooks active · {fallback} apps using registry checks',
+      permissionFallback:'{repos} GitHub repositories without webhook permission · {fallback} apps using registry checks',
       error:'Webhook error: {error}'
     }
   };
@@ -26031,8 +26033,16 @@ document.addEventListener('keydown',event=>{
         text=w.none;
       }else if(current.last_error){
         text=format(w.error,{error:String(current.last_error||'')});
+      }else if(Number(current.permission_fallback_repositories||0)>0){
+        text=format(w.permissionFallback,{
+          repos:Number(current.permission_fallback_repositories||0),
+          fallback:Number(current.fallback_apps||0)
+        });
       }else{
-        text=w.syncing;
+        text=format(w.active,{
+          hooks:Number(current.active_hooks||0),
+          fallback:Number(current.fallback_apps||0)
+        });
       }
     }
     document.getElementById('webhookAutomationStatus').textContent=text;
