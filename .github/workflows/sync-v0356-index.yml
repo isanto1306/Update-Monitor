@@ -39,27 +39,35 @@ jobs:
 
           source = Path("app/main.py").read_text(encoding="utf-8")
           tree = ast.parse(source)
-          bridge = None
+          bridges = {}
           for node in tree.body:
               if not isinstance(node, ast.Assign):
                   continue
-              if any(
-                  isinstance(target, ast.Name)
-                  and target.id == "_INDEX_ASYNC_UPDATE_BRIDGE"
-                  for target in node.targets
-              ):
-                  bridge = ast.literal_eval(node.value)
-                  break
+              for target in node.targets:
+                  if isinstance(target, ast.Name) and target.id in {
+                      "_INDEX_ASYNC_UPDATE_BRIDGE",
+                      "_INDEX_WEBHOOK_AUTOMATION_BRIDGE",
+                  }:
+                      bridges[target.id] = ast.literal_eval(node.value)
 
-          assert isinstance(bridge, str)
-          assert '<script id="um-async-update-bridge-v0366">' in bridge
-          javascript = bridge.split(">", 1)[1].rsplit("</script>", 1)[0]
+          async_bridge = bridges.get("_INDEX_ASYNC_UPDATE_BRIDGE")
+          webhook_bridge = bridges.get("_INDEX_WEBHOOK_AUTOMATION_BRIDGE")
+          assert isinstance(async_bridge, str)
+          assert isinstance(webhook_bridge, str)
+          assert '<script id="um-async-update-bridge-v0366">' in async_bridge
+          assert '<script id="um-webhook-automation-v0369">' in webhook_bridge
+
           Path("/tmp/um-async-update-bridge.js").write_text(
-              javascript,
+              async_bridge.split(">", 1)[1].rsplit("</script>", 1)[0],
+              encoding="utf-8",
+          )
+          Path("/tmp/um-webhook-automation.js").write_text(
+              webhook_bridge.split(">", 1)[1].rsplit("</script>", 1)[0],
               encoding="utf-8",
           )
           PY
           node --check /tmp/um-async-update-bridge.js
+          node --check /tmp/um-webhook-automation.js
 
       - name: Run release regression checks
         shell: bash
@@ -327,6 +335,22 @@ jobs:
           assert "backupProgressVisuals" in html
           assert "smoothConfirmedBackupProgress" in html
           assert "requestAnimationFrame" in html
+
+          webhook_receiver = function_source("github_webhook_receiver")
+          webhook_sync = function_source("sync_github_webhooks")
+          webhook_configure = function_source("github_webhook_configure")
+          assert "X-Hub-Signature-256" in webhook_receiver
+          assert "hmac.compare_digest" in webhook_receiver
+          assert 'event != "package"' in webhook_receiver
+          assert 'action != "published"' in webhook_receiver
+          assert "schedule_app_scan(" in webhook_receiver
+          assert '"events": ["package"]' in webhook_sync
+          assert '"/hooks?per_page=100"' in webhook_sync
+          assert "github_webhook_callback_url" in webhook_configure
+          assert "um-webhook-automation-v0369" in html
+          assert "/api/webhooks/configure" in html
+          assert "/api/webhooks/sync" in html
+          assert "Registry Prüfung" in html
 
           # Frontend/release regression: all active version markers must agree.
           assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
