@@ -233,6 +233,82 @@ jobs:
               "linux/amd64",
           ) == "2.5.5"
 
+          # v0.3.374: a successful update invalidates only the affected app's
+          # release catalogue and digest-to-version cache. This prevents a fresh
+          # image from continuing to display the previous release (for example
+          # Minecraft 2026.9.2 still showing 2026.9.1).
+          cache_store = {
+              "github": {
+                  "itzg/docker-minecraft-server": {
+                      "tags": ["2026.9.1"],
+                      "fetched_at": 1,
+                  },
+                  "other/project": {
+                      "tags": ["1.0.0"],
+                      "fetched_at": 1,
+                  },
+              },
+          }
+          installed_cache = {
+              "minecraft-old": {
+                  "repo": "itzg/minecraft-server",
+                  "tag": "2026.9.1",
+              },
+              "other-entry": {
+                  "repo": "other/project",
+                  "tag": "1.0.0",
+              },
+          }
+
+          def cache_load(path, default):
+              value = cache_store.get(path, default)
+              return dict(value) if isinstance(value, dict) else value
+
+          def cache_save(path, value):
+              cache_store[path] = dict(value)
+
+          invalidate_fn, _ = load_function(
+              "invalidate_version_caches_for_app",
+              {
+                  "github_repo_from_url": lambda value: (
+                      ("itzg", "docker-minecraft-server")
+                      if "itzg/docker-minecraft-server" in str(value or "")
+                      else None
+                  ),
+                  "_github_cache_key": lambda owner, repo: (
+                      str(owner).lower() + "/" + str(repo).lower()
+                  ),
+                  "github_url_from_image_ref": lambda value: None,
+                  "parse_image_ref": parse_image_ref,
+                  "GITHUB_VERSION_CACHE_LOCK": __import__("threading").Lock(),
+                  "GITHUB_VERSION_CACHE_FILE": "github",
+                  "INSTALLED_VERSION_CACHE_LOCK": __import__("threading").Lock(),
+                  "INSTALLED_VERSION_CACHE_FILE": "installed",
+                  "INSTALLED_VERSION_CACHE": installed_cache,
+                  "load_json": cache_load,
+                  "save_json": cache_save,
+              },
+          )
+          invalidated = invalidate_fn({
+              "project_url": "https://github.com/itzg/docker-minecraft-server",
+              "items": [{
+                  "image_ref": "itzg/minecraft-server:latest",
+                  "runtime_image_refs": ["itzg/minecraft-server:latest"],
+              }],
+          })
+          assert invalidated["github_repositories"] == [
+              "itzg/docker-minecraft-server"
+          ]
+          assert invalidated["installed_version_entries"] == 1
+          assert "itzg/docker-minecraft-server" not in cache_store["github"]
+          assert "other/project" in cache_store["github"]
+          assert "minecraft-old" not in installed_cache
+          assert "other-entry" in installed_cache
+
+          schedule_source = function_source("schedule_app_scan")
+          assert "invalidate_version_caches_for_app(find_scanned_app(stack_key))" in schedule_source
+          assert "isinstance(verification_result, dict) and verification_result" in schedule_source
+
           # Exact follow-policy helper: channel 2 must survive and legacy :2 must recover.
           channel_fn, _ = load_function(
               "_follow_policy_tag",
