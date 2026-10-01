@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.384"
+VERSION = "0.3.385"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -11038,6 +11038,39 @@ def has_pending_targeted_app_scan(stack_key=None):
         return str(stack_key or "").strip() in post_scan_pending
 
 
+SELF_UPDATE_SCAN_BLOCK_MAX_SECONDS = 10 * 60
+
+
+def self_update_transition_active(now_utc=None):
+    """Keep scheduler/full scans out of an in-flight self-update restart.
+
+    Normal Docker actions are protected by app_update_lock, but that lock is
+    process-local and disappears when Update Monitor replaces its own container.
+    The persistent self-update marker bridges that restart window until the new
+    instance verifies the replacement and consumes the marker.
+    """
+    marker = load_json(SELF_UPDATE_STATE_FILE, {})
+    if not isinstance(marker, dict) or not marker or marker.get("consumed_at"):
+        return False
+    if marker.get("reconcile_failed_at"):
+        return False
+    if str(marker.get("status") or "").strip().lower() != "helper-started":
+        return False
+    if not str(marker.get("old_container_id") or "").strip():
+        return False
+    if not str(marker.get("stack_key") or "").strip():
+        return False
+
+    started_at = _parse_utc_timestamp(
+        marker.get("helper_started_at") or marker.get("requested_at")
+    )
+    if started_at is None:
+        return False
+    now_utc = now_utc or datetime.now(timezone.utc)
+    age_seconds = (now_utc - started_at).total_seconds()
+    return -60 <= age_seconds <= SELF_UPDATE_SCAN_BLOCK_MAX_SECONDS
+
+
 def full_scan_block_reason():
     """Central rule for every normal/full update check.
 
@@ -11046,6 +11079,9 @@ def full_scan_block_reason():
     to manual scans, interval scans, startup scans and any future full-scan
     caller.
     """
+    if self_update_transition_active():
+        return "self-update-transition-active"
+
     if app_update_lock.locked():
         return "app-operation-or-scan-active"
 
@@ -11832,6 +11868,9 @@ def scheduler_iteration(now_utc=None):
     # Hard bidirectional exclusion:
     # Docker action -> no scheduler scan/update decision.
     # Targeted post-action verification -> no unrelated full scan/update.
+    # Self-update restart -> persist the exclusion across the container swap.
+    if self_update_transition_active(now_utc=now_utc):
+        return "self-update-transition"
     if scan_state.get("state") == "scanning":
         return "busy-scan"
     if app_update_lock.locked() or active_mutating_action_keys():

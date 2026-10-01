@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.384**
+Current release: **v0.3.385**
+
+v0.3.385 prevents scheduled, startup and manual full update checks from starting during an Update Monitor self-update restart. The existing in-memory operation lock is now reinforced by the persistent self-update handoff marker, so the exclusion survives the container replacement until the new instance verifies the replacement. The scheduler also skips automatic decisions during that transition and retries normally afterward.
 
 v0.3.384 aligns the Manual percentage typography with the existing Time format selector. The percentage value and percent sign now inherit the same font family, size and weight as values such as 24 hours, while the permanent up/down controls, full-width Display selector and 40 px card safety boundary remain unchanged.
 
