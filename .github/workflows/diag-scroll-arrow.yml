@@ -1,0 +1,47 @@
+name: Temporary scroll arrow diagnostic
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/diag-scroll-arrow.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find bottom-right arrow candidates
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          paths = [Path('static/index.html'), Path('static/update-channel.js'), Path('static/layout-options.js')]
+          tokens = ('▲','▼','⌃','⌄','chevron','arrow','scroll','top','caret')
+          for path in paths:
+              text = path.read_text(encoding='utf-8', errors='ignore')
+              print(f'=== {path} symbol/name candidates ===')
+              lines = text.splitlines()
+              hits = []
+              for i,line in enumerate(lines,1):
+                  low=line.lower()
+                  if any(t.lower() in low for t in tokens):
+                      if any(k in low for k in ('button','fixed','bottom','right','scroll','chevron','arrow','caret','▲','⌃')):
+                          hits.append((i,line.strip()))
+              for i,line in hits[-120:]:
+                  print(f'{i}: {line[:700]}')
+
+              print(f'=== {path} fixed+bottom/right CSS blocks ===')
+              for m in re.finditer(r'([^{}]{0,180})\{([^{}]{0,900})\}', text, re.S):
+                  selector=' '.join(m.group(1).split())
+                  body=' '.join(m.group(2).split())
+                  low=body.lower()
+                  if 'position:fixed' in low.replace(' ','') and ('bottom:' in low or 'right:' in low):
+                      print(f'{selector[-180:]} {{{body[:850]}}}')
+          PY
