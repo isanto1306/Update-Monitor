@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.378**
+Current release: **v0.3.379**
+
+v0.3.379 adds a Manual display option alongside the existing fixed percentages. Manual accepts a custom value from 105% through 150% in 1% steps and stores that value separately, while Automatic remains the untouched original responsive layout. The custom percentage uses the same foreground-only scaling as the fixed choices, including dashboard controls and modal dialogs without scaling the wallpaper.
 
 v0.3.378 refines manual display scaling while leaving Automatic unchanged. Manual choices now run from 105% to 130% in 5% steps. The selected scale applies to the complete dashboard foreground, including the last-check/search/sort toolbar and app cards, plus modal layouts such as Docker information, Backup Settings, Update Channel, Image Source and update-policy dialogs, while the fixed wallpaper remains unscaled. The display selector now uses the same fixed popup behavior as Language so opening it no longer pushes or scrolls the Settings panel.
 
