@@ -9,6 +9,7 @@ var CUSTOM_MIN=105;
 var CUSTOM_MAX=150;
 var CUSTOM_DEFAULT=110;
 var SAFE_EDGE_PX=40;
+var DIALOG_EDGE_PX=24;
 var lastAppliedScale=null;
 
 var texts={
@@ -54,6 +55,32 @@ function activeScale(){
   return String(readCustom());
 }
 
+function dialogViewportHeight(){
+  var vv=window.visualViewport;
+  return Math.max(
+    240,
+    Math.round((vv&&vv.height)||document.documentElement.clientHeight||window.innerHeight||240)
+  );
+}
+
+function updateDialogViewportCap(){
+  var root=document.documentElement;
+  var viewportHeight=dialogViewportHeight();
+  var scale=readMode()==='manual'?(readCustom()/100):1;
+  var available=Math.max(160,viewportHeight-(DIALOG_EDGE_PX*2));
+  root.style.setProperty('--um-dialog-max-height',(available/Math.max(1,scale)).toFixed(2)+'px');
+}
+
+function installDialogViewportCap(){
+  if(window.__umDialogViewportCapInstalled)return;
+  window.__umDialogViewportCapInstalled=true;
+  updateDialogViewportCap();
+  window.addEventListener('resize',updateDialogViewportCap,{passive:true});
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',updateDialogViewportCap,{passive:true});
+  }
+}
+
 function applyScale(){
   var scale=activeScale();
   var root=document.documentElement;
@@ -67,6 +94,7 @@ function applyScale(){
     root.style.removeProperty('--um-manual-ui-scale');
     root.style.removeProperty('--um-manual-main-width');
   }
+  updateDialogViewportCap();
   if(lastAppliedScale===scale)return false;
   lastAppliedScale=scale;
   return true;
@@ -104,8 +132,9 @@ function installManualColumnBoundary(){
 }
 
 var style=document.createElement('style');
-style.id='um-card-scale-options-v10';
+style.id='um-card-scale-options-v11';
 style.textContent=[
+  'html [role="dialog"][aria-modal="true"]{max-height:var(--um-dialog-max-height,calc(100dvh - 48px)) !important;box-sizing:border-box;overflow-y:auto;}',
   'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',
   'html[data-um-card-scale] [class*="-backdrop"]>[role="dialog"][aria-modal="true"]{zoom:var(--um-manual-ui-scale);}',
   '#gridLayoutSetting.um-card-scale-setting{height:auto !important;min-height:0 !important;}',
@@ -289,6 +318,7 @@ function initialize(){
   migrateLegacyMode();
   if(!localStorage.getItem(CUSTOM_KEY))writeCustom(CUSTOM_DEFAULT);
   installManualColumnBoundary();
+  installDialogViewportCap();
   requestMainRender();
   ensureSetting();
 

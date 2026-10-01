@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.387**
+Current release: **v0.3.388**
+
+v0.3.388 adds a viewport-safe height cap to all modal settings and selection dialogs. Every modal keeps a 24 px visual safety margin at the top and bottom and scrolls internally when its content exceeds the available height. Manual display percentages are included in the height calculation, while the Docker card layout and its scaling remain unchanged.
 
 v0.3.387 moves the fixed back-to-top arrow another 1.5 px toward the right viewport edge. Desktop right offset is now 10.5 px and the mobile override is 7.5 px. The Docker publish workflow also makes numbered release images immutable and serializes publish attempts, preventing ordinary repository commits from rebuilding the same version and creating repeated self-update prompts.
 
