@@ -1,0 +1,121 @@
+name: One-time v0.3.386 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0386.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0386:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Move back-to-top arrow four pixels right
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('static/index.html')
+          text = p.read_text(encoding='utf-8')
+
+          old_desktop = '#umScrollTopButtonV03251{\n  position:fixed;\n  right:16px;'
+          new_desktop = '#umScrollTopButtonV03251{\n  position:fixed;\n  right:12px;'
+          if old_desktop not in text:
+              old_desktop = '#umScrollTopButtonV03251{ position:fixed; right:16px;'
+              new_desktop = '#umScrollTopButtonV03251{ position:fixed; right:12px;'
+          if old_desktop not in text:
+              raise SystemExit('Desktop scroll-top right offset marker missing')
+          text = text.replace(old_desktop, new_desktop, 1)
+
+          old_mobile = '#umScrollTopButtonV03251{ right:13px; bottom:15px; width:27px; height:27px; }'
+          new_mobile = '#umScrollTopButtonV03251{ right:9px; bottom:15px; width:27px; height:27px; }'
+          if old_mobile not in text:
+              raise SystemExit('Mobile scroll-top right offset marker missing')
+          text = text.replace(old_mobile, new_mobile, 1)
+
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Bump release markers to v0.3.386
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Missing expected marker in {path}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact('app/main.py', 'VERSION = "0.3.385"', 'VERSION = "0.3.386"')
+          replace_exact('docker-compose.zimaos.yml', '  version: "0.3.385"', '  version: "0.3.386"')
+          replace_exact('static/site.webmanifest', '?v=0.3.385', '?v=0.3.386')
+          replace_exact('static/update-channel.js', 'um-update-channel-v0385', 'um-update-channel-v0386')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.385', '/update-channel.js?v=0.3.386')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.386-selfscan1', '/update-channel.js?v=0.3.386-arrow1')
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          if 'Current release: **v0.3.385**' not in text:
+              raise SystemExit('README current release marker missing')
+          text = text.replace('Current release: **v0.3.385**', 'Current release: **v0.3.386**', 1)
+          marker = 'v0.3.385 prevents scheduled, startup and manual full update checks from starting during an Update Monitor self-update restart.'
+          if marker not in text:
+              raise SystemExit('README v0.3.385 marker missing')
+          entry = (
+              'v0.3.386 moves the fixed back-to-top arrow 4 px farther toward the right viewport edge, '
+              'increasing the small visual gap between the arrow and the Docker card layout without changing its size, vertical position or behavior. '
+              'Desktop right offset is 12 px and the existing mobile override is 9 px.\n\n'
+          )
+          text = text.replace(marker, entry + marker, 1)
+          readme.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate v0.3.386 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          python3 <<'PY'
+          from pathlib import Path
+          py = Path('app/main.py').read_text(encoding='utf-8')
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          assert 'VERSION = "0.3.386"' in py
+          assert '#umScrollTopButtonV03251{ position:fixed; right:12px;' in ' '.join(html.split())
+          assert '#umScrollTopButtonV03251{ right:9px; bottom:15px; width:27px; height:27px; }' in ' '.join(html.split())
+          assert '#umScrollTopButtonV03251{ position:fixed; right:16px;' not in ' '.join(html.split())
+          assert '#umScrollTopButtonV03251{ right:13px; bottom:15px;' not in ' '.join(html.split())
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.386';" in html
+          assert 'id="systemInfoVersion">v0.3.386</div>' in html
+          PY
+
+      - name: Commit synchronized v0.3.386
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.386 adjust scroll arrow spacing"
+          git push
