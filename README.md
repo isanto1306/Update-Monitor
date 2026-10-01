@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.376**
+Current release: **v0.3.377**
+
+v0.3.377 restores the original responsive Update Monitor dashboard behavior when “Automatic” is selected. Automatic no longer applies any custom card scaling or display-width thresholds; the existing production grid decides the card layout exactly as before. Manual 100%, 110%, 125% and 130% card scaling remains available only when explicitly selected.
 
 v0.3.376 replaces the experimental fixed 6×4/6×3 dashboard layout with card-only display scaling. Settings now offer Automatic, 100%, 110%, 125% and 130%; Automatic adapts to the available display width while the top bar, search and sorting controls keep their normal size.
 
