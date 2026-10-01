@@ -20,28 +20,26 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
-          import re
 
-          paths = [Path('static/index.html'), Path('static/update-channel.js'), Path('static/layout-options.js')]
-          tokens = ('▲','▼','⌃','⌄','chevron','arrow','scroll','top','caret')
-          for path in paths:
+          for path in [Path('static/index.html'), Path('static/update-channel.js'), Path('static/layout-options.js')]:
               text = path.read_text(encoding='utf-8', errors='ignore')
-              print(f'=== {path} symbol/name candidates ===')
-              lines = text.splitlines()
-              hits = []
-              for i,line in enumerate(lines,1):
-                  low=line.lower()
-                  if any(t.lower() in low for t in tokens):
-                      if any(k in low for k in ('button','fixed','bottom','right','scroll','chevron','arrow','caret','▲','⌃')):
-                          hits.append((i,line.strip()))
-              for i,line in hits[-120:]:
-                  print(f'{i}: {line[:700]}')
-
-              print(f'=== {path} fixed+bottom/right CSS blocks ===')
-              for m in re.finditer(r'([^{}]{0,180})\{([^{}]{0,900})\}', text, re.S):
-                  selector=' '.join(m.group(1).split())
-                  body=' '.join(m.group(2).split())
-                  low=body.lower()
-                  if 'position:fixed' in low.replace(' ','') and ('bottom:' in low or 'right:' in low):
-                      print(f'{selector[-180:]} {{{body[:850]}}}')
+              low = text.lower()
+              print(f'=== {path} ===')
+              shown = set()
+              for needle in ['position:fixed','position: fixed','scrolltop','scroll-top','scrolltotop','backtotop','chevron-up','arrow-up','caret-up','▲','⌃']:
+                  start = 0
+                  count = 0
+                  while count < 30:
+                      pos = low.find(needle.lower(), start)
+                      if pos < 0:
+                          break
+                      left = max(0, pos-500)
+                      right = min(len(text), pos+900)
+                      snippet = ' '.join(text[left:right].split())
+                      key = snippet[:220]
+                      if key not in shown:
+                          shown.add(key)
+                          print(f'[{needle} @ {pos}] {snippet[:1400]}')
+                      start = pos + max(1, len(needle))
+                      count += 1
           PY
