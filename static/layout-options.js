@@ -3,7 +3,7 @@
 
 var STORAGE_KEY='updateMonitorGridLayout';
 var CUSTOM_KEY='updateMonitorGridCustomPercent';
-var MODES={auto:true,'105':true,'110':true,'115':true,'120':true,'125':true,'130':true,manual:true};
+var MODES={auto:true,manual:true};
 var DEFAULT_MODE='auto';
 var CUSTOM_MIN=105;
 var CUSTOM_MAX=150;
@@ -50,8 +50,7 @@ function activeScale(){
   var mode=readMode();
   /* Automatic means: do not override the production layout at all. */
   if(mode==='auto')return '';
-  if(mode==='manual')return String(readCustom());
-  return mode;
+  return String(readCustom());
 }
 
 function applyScale(){
@@ -82,7 +81,7 @@ function requestMainRender(){
 }
 
 var style=document.createElement('style');
-style.id='um-card-scale-options-v5';
+style.id='um-card-scale-options-v6';
 style.textContent=[
   'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',
   'html[data-um-card-scale] [class*="-backdrop"]>[role="dialog"][aria-modal="true"]{zoom:var(--um-manual-ui-scale);}',
@@ -158,12 +157,6 @@ function ensureSetting(){
     <label id="gridLayoutLabel" for="gridLayoutSelect">Darstellung</label>\
     <select id="gridLayoutSelect" class="settings-native-select">\
       <option value="auto">Automatisch</option>\
-      <option value="105">105 %</option>\
-      <option value="110">110 %</option>\
-      <option value="115">115 %</option>\
-      <option value="120">120 %</option>\
-      <option value="125">125 %</option>\
-      <option value="130">130 %</option>\
       <option value="manual">Manuell</option>\
     </select>\
     <div id="gridLayoutCustomWrap" class="um-card-custom-wrap" hidden>\
@@ -180,12 +173,8 @@ function ensureSetting(){
   var input=document.getElementById('gridLayoutCustomInput');
   select.value=readMode();
   select.addEventListener('change',function(){
-    var previous=readMode();
     var mode=String(select.value||DEFAULT_MODE);
     if(!MODES[mode])mode=DEFAULT_MODE;
-    if(mode==='manual'&&!localStorage.getItem(CUSTOM_KEY)&&/^\d+$/.test(previous)){
-      writeCustom(previous);
-    }
     localStorage.setItem(STORAGE_KEY,mode);
     syncCustomVisibility();
     requestMainRender();
@@ -222,10 +211,19 @@ function ensureSetting(){
   updateSettingText();
 }
 
-function initialize(){
-  if(!MODES[String(localStorage.getItem(STORAGE_KEY)||'').trim().toLowerCase()]){
-    localStorage.setItem(STORAGE_KEY,DEFAULT_MODE);
+function migrateLegacyMode(){
+  var saved=String(localStorage.getItem(STORAGE_KEY)||'').trim().toLowerCase();
+  if(MODES[saved])return;
+  if(/^\d+$/.test(saved)){
+    writeCustom(saved);
+    localStorage.setItem(STORAGE_KEY,'manual');
+    return;
   }
+  localStorage.setItem(STORAGE_KEY,DEFAULT_MODE);
+}
+
+function initialize(){
+  migrateLegacyMode();
   if(!localStorage.getItem(CUSTOM_KEY))writeCustom(CUSTOM_DEFAULT);
   requestMainRender();
   ensureSetting();
