@@ -1,0 +1,98 @@
+name: One-time v0.3.382 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0382.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0382:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Bump release markers to v0.3.382
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Missing expected marker in {path}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact('app/main.py', 'VERSION = "0.3.381"', 'VERSION = "0.3.382"')
+          replace_exact('docker-compose.zimaos.yml', '  version: "0.3.381"', '  version: "0.3.382"')
+          replace_exact('static/site.webmanifest', '?v=0.3.381', '?v=0.3.382')
+          replace_exact('static/update-channel.js', 'um-update-channel-v0381', 'um-update-channel-v0382')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.381', '/update-channel.js?v=0.3.382')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.382-edge1', '/update-channel.js?v=0.3.382-spinner1')
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace('Current release: **v0.3.381**', 'Current release: **v0.3.382**', 1)
+          marker = 'v0.3.381 improves Manual display scaling with a 40 px safety boundary on both viewport edges.'
+          if marker not in text:
+              raise SystemExit('README v0.3.381 marker missing')
+          entry = (
+              'v0.3.382 restores the Display selector to the same full width as Time format and Language. '
+              'When Manual is selected, the 105%–150% number input with native up/down controls is shown inside that same selector row on the right, while Manual remains on the left and the normal dropdown control stays available. '
+              'The 40 px left/right card safety boundary from v0.3.381 remains unchanged.\n\n'
+          )
+          text = text.replace(marker, entry + marker, 1)
+          readme.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate v0.3.382 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          python3 <<'PY'
+          from pathlib import Path
+          js = Path('static/layout-options.js').read_text(encoding='utf-8')
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          assert 'MODES={auto:true,manual:true}' in js
+          assert 'SAFE_EDGE_PX=40' in js
+          assert 'viewportWidth-(SAFE_EDGE_PX*2)' in js
+          assert '#gridLayoutSetting .settings-custom-select{width:100% !important' in js
+          assert '#gridLayoutSetting.manual-active .settings-custom-select-button{padding-right:164px !important;}' in js
+          assert 'attachCustomValueToSelector' in js
+          assert 'wrapper.appendChild(wrap)' in js
+          assert 'right:38px' in js
+          assert 'type="number" min="105" max="150" step="1"' in js
+          assert '<span class="um-card-custom-unit">%</span>' in js
+          assert 'width:calc(100% - 90px)' not in js
+          assert "if(mode==='auto')return ''" in js
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.382';" in html
+          assert 'id="systemInfoVersion">v0.3.382</div>' in html
+          PY
+
+      - name: Commit synchronized v0.3.382
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.382 full-width manual spinner"
+          git push
