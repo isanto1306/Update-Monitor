@@ -13,11 +13,11 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app/main.py /app/main.py
 COPY static/ /app/static/
-# Keep the large production HTML untouched in Git. The optional card-layout
+# Keep the large production HTML untouched in Git. The card display-scaling
 # controller is appended to the already loaded frontend bridge at image build.
 RUN printf '\n' >> /app/static/update-channel.js \
     && cat /app/static/layout-options.js >> /app/static/update-channel.js \
-    && python -c 'from pathlib import Path; p=Path("/app/static/index.html"); s=p.read_text(encoding="utf-8"); p.write_text(s.replace("/update-channel.js?v=0.3.375", "/update-channel.js?v=0.3.375-layout1", 1), encoding="utf-8")'
+    && python -c 'from pathlib import Path; p=Path("/app/static/index.html"); s=p.read_text(encoding="utf-8"); p.write_text(s.replace("/update-channel.js?v=0.3.376", "/update-channel.js?v=0.3.376-scale1", 1), encoding="utf-8")'
 RUN python -m py_compile /app/main.py
 RUN mkdir -p /app/cache /app/backups
 
