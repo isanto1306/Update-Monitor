@@ -23,24 +23,24 @@ jobs:
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
+          import re
 
           p = Path('static/index.html')
           text = p.read_text(encoding='utf-8')
 
-          old_desktop = '#umScrollTopButtonV03251{\n  position:fixed;\n  right:16px;'
-          new_desktop = '#umScrollTopButtonV03251{\n  position:fixed;\n  right:12px;'
-          if old_desktop not in text:
-              old_desktop = '#umScrollTopButtonV03251{ position:fixed; right:16px;'
-              new_desktop = '#umScrollTopButtonV03251{ position:fixed; right:12px;'
-          if old_desktop not in text:
-              raise SystemExit('Desktop scroll-top right offset marker missing')
-          text = text.replace(old_desktop, new_desktop, 1)
+          desktop_pattern = re.compile(
+              r'(#umScrollTopButtonV03251\s*\{\s*position\s*:\s*fixed\s*;\s*right\s*:\s*)16px\s*;'
+          )
+          text, desktop_count = desktop_pattern.subn(r'\g<1>12px;', text, count=1)
+          if desktop_count != 1:
+              raise SystemExit(f'Desktop scroll-top offset replacements: {desktop_count}')
 
-          old_mobile = '#umScrollTopButtonV03251{ right:13px; bottom:15px; width:27px; height:27px; }'
-          new_mobile = '#umScrollTopButtonV03251{ right:9px; bottom:15px; width:27px; height:27px; }'
-          if old_mobile not in text:
-              raise SystemExit('Mobile scroll-top right offset marker missing')
-          text = text.replace(old_mobile, new_mobile, 1)
+          mobile_pattern = re.compile(
+              r'(#umScrollTopButtonV03251\s*\{\s*right\s*:\s*)13px(\s*;\s*bottom\s*:\s*15px\s*;\s*width\s*:\s*27px\s*;\s*height\s*:\s*27px\s*;\s*\})'
+          )
+          text, mobile_count = mobile_pattern.subn(r'\g<1>9px\g<2>', text, count=1)
+          if mobile_count != 1:
+              raise SystemExit(f'Mobile scroll-top offset replacements: {mobile_count}')
 
           p.write_text(text, encoding='utf-8')
           PY
@@ -99,13 +99,13 @@ jobs:
           node --check static/update-channel.js
           python3 <<'PY'
           from pathlib import Path
+          import re
           py = Path('app/main.py').read_text(encoding='utf-8')
           html = Path('static/index.html').read_text(encoding='utf-8')
           assert 'VERSION = "0.3.386"' in py
-          assert '#umScrollTopButtonV03251{ position:fixed; right:12px;' in ' '.join(html.split())
-          assert '#umScrollTopButtonV03251{ right:9px; bottom:15px; width:27px; height:27px; }' in ' '.join(html.split())
-          assert '#umScrollTopButtonV03251{ position:fixed; right:16px;' not in ' '.join(html.split())
-          assert '#umScrollTopButtonV03251{ right:13px; bottom:15px;' not in ' '.join(html.split())
+          assert re.search(r'#umScrollTopButtonV03251\s*\{\s*position\s*:\s*fixed\s*;\s*right\s*:\s*12px\s*;', html)
+          assert re.search(r'#umScrollTopButtonV03251\s*\{\s*right\s*:\s*9px\s*;\s*bottom\s*:\s*15px\s*;', html)
+          assert not re.search(r'#umScrollTopButtonV03251\s*\{\s*position\s*:\s*fixed\s*;\s*right\s*:\s*16px\s*;', html)
           assert "const UPDATE_MONITOR_VERSION = 'v0.3.386';" in html
           assert 'id="systemInfoVersion">v0.3.386</div>' in html
           PY
