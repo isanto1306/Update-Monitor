@@ -1,0 +1,96 @@
+name: One-time v0.3.380 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0380.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0380:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Bump release markers to v0.3.380
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Missing expected marker in {path}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact('app/main.py', 'VERSION = "0.3.379"', 'VERSION = "0.3.380"')
+          replace_exact('docker-compose.zimaos.yml', '  version: "0.3.379"', '  version: "0.3.380"')
+          replace_exact('static/site.webmanifest', '?v=0.3.379', '?v=0.3.380')
+          replace_exact('static/update-channel.js', 'um-update-channel-v0379', 'um-update-channel-v0380')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.379', '/update-channel.js?v=0.3.380')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.380-custom1', '/update-channel.js?v=0.3.380-display1')
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace('Current release: **v0.3.379**', 'Current release: **v0.3.380**', 1)
+          marker = 'v0.3.379 adds a Manual display option alongside the existing fixed percentages.'
+          if marker not in text:
+              raise SystemExit('README v0.3.379 marker missing')
+          entry = (
+              'v0.3.380 simplifies display scaling to only Automatic and Manual. '
+              'Automatic remains the untouched original responsive layout. Manual keeps the custom 105%–150% input, while the fixed 105/110/115/120/125/130% choices are removed. '
+              'Existing saved fixed percentage choices migrate automatically to Manual with the same percentage value.\n\n'
+          )
+          text = text.replace(marker, entry + marker, 1)
+          readme.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate v0.3.380 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          python3 <<'PY'
+          from pathlib import Path
+          js = Path('static/layout-options.js').read_text(encoding='utf-8')
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          assert 'MODES={auto:true,manual:true}' in js
+          for value in ('105','110','115','120','125','130'):
+              assert f'<option value="{value}">' not in js
+          assert '<option value="auto">Automatisch</option>' in js
+          assert '<option value="manual">Manuell</option>' in js
+          assert 'function migrateLegacyMode()' in js
+          assert "localStorage.setItem(STORAGE_KEY,'manual')" in js
+          assert 'id="gridLayoutCustomInput"' in js
+          assert 'min="105" max="150" step="1"' in js
+          assert "if(mode==='auto')return ''" in js
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.380';" in html
+          assert 'id="systemInfoVersion">v0.3.380</div>' in html
+          PY
+
+      - name: Commit synchronized v0.3.380
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.380 simplified display scaling"
+          git push
