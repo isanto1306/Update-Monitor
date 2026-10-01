@@ -8,6 +8,7 @@ var DEFAULT_MODE='auto';
 var CUSTOM_MIN=105;
 var CUSTOM_MAX=150;
 var CUSTOM_DEFAULT=110;
+var SAFE_EDGE_PX=40;
 var lastAppliedScale=null;
 
 var texts={
@@ -31,7 +32,7 @@ function readMode(){
 }
 
 function clampCustom(value){
-  var parsed=parseInt(value,10);
+  var parsed=parseInt(String(value||'').replace(/[^0-9]/g,''),10);
   if(!Number.isFinite(parsed))parsed=CUSTOM_DEFAULT;
   return Math.max(CUSTOM_MIN,Math.min(CUSTOM_MAX,parsed));
 }
@@ -44,6 +45,10 @@ function writeCustom(value){
   var normalized=clampCustom(value);
   localStorage.setItem(CUSTOM_KEY,String(normalized));
   return normalized;
+}
+
+function formatCustom(value){
+  return String(clampCustom(value))+' %';
 }
 
 function activeScale(){
@@ -80,20 +85,40 @@ function requestMainRender(){
   try{window.dispatchEvent(new Event('resize'));}catch(e){}
 }
 
+function installManualColumnBoundary(){
+  if(window.__umManualColumnBoundaryInstalled)return;
+  var original=window.getUpdateColumnCount;
+  if(typeof original!=='function')return;
+  window.__umManualColumnBoundaryInstalled=true;
+  window.getUpdateColumnCount=function(grid){
+    if(readMode()!=='manual')return original(grid);
+    var vv=window.visualViewport;
+    var viewportWidth=Math.max(
+      320,
+      Math.round((vv&&vv.width)||document.documentElement.clientWidth||window.innerWidth||320)
+    );
+    if(viewportWidth<760)return 1;
+    var scale=readCustom()/100;
+    var available=Math.max(0,viewportWidth-(SAFE_EDGE_PX*2));
+    var cardWidth=318*scale;
+    var gap=14*scale;
+    var fit=Math.floor((available+gap)/(cardWidth+gap));
+    return Math.max(1,Math.min(5,fit));
+  };
+}
+
 var style=document.createElement('style');
-style.id='um-card-scale-options-v6';
+style.id='um-card-scale-options-v7';
 style.textContent=[
   'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',
   'html[data-um-card-scale] [class*="-backdrop"]>[role="dialog"][aria-modal="true"]{zoom:var(--um-manual-ui-scale);}',
-  '#gridLayoutSetting.um-card-scale-setting{height:auto !important;min-height:0 !important;flex-wrap:wrap !important;align-items:center !important;}',
-  '#gridLayoutSetting .um-card-custom-wrap{flex:0 0 100%;width:100%;display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;}',
+  '#gridLayoutSetting.um-card-scale-setting{height:auto !important;min-height:0 !important;}',
+  '#gridLayoutSetting.manual-active .settings-custom-select{display:inline-block !important;width:calc(100% - 90px) !important;vertical-align:top;}',
+  '#gridLayoutSetting .um-card-custom-wrap{display:inline-flex;align-items:center;justify-content:flex-end;width:82px;margin-left:8px;vertical-align:top;}',
   '#gridLayoutSetting .um-card-custom-wrap[hidden]{display:none !important;}',
-  '#gridLayoutSetting .um-card-custom-label{font-size:12px;line-height:1.2;opacity:.78;}',
-  '#gridLayoutSetting .um-card-custom-input-wrap{display:flex;align-items:center;gap:5px;}',
-  '#gridLayoutSetting .um-card-custom-input{width:72px;height:32px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:rgba(13,21,29,.72);color:var(--text);font:inherit;text-align:right;outline:none;}',
+  '#gridLayoutSetting .um-card-custom-input{width:82px;height:32px;padding:0 9px;border:1px solid var(--border);border-radius:6px;background:rgba(13,21,29,.72);color:var(--text);font:inherit;text-align:center;outline:none;}',
   '#gridLayoutSetting .um-card-custom-input:focus{border-color:rgba(91,156,255,.72);box-shadow:0 0 0 2px rgba(91,156,255,.12);}',
-  '#gridLayoutSetting .um-card-custom-unit{font-size:12px;opacity:.78;}',
-  '#gridLayoutSetting .um-card-scale-hint{flex:0 0 100%;width:100%;box-sizing:border-box;margin-top:7px;font-size:12px;line-height:1.35;opacity:.68;}'
+  '#gridLayoutSetting .um-card-scale-hint{width:100%;box-sizing:border-box;margin-top:7px;font-size:12px;line-height:1.35;opacity:.68;}'
 ].join('');
 document.head.appendChild(style);
 
@@ -107,25 +132,25 @@ function fixLayoutSelectPopup(){
 }
 
 function syncCustomVisibility(){
+  var setting=document.getElementById('gridLayoutSetting');
   var wrap=document.getElementById('gridLayoutCustomWrap');
   var input=document.getElementById('gridLayoutCustomInput');
-  if(!wrap||!input)return;
+  if(!setting||!wrap||!input)return;
   var manual=readMode()==='manual';
+  setting.classList.toggle('manual-active',manual);
   wrap.hidden=!manual;
-  input.value=String(readCustom());
+  if(document.activeElement!==input)input.value=formatCustom(readCustom());
 }
 
 function updateSettingText(){
   var select=document.getElementById('gridLayoutSelect');
   var label=document.getElementById('gridLayoutLabel');
   var hint=document.getElementById('gridLayoutHint');
-  var customLabel=document.getElementById('gridLayoutCustomLabel');
   var customInput=document.getElementById('gridLayoutCustomInput');
   if(!select||!label)return;
   var copy=texts[language()];
   label.textContent=copy.label;
   if(hint)hint.textContent=copy.hint;
-  if(customLabel)customLabel.textContent=copy.custom;
   if(customInput)customInput.setAttribute('aria-label',copy.custom);
   var auto=select.querySelector('option[value="auto"]');
   var manual=select.querySelector('option[value="manual"]');
@@ -159,13 +184,9 @@ function ensureSetting(){
       <option value="auto">Automatisch</option>\
       <option value="manual">Manuell</option>\
     </select>\
-    <div id="gridLayoutCustomWrap" class="um-card-custom-wrap" hidden>\
-      <span id="gridLayoutCustomLabel" class="um-card-custom-label">Eigener Wert</span>\
-      <span class="um-card-custom-input-wrap">\
-        <input id="gridLayoutCustomInput" class="um-card-custom-input" type="number" min="105" max="150" step="1" inputmode="numeric" value="110" aria-label="Eigener Wert">\
-        <span class="um-card-custom-unit">%</span>\
-      </span>\
-    </div>\
+    <span id="gridLayoutCustomWrap" class="um-card-custom-wrap" hidden>\
+      <input id="gridLayoutCustomInput" class="um-card-custom-input" type="text" inputmode="numeric" value="110 %" aria-label="Eigener Wert">\
+    </span>\
     <div id="gridLayoutHint" class="um-card-scale-hint">Automatisch wird je nach Displaygröße angepasst.</div>';
   anchorSetting.insertAdjacentElement('afterend',setting);
 
@@ -177,14 +198,19 @@ function ensureSetting(){
     if(!MODES[mode])mode=DEFAULT_MODE;
     localStorage.setItem(STORAGE_KEY,mode);
     syncCustomVisibility();
+    lastAppliedScale=null;
     requestMainRender();
     updateSettingText();
   });
 
   if(input){
-    input.value=String(readCustom());
-    input.addEventListener('change',function(){
-      input.value=String(writeCustom(input.value));
+    input.value=formatCustom(readCustom());
+    input.addEventListener('focus',function(){
+      input.value=String(readCustom());
+      try{input.select();}catch(e){}
+    });
+    input.addEventListener('blur',function(){
+      input.value=formatCustom(writeCustom(input.value));
       if(readMode()==='manual'){
         lastAppliedScale=null;
         requestMainRender();
@@ -225,6 +251,7 @@ function migrateLegacyMode(){
 function initialize(){
   migrateLegacyMode();
   if(!localStorage.getItem(CUSTOM_KEY))writeCustom(CUSTOM_DEFAULT);
+  installManualColumnBoundary();
   requestMainRender();
   ensureSetting();
 
