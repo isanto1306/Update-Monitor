@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.385**
+Current release: **v0.3.386**
+
+v0.3.386 moves the fixed back-to-top arrow 4 px farther toward the right viewport edge, increasing the small visual gap between the arrow and the Docker card layout without changing its size, vertical position or behavior. Desktop right offset is 12 px and the existing mobile override is 9 px.
 
 v0.3.385 prevents scheduled, startup and manual full update checks from starting during an Update Monitor self-update restart. The existing in-memory operation lock is now reinforced by the persistent self-update handoff marker, so the exclusion survives the container replacement until the new instance verifies the replacement. The scheduler also skips automatic decisions during that transition and retries normally afterward.
 
