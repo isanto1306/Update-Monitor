@@ -15,6 +15,13 @@ permissions:
   contents: read
   packages: write
 
+# Only one publish attempt may inspect/build GHCR at a time. This closes the
+# race where several successful validation runs for the same version finish
+# within seconds and all rebuild the same release before the first push settles.
+concurrency:
+  group: publish-update-monitor
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
@@ -53,8 +60,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Protect immutable release image
+        id: release_guard
+        if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/update-monitor
+          VERSION: ${{ steps.app_version.outputs.version }}
+        run: |
+          set -euo pipefail
+          inspect_output="$(mktemp)"
+          if docker buildx imagetools inspect "${IMAGE}:${VERSION}" >"$inspect_output" 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${IMAGE}:${VERSION} already exists. The version is immutable, so this workflow will not rebuild or move latest."
+            exit 0
+          fi
+
+          if grep -Eqi 'manifest unknown|not found|name unknown' "$inspect_output"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No existing ${IMAGE}:${VERSION} manifest found; a new release image may be published."
+            exit 0
+          fi
+
+          echo "Could not safely determine whether ${IMAGE}:${VERSION} already exists:" >&2
+          cat "$inspect_output" >&2
+          exit 1
+
       - name: Docker metadata
         id: meta
+        if: steps.release_guard.outputs.exists != 'true'
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/update-monitor
@@ -65,6 +99,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push image
+        if: steps.release_guard.outputs.exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
