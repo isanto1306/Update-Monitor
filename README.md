@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.379**
+Current release: **v0.3.380**
+
+v0.3.380 simplifies display scaling to only Automatic and Manual. Automatic remains the untouched original responsive layout. Manual keeps the custom 105%–150% input, while the fixed 105/110/115/120/125/130% choices are removed. Existing saved fixed percentage choices migrate automatically to Manual with the same percentage value.
 
 v0.3.379 adds a Manual display option alongside the existing fixed percentages. Manual accepts a custom value from 105% through 150% in 1% steps and stores that value separately, while Automatic remains the untouched original responsive layout. The custom percentage uses the same foreground-only scaling as the fixed choices, including dashboard controls and modal dialogs without scaling the wallpaper.
 
