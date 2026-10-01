@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.382**
+Current release: **v0.3.383**
+
+v0.3.383 refines the Manual percentage control inside the full-width Display selector. The custom percentage no longer has its own surrounding border, the percent sign sits directly beside the larger number, and dedicated up/down arrow controls stay permanently visible with extra spacing from the value. The 40 px left/right card safety boundary and Automatic mode remain unchanged.
 
 v0.3.382 restores the Display selector to the same full width as Time format and Language. When Manual is selected, the 105%–150% number input with native up/down controls is shown inside that same selector row on the right, while Manual remains on the left and the normal dropdown control stays available. The 40 px left/right card safety boundary from v0.3.381 remains unchanged.
 
