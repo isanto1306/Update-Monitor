@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.386**
+Current release: **v0.3.387**
+
+v0.3.387 moves the fixed back-to-top arrow another 1.5 px toward the right viewport edge. Desktop right offset is now 10.5 px and the mobile override is 7.5 px. The Docker publish workflow also makes numbered release images immutable and serializes publish attempts, preventing ordinary repository commits from rebuilding the same version and creating repeated self-update prompts.
 
 v0.3.386 moves the fixed back-to-top arrow 4 px farther toward the right viewport edge, increasing the small visual gap between the arrow and the Docker card layout without changing its size, vertical position or behavior. Desktop right offset is 12 px and the existing mobile override is 9 px.
 
