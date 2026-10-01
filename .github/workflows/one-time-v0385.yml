@@ -1,0 +1,127 @@
+name: One-time v0.3.385 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0385.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0385:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Add persistent self-update scan exclusion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('app/main.py')
+          text = p.read_text(encoding='utf-8')
+
+          marker = '\ndef full_scan_block_reason():\n'
+          if marker not in text:
+              raise SystemExit('full_scan_block_reason marker missing')
+
+          helper = '''\nSELF_UPDATE_SCAN_BLOCK_MAX_SECONDS = 10 * 60\n\n\ndef self_update_transition_active(now_utc=None):\n    \"\"\"Keep scheduler/full scans out of an in-flight self-update restart.\n\n    Normal Docker actions are protected by app_update_lock, but that lock is\n    process-local and disappears when Update Monitor replaces its own container.\n    The persistent self-update marker bridges that restart window until the new\n    instance verifies the replacement and consumes the marker.\n    \"\"\"\n    marker = load_json(SELF_UPDATE_STATE_FILE, {})\n    if not isinstance(marker, dict) or not marker or marker.get(\"consumed_at\"):\n        return False\n    if marker.get(\"reconcile_failed_at\"):\n        return False\n    if str(marker.get(\"status\") or \"\").strip().lower() != \"helper-started\":\n        return False\n    if not str(marker.get(\"old_container_id\") or \"\").strip():\n        return False\n    if not str(marker.get(\"stack_key\") or \"\").strip():\n        return False\n\n    started_at = _parse_utc_timestamp(\n        marker.get(\"helper_started_at\") or marker.get(\"requested_at\")\n    )\n    if started_at is None:\n        return False\n    now_utc = now_utc or datetime.now(timezone.utc)\n    age_seconds = (now_utc - started_at).total_seconds()\n    return -60 <= age_seconds <= SELF_UPDATE_SCAN_BLOCK_MAX_SECONDS\n\n\ndef full_scan_block_reason():\n'''
+          text = text.replace(marker, helper, 1)
+
+          old_gate = '''    caller.\n    \"\"\"\n    if app_update_lock.locked():\n'''
+          new_gate = '''    caller.\n    \"\"\"\n    if self_update_transition_active():\n        return \"self-update-transition-active\"\n\n    if app_update_lock.locked():\n'''
+          if old_gate not in text:
+              raise SystemExit('full scan gate insertion point missing')
+          text = text.replace(old_gate, new_gate, 1)
+
+          old_scheduler = '''    # Hard bidirectional exclusion:\n    # Docker action -> no scheduler scan/update decision.\n    # Targeted post-action verification -> no unrelated full scan/update.\n    if scan_state.get(\"state\") == \"scanning\":\n'''
+          new_scheduler = '''    # Hard bidirectional exclusion:\n    # Docker action -> no scheduler scan/update decision.\n    # Targeted post-action verification -> no unrelated full scan/update.\n    # Self-update restart -> persist the exclusion across the container swap.\n    if self_update_transition_active(now_utc=now_utc):\n        return \"self-update-transition\"\n    if scan_state.get(\"state\") == \"scanning\":\n'''
+          if old_scheduler not in text:
+              raise SystemExit('scheduler exclusion insertion point missing')
+          text = text.replace(old_scheduler, new_scheduler, 1)
+
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Bump release markers to v0.3.385
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Missing expected marker in {path}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact('app/main.py', 'VERSION = "0.3.384"', 'VERSION = "0.3.385"')
+          replace_exact('docker-compose.zimaos.yml', '  version: "0.3.384"', '  version: "0.3.385"')
+          replace_exact('static/site.webmanifest', '?v=0.3.384', '?v=0.3.385')
+          replace_exact('static/update-channel.js', 'um-update-channel-v0384', 'um-update-channel-v0385')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.384', '/update-channel.js?v=0.3.385')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.385-typography1', '/update-channel.js?v=0.3.385-selfscan1')
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace('Current release: **v0.3.384**', 'Current release: **v0.3.385**', 1)
+          marker = 'v0.3.384 aligns the Manual percentage typography with the existing Time format selector.'
+          if marker not in text:
+              raise SystemExit('README v0.3.384 marker missing')
+          entry = (
+              'v0.3.385 prevents scheduled, startup and manual full update checks from starting during an Update Monitor self-update restart. '
+              'The existing in-memory operation lock is now reinforced by the persistent self-update handoff marker, so the exclusion survives the container replacement until the new instance verifies the replacement. '
+              'The scheduler also skips automatic decisions during that transition and retries normally afterward.\n\n'
+          )
+          text = text.replace(marker, entry + marker, 1)
+          readme.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate v0.3.385 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          python3 <<'PY'
+          from pathlib import Path
+          py = Path('app/main.py').read_text(encoding='utf-8')
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          assert 'SELF_UPDATE_SCAN_BLOCK_MAX_SECONDS = 10 * 60' in py
+          assert 'def self_update_transition_active(now_utc=None):' in py
+          assert 'marker.get("helper_started_at") or marker.get("requested_at")' in py
+          assert 'return -60 <= age_seconds <= SELF_UPDATE_SCAN_BLOCK_MAX_SECONDS' in py
+          assert 'return "self-update-transition-active"' in py
+          assert 'if self_update_transition_active(now_utc=now_utc):' in py
+          assert 'return "self-update-transition"' in py
+          assert py.count('def self_update_transition_active(now_utc=None):') == 1
+          assert "VERSION = \"0.3.385\"" in py
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.385';" in html
+          assert 'id="systemInfoVersion">v0.3.385</div>' in html
+          PY
+
+      - name: Commit synchronized v0.3.385
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.385 block scans during self update"
+          git push
