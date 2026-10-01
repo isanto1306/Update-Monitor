@@ -40,48 +40,39 @@ jobs:
               'dialog edge constant',
           )
 
-          active_scale = """function activeScale(){
-  var mode=readMode();
-  /* Automatic means: do not override the production layout at all. */
-  if(mode==='auto')return '';
-  return String(readCustom());
-}
-
-"""
-          dialog_helpers = """function activeScale(){
-  var mode=readMode();
-  /* Automatic means: do not override the production layout at all. */
-  if(mode==='auto')return '';
-  return String(readCustom());
-}
-
-function dialogViewportHeight(){
-  var vv=window.visualViewport;
-  return Math.max(
-    240,
-    Math.round((vv&&vv.height)||document.documentElement.clientHeight||window.innerHeight||240)
-  );
-}
-
-function updateDialogViewportCap(){
-  var root=document.documentElement;
-  var viewportHeight=dialogViewportHeight();
-  var scale=readMode()==='manual'?(readCustom()/100):1;
-  var available=Math.max(160,viewportHeight-(DIALOG_EDGE_PX*2));
-  root.style.setProperty('--um-dialog-max-height',(available/Math.max(1,scale)).toFixed(2)+'px');
-}
-
-function installDialogViewportCap(){
-  if(window.__umDialogViewportCapInstalled)return;
-  window.__umDialogViewportCapInstalled=true;
-  updateDialogViewportCap();
-  window.addEventListener('resize',updateDialogViewportCap,{passive:true});
-  if(window.visualViewport){
-    window.visualViewport.addEventListener('resize',updateDialogViewportCap,{passive:true});
-  }
-}
-
-"""
+          active_scale = (
+              "function activeScale(){\n"
+              "  var mode=readMode();\n"
+              "  /* Automatic means: do not override the production layout at all. */\n"
+              "  if(mode==='auto')return '';\n"
+              "  return String(readCustom());\n"
+              "}\n\n"
+          )
+          dialog_helpers = active_scale + (
+              "function dialogViewportHeight(){\n"
+              "  var vv=window.visualViewport;\n"
+              "  return Math.max(\n"
+              "    240,\n"
+              "    Math.round((vv&&vv.height)||document.documentElement.clientHeight||window.innerHeight||240)\n"
+              "  );\n"
+              "}\n\n"
+              "function updateDialogViewportCap(){\n"
+              "  var root=document.documentElement;\n"
+              "  var viewportHeight=dialogViewportHeight();\n"
+              "  var scale=readMode()==='manual'?(readCustom()/100):1;\n"
+              "  var available=Math.max(160,viewportHeight-(DIALOG_EDGE_PX*2));\n"
+              "  root.style.setProperty('--um-dialog-max-height',(available/Math.max(1,scale)).toFixed(2)+'px');\n"
+              "}\n\n"
+              "function installDialogViewportCap(){\n"
+              "  if(window.__umDialogViewportCapInstalled)return;\n"
+              "  window.__umDialogViewportCapInstalled=true;\n"
+              "  updateDialogViewportCap();\n"
+              "  window.addEventListener('resize',updateDialogViewportCap,{passive:true});\n"
+              "  if(window.visualViewport){\n"
+              "    window.visualViewport.addEventListener('resize',updateDialogViewportCap,{passive:true});\n"
+              "  }\n"
+              "}\n\n"
+          )
           replace_once(active_scale, dialog_helpers, 'dialog viewport helpers')
 
           replace_once(
