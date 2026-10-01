@@ -4,8 +4,7 @@
 var STORAGE_KEY='updateMonitorGridLayout';
 var MODES={auto:true,'100':true,'110':true,'125':true,'130':true};
 var DEFAULT_MODE='auto';
-var resizeTimer=null;
-var lastAppliedScale='';
+var lastAppliedScale=null;
 
 var texts={
   de:{label:'Darstellung',auto:'Automatisch',hint:'Automatisch wird je nach Displaygröße angepasst.'},
@@ -27,27 +26,19 @@ function readMode(){
   return MODES[value]?value:DEFAULT_MODE;
 }
 
-function viewportWidth(){
-  var vv=window.visualViewport;
-  return Math.max(320,Math.round((vv&&vv.width)||document.documentElement.clientWidth||window.innerWidth||320));
-}
-
-function automaticScale(){
-  var width=viewportWidth();
-  if(width>=2400)return '130';
-  if(width>=1800)return '125';
-  if(width>=1440)return '110';
-  return '100';
-}
-
 function activeScale(){
   var mode=readMode();
-  return mode==='auto'?automaticScale():mode;
+  /* Automatic means: do not override the production grid at all. */
+  return mode==='auto'?'':mode;
 }
 
 function applyScale(){
   var scale=activeScale();
-  document.documentElement.setAttribute('data-um-card-scale',scale);
+  if(scale){
+    document.documentElement.setAttribute('data-um-card-scale',scale);
+  }else{
+    document.documentElement.removeAttribute('data-um-card-scale');
+  }
   if(lastAppliedScale===scale)return false;
   lastAppliedScale=scale;
   return true;
@@ -57,16 +48,14 @@ function requestMainRender(){
   var changed=applyScale();
   if(!changed)return;
   try{
-    if(typeof window.render==='function'){
-      window.render();
-      return;
-    }
+    if(typeof window.render==='function')window.render();
   }catch(e){}
+  /* Let the original Update Monitor responsive code recalculate its layout. */
   try{window.dispatchEvent(new Event('resize'));}catch(e){}
 }
 
 var style=document.createElement('style');
-style.id='um-card-scale-options-v2';
+style.id='um-card-scale-options-v3';
 style.textContent=[
   'html[data-um-card-scale="100"] .update-grid{zoom:1;width:100% !important;max-width:100% !important;}',
   'html[data-um-card-scale="110"] .update-grid{zoom:1.10;width:90.9091% !important;max-width:none !important;}',
@@ -125,7 +114,6 @@ function ensureSetting(){
     var mode=String(select.value||DEFAULT_MODE);
     if(!MODES[mode])mode=DEFAULT_MODE;
     localStorage.setItem(STORAGE_KEY,mode);
-    lastAppliedScale='';
     requestMainRender();
     updateSettingText();
   });
@@ -143,33 +131,17 @@ function ensureSetting(){
 }
 
 function initialize(){
-  /* Old 6x4/6x3 values from the previous test automatically fall back to auto. */
+  /* Old/invalid values automatically fall back to the original automatic layout. */
   if(!MODES[String(localStorage.getItem(STORAGE_KEY)||'').trim().toLowerCase()]){
     localStorage.setItem(STORAGE_KEY,DEFAULT_MODE);
   }
-  applyScale();
+  requestMainRender();
   ensureSetting();
 
   var languageSelect=document.getElementById('languageSelect');
   if(languageSelect){
     languageSelect.addEventListener('change',function(){setTimeout(updateSettingText,0);});
   }
-}
-
-window.addEventListener('resize',function(){
-  clearTimeout(resizeTimer);
-  resizeTimer=setTimeout(function(){
-    if(readMode()==='auto')requestMainRender();
-  },100);
-},{passive:true});
-
-if(window.visualViewport){
-  window.visualViewport.addEventListener('resize',function(){
-    clearTimeout(resizeTimer);
-    resizeTimer=setTimeout(function(){
-      if(readMode()==='auto')requestMainRender();
-    },100);
-  },{passive:true});
 }
 
 if(document.readyState==='loading'){
