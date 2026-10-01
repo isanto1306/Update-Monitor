@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.383**
+Current release: **v0.3.384**
+
+v0.3.384 aligns the Manual percentage typography with the existing Time format selector. The percentage value and percent sign now inherit the same font family, size and weight as values such as 24 hours, while the permanent up/down controls, full-width Display selector and 40 px card safety boundary remain unchanged.
 
 v0.3.383 refines the Manual percentage control inside the full-width Display selector. The custom percentage no longer has its own surrounding border, the percent sign sits directly beside the larger number, and dedicated up/down arrow controls stay permanently visible with extra spacing from the value. The 40 px left/right card safety boundary and Automatic mode remain unchanged.
 
