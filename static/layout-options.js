@@ -104,18 +104,18 @@ function installManualColumnBoundary(){
 }
 
 var style=document.createElement('style');
-style.id='um-card-scale-options-v9';
+style.id='um-card-scale-options-v10';
 style.textContent=[
   'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',
   'html[data-um-card-scale] [class*="-backdrop"]>[role="dialog"][aria-modal="true"]{zoom:var(--um-manual-ui-scale);}',
   '#gridLayoutSetting.um-card-scale-setting{height:auto !important;min-height:0 !important;}',
   '#gridLayoutSetting .settings-custom-select{width:100% !important;display:block !important;position:relative !important;}',
   '#gridLayoutSetting.manual-active .settings-custom-select-button{padding-right:164px !important;}',
-  '#gridLayoutSetting .um-card-custom-wrap{position:absolute;right:38px;top:50%;transform:translateY(-50%);z-index:4;display:flex;align-items:center;height:30px;}',
+  '#gridLayoutSetting .um-card-custom-wrap{position:absolute;right:38px;top:50%;transform:translateY(-50%);z-index:4;display:flex;align-items:center;height:30px;font:inherit;font-size:inherit;font-weight:inherit;}',
   '#gridLayoutSetting .um-card-custom-wrap[hidden]{display:none !important;}',
-  '#gridLayoutSetting .um-card-custom-input{width:44px;height:30px;padding:0;border:0 !important;border-radius:0;background:transparent !important;color:#eef5ff;font:inherit;font-size:15px;font-weight:700;line-height:30px;text-align:right;outline:none !important;box-shadow:none !important;-moz-appearance:textfield;appearance:textfield;}',
+  '#gridLayoutSetting .um-card-custom-input{width:44px;height:30px;padding:0;border:0 !important;border-radius:0;background:transparent !important;color:var(--text);font:inherit;font-size:inherit;font-weight:inherit;line-height:30px;text-align:right;outline:none !important;box-shadow:none !important;-moz-appearance:textfield;appearance:textfield;}',
   '#gridLayoutSetting .um-card-custom-input::-webkit-inner-spin-button,#gridLayoutSetting .um-card-custom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}',
-  '#gridLayoutSetting .um-card-custom-unit{margin-left:2px;font-size:14px;font-weight:700;line-height:1;color:#eef5ff;pointer-events:none;}',
+  '#gridLayoutSetting .um-card-custom-unit{margin-left:2px;font:inherit;font-size:inherit;font-weight:inherit;line-height:1;color:var(--text);pointer-events:none;}',
   '#gridLayoutSetting .um-card-custom-spinner{display:flex;flex-direction:column;justify-content:center;gap:2px;margin-left:13px;height:28px;}',
   '#gridLayoutSetting .um-card-custom-step{width:18px;height:12px;padding:0;border:0;background:transparent;color:#d7e0e8;display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;cursor:pointer;opacity:.92;}',
   '#gridLayoutSetting .um-card-custom-step:hover{color:#ffffff;opacity:1;}',
