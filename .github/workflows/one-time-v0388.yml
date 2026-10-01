@@ -1,0 +1,207 @@
+name: One-time v0.3.388 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0388.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0388:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Add viewport-safe cap to every modal dialog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('static/layout-options.js')
+          text = p.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "var SAFE_EDGE_PX=40;\nvar lastAppliedScale=null;",
+              "var SAFE_EDGE_PX=40;\nvar DIALOG_EDGE_PX=24;\nvar lastAppliedScale=null;",
+              'dialog edge constant',
+          )
+
+          active_scale = """function activeScale(){
+  var mode=readMode();
+  /* Automatic means: do not override the production layout at all. */
+  if(mode==='auto')return '';
+  return String(readCustom());
+}
+
+"""
+          dialog_helpers = """function activeScale(){
+  var mode=readMode();
+  /* Automatic means: do not override the production layout at all. */
+  if(mode==='auto')return '';
+  return String(readCustom());
+}
+
+function dialogViewportHeight(){
+  var vv=window.visualViewport;
+  return Math.max(
+    240,
+    Math.round((vv&&vv.height)||document.documentElement.clientHeight||window.innerHeight||240)
+  );
+}
+
+function updateDialogViewportCap(){
+  var root=document.documentElement;
+  var viewportHeight=dialogViewportHeight();
+  var scale=readMode()==='manual'?(readCustom()/100):1;
+  var available=Math.max(160,viewportHeight-(DIALOG_EDGE_PX*2));
+  root.style.setProperty('--um-dialog-max-height',(available/Math.max(1,scale)).toFixed(2)+'px');
+}
+
+function installDialogViewportCap(){
+  if(window.__umDialogViewportCapInstalled)return;
+  window.__umDialogViewportCapInstalled=true;
+  updateDialogViewportCap();
+  window.addEventListener('resize',updateDialogViewportCap,{passive:true});
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',updateDialogViewportCap,{passive:true});
+  }
+}
+
+"""
+          replace_once(active_scale, dialog_helpers, 'dialog viewport helpers')
+
+          replace_once(
+              "  if(lastAppliedScale===scale)return false;",
+              "  updateDialogViewportCap();\n  if(lastAppliedScale===scale)return false;",
+              'refresh cap when display scale changes',
+          )
+
+          replace_once(
+              "style.id='um-card-scale-options-v10';",
+              "style.id='um-card-scale-options-v11';",
+              'layout style version',
+          )
+
+          replace_once(
+              "style.textContent=[\n  'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',",
+              "style.textContent=[\n  'html [role=\"dialog\"][aria-modal=\"true\"]{max-height:var(--um-dialog-max-height,calc(100dvh - 48px)) !important;box-sizing:border-box;overflow-y:auto;}',\n  'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',",
+              'global modal height cap rule',
+          )
+
+          replace_once(
+              "  installManualColumnBoundary();\n  requestMainRender();",
+              "  installManualColumnBoundary();\n  installDialogViewportCap();\n  requestMainRender();",
+              'install dialog viewport cap',
+          )
+
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Bump release markers to v0.3.388
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Missing expected marker in {path}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact('app/main.py', 'VERSION = "0.3.387"', 'VERSION = "0.3.388"')
+          replace_exact('docker-compose.zimaos.yml', '  version: "0.3.387"', '  version: "0.3.388"')
+          replace_exact('static/site.webmanifest', '?v=0.3.387', '?v=0.3.388')
+          replace_exact('static/update-channel.js', 'um-update-channel-v0387', 'um-update-channel-v0388')
+          replace_exact(
+              'Dockerfile',
+              's.replace("/update-channel.js?v=0.3.387", "/update-channel.js?v=0.3.387-arrow2", 1)',
+              's.replace("/update-channel.js?v=0.3.388", "/update-channel.js?v=0.3.388-dialogcap1", 1)',
+          )
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          if 'Current release: **v0.3.387**' not in text:
+              raise SystemExit('README current release marker missing')
+          text = text.replace('Current release: **v0.3.387**', 'Current release: **v0.3.388**', 1)
+          marker = 'v0.3.387 moves the fixed back-to-top arrow another 1.5 px toward the right viewport edge.'
+          marker_pos = text.find(marker)
+          if marker_pos < 0:
+              raise SystemExit('README v0.3.387 marker missing')
+          entry = (
+              'v0.3.388 adds a viewport-safe height cap to all modal settings and selection dialogs. '
+              'Every modal keeps a 24 px visual safety margin at the top and bottom and scrolls internally when its content exceeds the available height. '
+              'Manual display percentages are included in the height calculation, while the Docker card layout and its scaling remain unchanged.\n\n'
+          )
+          text = text[:marker_pos] + entry + text[marker_pos:]
+          readme.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate v0.3.388 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          python3 <<'PY'
+          from pathlib import Path
+
+          py = Path('app/main.py').read_text(encoding='utf-8')
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          layout = Path('static/layout-options.js').read_text(encoding='utf-8')
+          dockerfile = Path('Dockerfile').read_text(encoding='utf-8')
+          readme = Path('README.md').read_text(encoding='utf-8')
+          publish = Path('.github/workflows/publish-ghcr.yml').read_text(encoding='utf-8')
+
+          assert 'VERSION = "0.3.388"' in py
+          assert "var DIALOG_EDGE_PX=24;" in layout
+          assert "var scale=readMode()==='manual'?(readCustom()/100):1;" in layout
+          assert "viewportHeight-(DIALOG_EDGE_PX*2)" in layout
+          assert "available/Math.max(1,scale)" in layout
+          assert 'html [role="dialog"][aria-modal="true"]{max-height:var(--um-dialog-max-height,calc(100dvh - 48px)) !important;box-sizing:border-box;overflow-y:auto;}' in layout
+          assert "html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}" in layout
+          assert "window.addEventListener('resize',updateDialogViewportCap,{passive:true});" in layout
+          assert "window.visualViewport.addEventListener('resize',updateDialogViewportCap,{passive:true});" in layout
+          assert "style.id='um-card-scale-options-v11';" in layout
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.388';" in html
+          assert 'id="systemInfoVersion">v0.3.388</div>' in html
+          assert '/update-channel.js?v=0.3.388-dialogcap1' in dockerfile
+          assert 'Current release: **v0.3.388**' in readme
+          assert 'Protect immutable release image' in publish
+          assert 'concurrency:' in publish
+          PY
+
+      - name: Commit synchronized v0.3.388
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/layout-options.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.388 cap modal height to viewport"
+          git pull --rebase origin main
+          git push origin HEAD:main
