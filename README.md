@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.377**
+Current release: **v0.3.378**
+
+v0.3.378 refines manual display scaling while leaving Automatic unchanged. Manual choices now run from 105% to 130% in 5% steps. The selected scale applies to the complete dashboard foreground, including the last-check/search/sort toolbar and app cards, plus modal layouts such as Docker information, Backup Settings, Update Channel, Image Source and update-policy dialogs, while the fixed wallpaper remains unscaled. The display selector now uses the same fixed popup behavior as Language so opening it no longer pushes or scrolls the Settings panel.
 
 v0.3.377 restores the original responsive Update Monitor dashboard behavior when “Automatic” is selected. Automatic no longer applies any custom card scaling or display-width thresholds; the existing production grid decides the card layout exactly as before. Manual 100%, 110%, 125% and 130% card scaling remains available only when explicitly selected.
 
