@@ -1,0 +1,82 @@
+name: One-time v0.3.377 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0377.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0377:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Bump release markers to v0.3.377
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Missing expected marker in {path}: {old}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace('app/main.py', 'VERSION = "0.3.376"', 'VERSION = "0.3.377"')
+          replace('docker-compose.zimaos.yml', 'version: "0.3.376"', 'version: "0.3.377"')
+          replace('static/site.webmanifest', '0.3.376', '0.3.377')
+          replace('static/update-channel.js', "um-update-channel-v0376", "um-update-channel-v0377")
+          replace(
+              'Dockerfile',
+              's.replace("/update-channel.js?v=0.3.376", "/update-channel.js?v=0.3.376-scale1", 1)',
+              's.replace("/update-channel.js?v=0.3.377", "/update-channel.js?v=0.3.377-auto1", 1)',
+          )
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          old = 'Current release: **v0.3.376**\n\nv0.3.376 replaces the experimental fixed 6×4/6×3 dashboard layout with card-only display scaling.'
+          new = 'Current release: **v0.3.377**\n\nv0.3.377 restores the original responsive Update Monitor dashboard behavior when “Automatic” is selected. Automatic no longer applies any custom card scaling or display-width thresholds; the existing production grid decides the card layout exactly as before. Manual 100%, 110%, 125% and 130% card scaling remains available only when explicitly selected.\n\nv0.3.376 replaces the experimental fixed 6×4/6×3 dashboard layout with card-only display scaling.'
+          if old not in text:
+              raise SystemExit('README release marker not found')
+          readme.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate modified sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          grep -q 'VERSION = "0.3.377"' app/main.py
+          grep -q 'version: "0.3.377"' docker-compose.zimaos.yml
+          grep -q 'Current release: \*\*v0.3.377\*\*' README.md
+          grep -q 'um-update-channel-v0377' static/update-channel.js
+          grep -q 'v=0.3.377-auto1' Dockerfile
+          grep -q "const UPDATE_MONITOR_VERSION = 'v0.3.377';" static/index.html
+
+      - name: Commit synchronized v0.3.377
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.377 restore automatic responsive layout"
+          git push
