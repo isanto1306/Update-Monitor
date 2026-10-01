@@ -1,0 +1,103 @@
+name: One-time v0.3.383 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0383.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0383:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Bump release markers to v0.3.383
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Missing expected marker in {path}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact('app/main.py', 'VERSION = "0.3.382"', 'VERSION = "0.3.383"')
+          replace_exact('docker-compose.zimaos.yml', '  version: "0.3.382"', '  version: "0.3.383"')
+          replace_exact('static/site.webmanifest', '?v=0.3.382', '?v=0.3.383')
+          replace_exact('static/update-channel.js', 'um-update-channel-v0382', 'um-update-channel-v0383')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.382', '/update-channel.js?v=0.3.383')
+          replace_exact('Dockerfile', '/update-channel.js?v=0.3.383-spinner1', '/update-channel.js?v=0.3.383-controls1')
+
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace('Current release: **v0.3.382**', 'Current release: **v0.3.383**', 1)
+          marker = 'v0.3.382 restores the Display selector to the same full width as Time format and Language.'
+          if marker not in text:
+              raise SystemExit('README v0.3.382 marker missing')
+          entry = (
+              'v0.3.383 refines the Manual percentage control inside the full-width Display selector. '
+              'The custom percentage no longer has its own surrounding border, the percent sign sits directly beside the larger number, and dedicated up/down arrow controls stay permanently visible with extra spacing from the value. '
+              'The 40 px left/right card safety boundary and Automatic mode remain unchanged.\n\n'
+          )
+          text = text.replace(marker, entry + marker, 1)
+          readme.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate v0.3.383 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          python3 <<'PY'
+          from pathlib import Path
+          js = Path('static/layout-options.js').read_text(encoding='utf-8')
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          assert 'MODES={auto:true,manual:true}' in js
+          assert 'SAFE_EDGE_PX=40' in js
+          assert 'viewportWidth-(SAFE_EDGE_PX*2)' in js
+          assert '#gridLayoutSetting .settings-custom-select{width:100% !important' in js
+          assert 'border:0 !important' in js
+          assert 'background:transparent !important' in js
+          assert 'font-size:15px' in js
+          assert 'margin-left:2px' in js
+          assert 'margin-left:13px' in js
+          assert 'um-card-custom-spinner' in js
+          assert 'gridLayoutCustomIncrease' in js
+          assert 'gridLayoutCustomDecrease' in js
+          assert '>▲</button>' in js
+          assert '>▼</button>' in js
+          assert 'stepCustom(1,event)' in js
+          assert 'stepCustom(-1,event)' in js
+          assert "if(mode==='auto')return ''" in js
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.383';" in html
+          assert 'id="systemInfoVersion">v0.3.383</div>' in html
+          PY
+
+      - name: Commit synchronized v0.3.383
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.383 manual percentage controls"
+          git push
