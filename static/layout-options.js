@@ -12,11 +12,11 @@ var SAFE_EDGE_PX=40;
 var lastAppliedScale=null;
 
 var texts={
-  de:{label:'Darstellung',auto:'Automatisch',manual:'Manuell',custom:'Eigener Wert',hint:'Automatisch wird je nach Displaygröße angepasst.'},
-  en:{label:'Layout',auto:'Automatic',manual:'Manual',custom:'Custom value',hint:'Automatic adjusts according to the display size.'},
-  fr:{label:'Affichage',auto:'Automatique',manual:'Manuel',custom:'Valeur personnalisée',hint:'Automatique s’adapte à la taille de l’écran.'},
-  pt:{label:'Disposição',auto:'Automático',manual:'Manual',custom:'Valor personalizado',hint:'Automático adapta-se ao tamanho do ecrã.'},
-  es:{label:'Diseño',auto:'Automático',manual:'Manual',custom:'Valor personalizado',hint:'Automático se adapta al tamaño de la pantalla.'}
+  de:{label:'Darstellung',auto:'Automatisch',manual:'Manuell',custom:'Eigener Wert',increase:'Prozent erhöhen',decrease:'Prozent verringern',hint:'Automatisch wird je nach Displaygröße angepasst.'},
+  en:{label:'Layout',auto:'Automatic',manual:'Manual',custom:'Custom value',increase:'Increase percentage',decrease:'Decrease percentage',hint:'Automatic adjusts according to the display size.'},
+  fr:{label:'Affichage',auto:'Automatique',manual:'Manuel',custom:'Valeur personnalisée',increase:'Augmenter le pourcentage',decrease:'Diminuer le pourcentage',hint:'Automatique s’adapte à la taille de l’écran.'},
+  pt:{label:'Disposição',auto:'Automático',manual:'Manual',custom:'Valor personalizado',increase:'Aumentar percentagem',decrease:'Diminuir percentagem',hint:'Automático adapta-se ao tamanho do ecrã.'},
+  es:{label:'Diseño',auto:'Automático',manual:'Manual',custom:'Valor personalizado',increase:'Aumentar porcentaje',decrease:'Disminuir porcentaje',hint:'Automático se adapta al tamaño de la pantalla.'}
 };
 
 function language(){
@@ -104,18 +104,22 @@ function installManualColumnBoundary(){
 }
 
 var style=document.createElement('style');
-style.id='um-card-scale-options-v8';
+style.id='um-card-scale-options-v9';
 style.textContent=[
   'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',
   'html[data-um-card-scale] [class*="-backdrop"]>[role="dialog"][aria-modal="true"]{zoom:var(--um-manual-ui-scale);}',
   '#gridLayoutSetting.um-card-scale-setting{height:auto !important;min-height:0 !important;}',
   '#gridLayoutSetting .settings-custom-select{width:100% !important;display:block !important;position:relative !important;}',
   '#gridLayoutSetting.manual-active .settings-custom-select-button{padding-right:164px !important;}',
-  '#gridLayoutSetting .um-card-custom-wrap{position:absolute;right:38px;top:50%;transform:translateY(-50%);z-index:4;display:flex;align-items:center;gap:5px;height:28px;}',
+  '#gridLayoutSetting .um-card-custom-wrap{position:absolute;right:38px;top:50%;transform:translateY(-50%);z-index:4;display:flex;align-items:center;height:30px;}',
   '#gridLayoutSetting .um-card-custom-wrap[hidden]{display:none !important;}',
-  '#gridLayoutSetting .um-card-custom-input{width:86px;height:28px;padding:0 5px 0 8px;border:1px solid rgba(112,137,160,.42);border-radius:5px;background:#101922;color:var(--text);font:inherit;font-size:12px;text-align:right;outline:none;}',
-  '#gridLayoutSetting .um-card-custom-input:focus{border-color:rgba(91,156,255,.72);box-shadow:0 0 0 2px rgba(91,156,255,.12);}',
-  '#gridLayoutSetting .um-card-custom-unit{font-size:12px;line-height:1;opacity:.78;pointer-events:none;}',
+  '#gridLayoutSetting .um-card-custom-input{width:44px;height:30px;padding:0;border:0 !important;border-radius:0;background:transparent !important;color:#eef5ff;font:inherit;font-size:15px;font-weight:700;line-height:30px;text-align:right;outline:none !important;box-shadow:none !important;-moz-appearance:textfield;appearance:textfield;}',
+  '#gridLayoutSetting .um-card-custom-input::-webkit-inner-spin-button,#gridLayoutSetting .um-card-custom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}',
+  '#gridLayoutSetting .um-card-custom-unit{margin-left:2px;font-size:14px;font-weight:700;line-height:1;color:#eef5ff;pointer-events:none;}',
+  '#gridLayoutSetting .um-card-custom-spinner{display:flex;flex-direction:column;justify-content:center;gap:2px;margin-left:13px;height:28px;}',
+  '#gridLayoutSetting .um-card-custom-step{width:18px;height:12px;padding:0;border:0;background:transparent;color:#d7e0e8;display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;cursor:pointer;opacity:.92;}',
+  '#gridLayoutSetting .um-card-custom-step:hover{color:#ffffff;opacity:1;}',
+  '#gridLayoutSetting .um-card-custom-step:focus-visible{outline:1px solid rgba(91,156,255,.65);outline-offset:1px;border-radius:2px;}',
   '#gridLayoutSetting .um-card-scale-hint{width:100%;box-sizing:border-box;margin-top:7px;font-size:12px;line-height:1.35;opacity:.68;}'
 ].join('');
 document.head.appendChild(style);
@@ -155,11 +159,15 @@ function updateSettingText(){
   var label=document.getElementById('gridLayoutLabel');
   var hint=document.getElementById('gridLayoutHint');
   var customInput=document.getElementById('gridLayoutCustomInput');
+  var increase=document.getElementById('gridLayoutCustomIncrease');
+  var decrease=document.getElementById('gridLayoutCustomDecrease');
   if(!select||!label)return;
   var copy=texts[language()];
   label.textContent=copy.label;
   if(hint)hint.textContent=copy.hint;
   if(customInput)customInput.setAttribute('aria-label',copy.custom);
+  if(increase){increase.setAttribute('aria-label',copy.increase);increase.title=copy.increase;}
+  if(decrease){decrease.setAttribute('aria-label',copy.decrease);decrease.title=copy.decrease;}
   var auto=select.querySelector('option[value="auto"]');
   var manual=select.querySelector('option[value="manual"]');
   if(auto)auto.textContent=copy.auto;
@@ -171,6 +179,17 @@ function updateSettingText(){
   fixLayoutSelectPopup();
   attachCustomValueToSelector();
   syncCustomVisibility();
+}
+
+function applyCustomValue(value){
+  var input=document.getElementById('gridLayoutCustomInput');
+  var normalized=writeCustom(value);
+  if(input)input.value=String(normalized);
+  if(readMode()==='manual'){
+    lastAppliedScale=null;
+    requestMainRender();
+  }
+  return normalized;
 }
 
 function ensureSetting(){
@@ -197,12 +216,18 @@ function ensureSetting(){
     <span id="gridLayoutCustomWrap" class="um-card-custom-wrap" hidden>\
       <input id="gridLayoutCustomInput" class="um-card-custom-input" type="number" min="105" max="150" step="1" inputmode="numeric" value="110" aria-label="Eigener Wert">\
       <span class="um-card-custom-unit">%</span>\
+      <span class="um-card-custom-spinner">\
+        <button id="gridLayoutCustomIncrease" class="um-card-custom-step" type="button" aria-label="Prozent erhöhen">▲</button>\
+        <button id="gridLayoutCustomDecrease" class="um-card-custom-step" type="button" aria-label="Prozent verringern">▼</button>\
+      </span>\
     </span>\
     <div id="gridLayoutHint" class="um-card-scale-hint">Automatisch wird je nach Displaygröße angepasst.</div>';
   anchorSetting.insertAdjacentElement('afterend',setting);
 
   var select=document.getElementById('gridLayoutSelect');
   var input=document.getElementById('gridLayoutCustomInput');
+  var increase=document.getElementById('gridLayoutCustomIncrease');
+  var decrease=document.getElementById('gridLayoutCustomDecrease');
   select.value=readMode();
   select.addEventListener('change',function(){
     var mode=String(select.value||DEFAULT_MODE);
@@ -217,20 +242,23 @@ function ensureSetting(){
 
   if(input){
     input.value=String(readCustom());
-    input.addEventListener('change',function(){
-      input.value=String(writeCustom(input.value));
-      if(readMode()==='manual'){
-        lastAppliedScale=null;
-        requestMainRender();
-      }
-    });
+    input.addEventListener('click',function(event){event.stopPropagation();});
+    input.addEventListener('change',function(){applyCustomValue(input.value);});
     input.addEventListener('keydown',function(event){
+      event.stopPropagation();
       if(event.key==='Enter'){
         event.preventDefault();
         input.blur();
       }
     });
   }
+
+  function stepCustom(delta,event){
+    if(event){event.preventDefault();event.stopPropagation();}
+    applyCustomValue(readCustom()+delta);
+  }
+  if(increase)increase.addEventListener('click',function(event){stepCustom(1,event);});
+  if(decrease)decrease.addEventListener('click',function(event){stepCustom(-1,event);});
 
   try{
     if(typeof window.createSettingsCustomSelect==='function'){
