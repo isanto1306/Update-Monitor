@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.381**
+Current release: **v0.3.382**
+
+v0.3.382 restores the Display selector to the same full width as Time format and Language. When Manual is selected, the 105%–150% number input with native up/down controls is shown inside that same selector row on the right, while Manual remains on the left and the normal dropdown control stays available. The 40 px left/right card safety boundary from v0.3.381 remains unchanged.
 
 v0.3.381 improves Manual display scaling with a 40 px safety boundary on both viewport edges. The manual column count now keeps the current number of cards until the scaled cards would cross that boundary, then drops exactly one column as needed. The custom percentage field is placed directly to the right of the Manual selector and displays the complete value including the percent sign, for example 110 %. Automatic remains unchanged.
 
