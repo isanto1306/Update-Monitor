@@ -1,0 +1,113 @@
+name: One-time v0.3.376 synchronization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0376.yml
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize-v0376:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Bump release markers to v0.3.376
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          old = "0.3.375"
+          new = "0.3.376"
+
+          main = Path("app/main.py")
+          text = main.read_text(encoding="utf-8")
+          marker_old = f'VERSION = "{old}"'
+          marker_new = f'VERSION = "{new}"'
+          if marker_old not in text and marker_new not in text:
+              raise SystemExit("VERSION marker not found in app/main.py")
+          main.write_text(text.replace(marker_old, marker_new, 1), encoding="utf-8")
+
+          compose = Path("docker-compose.zimaos.yml")
+          text = compose.read_text(encoding="utf-8")
+          compose_old = f'version: "{old}"'
+          compose_new = f'version: "{new}"'
+          if compose_old not in text and compose_new not in text:
+              raise SystemExit("release version not found in docker-compose.zimaos.yml")
+          compose.write_text(text.replace(compose_old, compose_new, 1), encoding="utf-8")
+
+          manifest = Path("static/site.webmanifest")
+          text = manifest.read_text(encoding="utf-8")
+          manifest.write_text(text.replace(f"?v={old}", f"?v={new}"), encoding="utf-8")
+
+          channel = Path("static/update-channel.js")
+          text = channel.read_text(encoding="utf-8")
+          text = text.replace("um-update-channel-v0375", "um-update-channel-v0376", 1)
+          text = text.replace(old, new)
+          channel.write_text(text, encoding="utf-8")
+
+          readme = Path("README.md")
+          text = readme.read_text(encoding="utf-8")
+          current_old = f"Current release: **v{old}**"
+          current_new = f"Current release: **v{new}**"
+          if current_old in text:
+              text = text.replace(current_old, current_new, 1)
+          elif current_new not in text:
+              raise SystemExit("Current release marker not found in README.md")
+          release_note = (
+              "v0.3.376 replaces the experimental fixed 6×4/6×3 dashboard layout with "
+              "card-only display scaling. Settings now offer Automatic, 100%, 110%, 125% "
+              "and 130%; Automatic adapts to the available display width while the top bar, "
+              "search and sorting controls keep their normal size.\n\n"
+          )
+          if release_note.strip() not in text:
+              text = text.replace(current_new + "\n\n", current_new + "\n\n" + release_note, 1)
+          readme.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate modified sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/update-channel.js
+          node --check static/layout-options.js
+          python3 <<'PY'
+          from pathlib import Path
+          assert 'VERSION = "0.3.376"' in Path('app/main.py').read_text(encoding='utf-8')
+          assert 'version: "0.3.376"' in Path('docker-compose.zimaos.yml').read_text(encoding='utf-8')
+          assert 'Current release: **v0.3.376**' in Path('README.md').read_text(encoding='utf-8')
+          assert 'um-update-channel-v0376' in Path('static/update-channel.js').read_text(encoding='utf-8')
+          assert '0.3.376' in Path('static/site.webmanifest').read_text(encoding='utf-8')
+          html = Path('static/index.html').read_text(encoding='utf-8')
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.376';" in html
+          assert 'id="systemInfoVersion">v0.3.376</div>' in html
+          PY
+
+      - name: Commit synchronized v0.3.376
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json
+          if git diff --cached --quiet; then
+            echo "v0.3.376 already synchronized"
+            exit 0
+          fi
+          git commit -m "Release v0.3.376 card display scaling"
+          git push
