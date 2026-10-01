@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.380**
+Current release: **v0.3.381**
+
+v0.3.381 improves Manual display scaling with a 40 px safety boundary on both viewport edges. The manual column count now keeps the current number of cards until the scaled cards would cross that boundary, then drops exactly one column as needed. The custom percentage field is placed directly to the right of the Manual selector and displays the complete value including the percent sign, for example 110 %. Automatic remains unchanged.
 
 v0.3.380 simplifies display scaling to only Automatic and Manual. Automatic remains the untouched original responsive layout. Manual keeps the custom 105%–150% input, while the fixed 105/110/115/120/125/130% choices are removed. Existing saved fixed percentage choices migrate automatically to Manual with the same percentage value.
 
