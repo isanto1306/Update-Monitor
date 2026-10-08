@@ -28,9 +28,24 @@ jobs:
           text = p.read_text(encoding="utf-8")
 
           old_skip = 'if item.get("update_policy") in {"digest_pinned", "local"}:'
-          if text.count(old_skip) != 2:
-              raise SystemExit(f"Expected 2 digest/local skip guards, found {text.count(old_skip)}")
-          text = text.replace(old_skip, 'if item.get("update_policy") == "local":')
+          new_skip = 'if item.get("update_policy") == "local":'
+
+          # Keep the follow-target comparison guard unchanged: intentional
+          # digest pins must never become moving-tag followers. Only the version
+          # grouping and manual version-catalogue paths should include them.
+          for function_name in ("def build_version_groups", "def _app_versions_unlocked"):
+              start = text.find(function_name)
+              if start < 0:
+                  raise SystemExit(f"Function marker missing: {function_name}")
+              pos = text.find(old_skip, start)
+              if pos < 0:
+                  raise SystemExit(f"Digest/local skip guard missing in {function_name}")
+              text = text[:pos] + new_skip + text[pos + len(old_skip):]
+
+          if text.count(old_skip) != 1:
+              raise SystemExit(
+                  "Expected only the follow-target digest/local guard to remain"
+              )
 
           old_guard = '''        old_ref = str(item.get("image_ref") or "").strip()
                   parsed = parse_image_ref(old_ref)
@@ -200,7 +215,7 @@ jobs:
           dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
           assert 'VERSION = "0.3.389"' in py
-          assert 'if item.get("update_policy") in {"digest_pinned", "local"}:' not in py
+          assert py.count('if item.get("update_policy") in {"digest_pinned", "local"}:') == 1
           assert py.count('if item.get("update_policy") == "local":') >= 2
           assert 'item.get("compose_digest_pin_proven")' in py
           assert 'Digest-pinned images can only switch versions manually' in py
