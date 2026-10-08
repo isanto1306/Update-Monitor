@@ -1,0 +1,374 @@
+name: One-time v0.3.390 digest-pin installed-version fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-v0390.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release-v0390:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve digest-pinned installed versions from digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path("app/main.py")
+          text = p.read_text(encoding="utf-8")
+
+          old_reusable = '''    # A concrete configured tag is authoritative on its own.
+          if not _needs_installed_version_resolution(current_tag):
+              return True
+
+          # Moving tags must never trust the legacy "previous-scan" or
+          # "configured-tag" provenance. Those sources can preserve a version after
+          # the channel has moved to a different image. Only digest/image-bound
+          # evidence is reusable.
+          if source in {
+              "digest-cache",
+              "registry-digest",
+              "digest",
+              "local-repotag",
+              "post-update-known-version",
+          }:
+              return True
+          if source.startswith("registry+"):
+              return True
+          return False
+          '''
+          new_reusable = '''    digest_pinned = bool(
+              item.get("update_policy") == "digest_pinned"
+              or item.get("compose_digest_pin_proven")
+              or item.get("compose_pinned_digest")
+          )
+
+          # A concrete configured tag is authoritative only when Compose is not
+          # pinned by digest. With repo:v1@sha256:<different release>, Docker runs
+          # the digest bytes; the textual tag can be stale and must not win.
+          if not _needs_installed_version_resolution(current_tag) and not digest_pinned:
+              return True
+
+          # Moving tags and digest-pinned concrete tags may reuse only evidence
+          # that is itself bound to the image digest. A local RepoTag is not
+          # sufficient for a digest pin because Docker can retain an old tag on
+          # the same locally referenced image.
+          if source in {
+              "digest-cache",
+              "registry-digest",
+              "digest",
+              "post-update-known-version",
+          }:
+              return True
+          if source.startswith("registry+"):
+              return True
+          if source == "local-repotag" and not digest_pinned:
+              return True
+          return False
+          '''
+          if old_reusable not in text:
+              raise SystemExit("Installed-version reusable marker missing")
+          text = text.replace(old_reusable, new_reusable, 1)
+
+          old_scan_start = '''    for item in items:
+              current_tag = str(item.get("tag") or "").strip()
+
+              # A concrete configured tag is already the installed version.
+              # Always overwrite any stale carried value: the Compose tag itself is
+              # authoritative for fixed releases.
+              if not _needs_installed_version_resolution(current_tag):
+                  if current_tag:
+                      item["resolved_installed_tag"] = current_tag
+                      item["display_installed_version"] = None
+                  _installed_version_resolution_record(
+                      item,
+                      "resolved",
+                      "configured-tag",
+                      current_tag,
+                  )
+                  continue
+          '''
+          new_scan_start = '''    for item in items:
+              current_tag = str(item.get("tag") or "").strip()
+              digest_pinned = bool(
+                  item.get("update_policy") == "digest_pinned"
+                  or item.get("compose_digest_pin_proven")
+                  or item.get("compose_pinned_digest")
+              )
+
+              # A concrete configured tag is the installed version only for an
+              # ordinary fixed tag. For digest-pinned refs the digest is
+              # authoritative and may intentionally point to a newer release than
+              # the textual tag left in Compose by ZimaOS.
+              if (
+                  not digest_pinned
+                  and not _needs_installed_version_resolution(current_tag)
+              ):
+                  if current_tag:
+                      item["resolved_installed_tag"] = current_tag
+                      item["display_installed_version"] = None
+                  _installed_version_resolution_record(
+                      item,
+                      "resolved",
+                      "configured-tag",
+                      current_tag,
+                  )
+                  continue
+          '''
+          if old_scan_start not in text:
+              raise SystemExit("Scan concrete-tag shortcut marker missing")
+          text = text.replace(old_scan_start, new_scan_start, 1)
+
+          old_local = '''        # Strongest and cheapest zero-network evidence: a concrete RepoTag
+                  # attached to the exact same local image ID.
+                  local_version, local_source = _local_installed_version(item)
+                  if local_version:
+                      item["resolved_installed_tag"] = local_version
+                      local_digests = list(item.get("local_digests") or [])
+                      image_ref = str(item.get("image_ref") or "").strip()
+                      parsed = parse_image_ref(image_ref) if image_ref else {}
+                      repo_key = str(parsed.get("normalized_repo") or "").strip()
+                      if repo_key and local_digests:
+                          installed_version_cache_put(repo_key, local_digests, local_version)
+                      _installed_version_resolution_record(
+                          item,
+                          "resolved",
+                          local_source,
+                          local_version,
+                      )
+                      continue
+          '''
+          new_local = '''        # Strongest and cheapest zero-network evidence for ordinary tags:
+                  # a concrete RepoTag attached to the exact same local image ID.
+                  # Do not use it for digest pins: an old tag can remain attached
+                  # while the pinned digest already identifies a newer release.
+                  local_version, local_source = (
+                      (None, None)
+                      if digest_pinned
+                      else _local_installed_version(item)
+                  )
+                  if local_version:
+                      item["resolved_installed_tag"] = local_version
+                      local_digests = list(item.get("local_digests") or [])
+                      image_ref = str(item.get("image_ref") or "").strip()
+                      parsed = parse_image_ref(image_ref) if image_ref else {}
+                      repo_key = str(parsed.get("normalized_repo") or "").strip()
+                      if repo_key and local_digests:
+                          installed_version_cache_put(repo_key, local_digests, local_version)
+                      _installed_version_resolution_record(
+                          item,
+                          "resolved",
+                          local_source,
+                          local_version,
+                      )
+                      continue
+          '''
+          if old_local not in text:
+              raise SystemExit("Local RepoTag resolver marker missing")
+          text = text.replace(old_local, new_local, 1)
+
+          old_digests = '''        local_digests = tuple(sorted(
+                      str(value or "").strip().lower()
+                      for value in (item.get("local_digests") or [])
+                      if str(value or "").strip()
+                  ))
+
+                  if not local_digests:
+          '''
+          new_digests = '''        local_digest_values = {
+                      str(value or "").strip().lower()
+                      for value in (item.get("local_digests") or [])
+                      if str(value or "").strip()
+                  }
+                  if digest_pinned:
+                      pinned_digest = str(
+                          item.get("compose_pinned_digest") or ""
+                      ).strip().lower()
+                      if pinned_digest.startswith("sha256:"):
+                          local_digest_values.add(pinned_digest)
+
+                  local_digests = tuple(sorted(local_digest_values))
+
+                  if not local_digests:
+          '''
+          if old_digests not in text:
+              raise SystemExit("Local digest collection marker missing")
+          text = text.replace(old_digests, new_digests, 1)
+
+          old_picker = '''        resolved_installed = str(item.get("resolved_installed_tag") or "").strip()
+                  local_digests = list(item.get("local_digests") or [])
+                  if (
+                      _needs_installed_version_resolution(current_tag)
+                      and local_digests
+                      and selectable
+                  ):
+                      resolved_installed = (
+                          installed_version_cache_get(repo_key, local_digests, selectable)
+                          or resolve_installed_version_tag(
+                              repo_key,
+                              local_digests,
+                              selectable,
+                              scan_platform,
+                          )
+                          or resolved_installed
+                      )
+                  elif not resolved_installed and not _needs_installed_version_resolution(current_tag):
+                      resolved_installed = current_tag
+          '''
+          new_picker = '''        digest_pinned = bool(
+                      item.get("update_policy") == "digest_pinned"
+                      or item.get("compose_digest_pin_proven")
+                      or item.get("compose_pinned_digest")
+                  )
+                  resolved_installed = str(item.get("resolved_installed_tag") or "").strip()
+                  resolution_source = str(
+                      (item.get("installed_version_resolution") or {}).get("source") or ""
+                  ).strip()
+
+                  local_digest_values = {
+                      str(value or "").strip().lower()
+                      for value in (item.get("local_digests") or [])
+                      if str(value or "").strip()
+                  }
+                  if digest_pinned:
+                      pinned_digest = str(
+                          item.get("compose_pinned_digest") or ""
+                      ).strip().lower()
+                      if pinned_digest.startswith("sha256:"):
+                          local_digest_values.add(pinned_digest)
+                      if resolution_source in {"configured-tag", "local-repotag"}:
+                          resolved_installed = ""
+
+                  local_digests = sorted(local_digest_values)
+                  if (
+                      (digest_pinned or _needs_installed_version_resolution(current_tag))
+                      and local_digests
+                      and selectable
+                  ):
+                      resolved_installed = (
+                          installed_version_cache_get(repo_key, local_digests, selectable)
+                          or resolve_installed_version_tag(
+                              repo_key,
+                              local_digests,
+                              selectable,
+                              scan_platform,
+                          )
+                          or resolved_installed
+                      )
+                  elif (
+                      not digest_pinned
+                      and not resolved_installed
+                      and not _needs_installed_version_resolution(current_tag)
+                  ):
+                      resolved_installed = current_tag
+          '''
+          if old_picker not in text:
+              raise SystemExit("Interactive installed-version resolver marker missing")
+          text = text.replace(old_picker, new_picker, 1)
+
+          if 'VERSION = "0.3.389"' not in text:
+              raise SystemExit("Backend version marker missing")
+          text = text.replace('VERSION = "0.3.389"', 'VERSION = "0.3.390"', 1)
+
+          p.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Bump release markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"Missing marker in {path}: {old!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once("docker-compose.zimaos.yml", '  version: "0.3.389"', '  version: "0.3.390"')
+          replace_once("static/site.webmanifest", "?v=0.3.389", "?v=0.3.390")
+          replace_once("static/site.webmanifest", "?v=0.3.389", "?v=0.3.390")
+          replace_once("static/update-channel.js", "um-update-channel-v0389", "um-update-channel-v0390")
+          replace_once(
+              "Dockerfile",
+              's.replace("/update-channel.js?v=0.3.389", "/update-channel.js?v=0.3.389-digestpin1", 1)',
+              's.replace("/update-channel.js?v=0.3.390", "/update-channel.js?v=0.3.390-pindigestversion1", 1)',
+          )
+
+          readme = Path("README.md")
+          text = readme.read_text(encoding="utf-8")
+          if "Current release: **v0.3.389**" not in text:
+              raise SystemExit("README release marker missing")
+          text = text.replace("Current release: **v0.3.389**", "Current release: **v0.3.390**", 1)
+          marker = "v0.3.389 adds safe manual version discovery"
+          pos = text.find(marker)
+          if pos < 0:
+              raise SystemExit("README v0.3.389 entry missing")
+          entry = (
+              "v0.3.390 fixes installed-version detection for digest-pinned images. "
+              "For refs such as repo:v0.105.0@sha256:..., the immutable digest now "
+              "wins over a potentially stale textual tag. Update Monitor resolves "
+              "the running/pinned digest against concrete registry versions, so an "
+              "image already running v0.106.0 is displayed as v0.106.0 even when "
+              "ZimaOS retained the older tag text.\n\n"
+          )
+          text = text[:pos] + entry + text[pos:]
+          readme.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Synchronize generated frontend and translation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/sync_frontend.py
+          python3 .github/scripts/audit_translations.py
+
+      - name: Validate v0.3.390
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py
+          node --check static/layout-options.js
+          node --check static/update-channel.js
+          python3 <<'PY'
+          from pathlib import Path
+
+          py = Path("app/main.py").read_text(encoding="utf-8")
+          html = Path("static/index.html").read_text(encoding="utf-8")
+          compose = Path("docker-compose.zimaos.yml").read_text(encoding="utf-8")
+          dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+          assert 'VERSION = "0.3.390"' in py
+          assert 'not _needs_installed_version_resolution(current_tag) and not digest_pinned' in py
+          assert 'if digest_pinned' in py
+          assert 'item.get("compose_pinned_digest")' in py
+          assert 'if resolution_source in {"configured-tag", "local-repotag"}:' in py
+          assert '(digest_pinned or _needs_installed_version_resolution(current_tag))' in py
+          assert 'version: "0.3.390"' in compose
+          assert "const UPDATE_MONITOR_VERSION = 'v0.3.390';" in html
+          assert 'id="systemInfoVersion">v0.3.390</div>' in html
+          assert '/update-channel.js?v=0.3.390-pindigestversion1' in dockerfile
+          PY
+
+      - name: Commit synchronized v0.3.390
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/main.py docker-compose.zimaos.yml README.md static/site.webmanifest static/update-channel.js static/index.html translation-audit-current.json Dockerfile
+          git commit -m "Release v0.3.390 resolve digest-pinned installed versions"
+          git pull --rebase origin main
+          git push origin HEAD:main
