@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.389"
+VERSION = "0.3.390"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -2313,8 +2313,16 @@ def _installed_version_resolution_reusable(item, current_tag):
     if not resolved:
         return False
 
-    # A concrete configured tag is authoritative on its own.
-    if not _needs_installed_version_resolution(current_tag):
+    digest_pinned = bool(
+        item.get("update_policy") == "digest_pinned"
+        or item.get("compose_digest_pin_proven")
+        or item.get("compose_pinned_digest")
+    )
+
+    # A concrete configured tag is authoritative only without an
+    # intentional digest pin. Docker runs the digest bytes even when
+    # the textual tag left in Compose is stale.
+    if not _needs_installed_version_resolution(current_tag) and not digest_pinned:
         return True
 
     # Moving tags must never trust the legacy "previous-scan" or
@@ -2325,11 +2333,12 @@ def _installed_version_resolution_reusable(item, current_tag):
         "digest-cache",
         "registry-digest",
         "digest",
-        "local-repotag",
         "post-update-known-version",
     }:
         return True
     if source.startswith("registry+"):
+        return True
+    if source == "local-repotag" and not digest_pinned:
         return True
     return False
 
@@ -5150,11 +5159,16 @@ def enrich_scan_installed_versions(results, platform, progress_callback=None):
 
     for item in items:
         current_tag = str(item.get("tag") or "").strip()
+        digest_pinned = bool(
+            item.get("update_policy") == "digest_pinned"
+            or item.get("compose_digest_pin_proven")
+            or item.get("compose_pinned_digest")
+        )
 
         # A concrete configured tag is already the installed version.
         # Always overwrite any stale carried value: the Compose tag itself is
         # authoritative for fixed releases.
-        if not _needs_installed_version_resolution(current_tag):
+        if not digest_pinned and not _needs_installed_version_resolution(current_tag):
             if current_tag:
                 item["resolved_installed_tag"] = current_tag
                 item["display_installed_version"] = None
@@ -5189,7 +5203,7 @@ def enrich_scan_installed_versions(results, platform, progress_callback=None):
 
         # Strongest and cheapest zero-network evidence: a concrete RepoTag
         # attached to the exact same local image ID.
-        local_version, local_source = _local_installed_version(item)
+        local_version, local_source = ((None, None) if digest_pinned else _local_installed_version(item))
         if local_version:
             item["resolved_installed_tag"] = local_version
             local_digests = list(item.get("local_digests") or [])
@@ -5213,12 +5227,17 @@ def enrich_scan_installed_versions(results, platform, progress_callback=None):
             item["local_version_label_hint"] = label_hint
             item["local_version_label_hint_source"] = label_hint_source
 
-        local_digests = tuple(sorted(
+        local_digest_values = {
             str(value or "").strip().lower()
             for value in (item.get("local_digests") or [])
             if str(value or "").strip()
-        ))
+        }
+        if digest_pinned:
+            pinned_digest = str(item.get("compose_pinned_digest") or "").strip().lower()
+            if pinned_digest.startswith("sha256:"):
+                local_digest_values.add(pinned_digest)
 
+        local_digests = tuple(sorted(local_digest_values))
         if not local_digests:
             _installed_version_resolution_record(
                 item,
@@ -19897,10 +19916,31 @@ def _app_versions_unlocked(stack_key: str, request: Request):
         else:
             sources[image_ref] = "registry"
 
+        digest_pinned = bool(
+            item.get("update_policy") == "digest_pinned"
+            or item.get("compose_digest_pin_proven")
+            or item.get("compose_pinned_digest")
+        )
         resolved_installed = str(item.get("resolved_installed_tag") or "").strip()
-        local_digests = list(item.get("local_digests") or [])
+        resolution_source = str(
+            (item.get("installed_version_resolution") or {}).get("source") or ""
+        ).strip()
+
+        local_digest_values = {
+            str(value or "").strip().lower()
+            for value in (item.get("local_digests") or [])
+            if str(value or "").strip()
+        }
+        if digest_pinned:
+            pinned_digest = str(item.get("compose_pinned_digest") or "").strip().lower()
+            if pinned_digest.startswith("sha256:"):
+                local_digest_values.add(pinned_digest)
+            if resolution_source in {"configured-tag", "local-repotag"}:
+                resolved_installed = ""
+
+        local_digests = sorted(local_digest_values)
         if (
-            _needs_installed_version_resolution(current_tag)
+            (digest_pinned or _needs_installed_version_resolution(current_tag))
             and local_digests
             and selectable
         ):
@@ -19914,9 +19954,12 @@ def _app_versions_unlocked(stack_key: str, request: Request):
                 )
                 or resolved_installed
             )
-        elif not resolved_installed and not _needs_installed_version_resolution(current_tag):
+        elif (
+            not digest_pinned
+            and not resolved_installed
+            and not _needs_installed_version_resolution(current_tag)
+        ):
             resolved_installed = current_tag
-
         if resolved_installed:
             resolved_installed_versions[image_ref] = resolved_installed
 
