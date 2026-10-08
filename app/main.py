@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.390"
+VERSION = "0.3.391"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -1291,6 +1291,33 @@ def parse_image_ref(ref):
     else:
         repo, tag = base, "latest"
     return {"original": ref, "base": base, "repo": repo, "normalized_repo": normalize_repo(repo), "tag": tag, "pinned_digest": pinned}
+
+
+def image_refs_semantically_equal(left, right):
+    """Compare Docker image refs without making tag spelling outrank a digest pin."""
+    left_value = str(left or "").strip()
+    right_value = str(right or "").strip()
+    if left_value == right_value:
+        return True
+    if not left_value or not right_value:
+        return False
+
+    a = parse_image_ref(left_value)
+    b = parse_image_ref(right_value)
+    if str(a.get("normalized_repo") or "") != str(b.get("normalized_repo") or ""):
+        return False
+
+    a_digest = str(a.get("pinned_digest") or "").strip().lower()
+    b_digest = str(b.get("pinned_digest") or "").strip().lower()
+    if a_digest and b_digest:
+        return a_digest == b_digest
+
+    return (
+        not a_digest
+        and not b_digest
+        and str(a.get("tag") or "").strip().casefold()
+        == str(b.get("tag") or "").strip().casefold()
+    )
 
 
 def parse_repo_digest(value):
@@ -4893,6 +4920,8 @@ def apply_monitor_policy_fields(app_item):
         for value in ((group or {}).get("current_tags") or [])
         if _version_alias(value)
     }
+    installed_version = _version_group_installed_tag(group) if group else None
+    installed_alias = _version_alias(installed_version) if installed_version else None
 
     follow_tag_switch_only = False
     follow_target_state = None
@@ -4942,9 +4971,15 @@ def apply_monitor_policy_fields(app_item):
                 can_version_update = False
 
         elif mode == "upgrade" and target_tag in available_tags:
-            # Manual selection may intentionally move backwards, but changing
-            # to the version already configured for the whole family is a no-op.
-            can_version_update = _version_alias(target_tag) not in current_aliases
+            # Digest-resolved runtime state outranks a stale configured tag.
+            # Manual selection may intentionally move backwards, but selecting
+            # the version already running is always a no-op.
+            target_alias = _version_alias(target_tag)
+            can_version_update = (
+                target_alias != installed_alias
+                if installed_alias
+                else target_alias not in current_aliases
+            )
 
     app_item["monitor_policy"] = policy
     app_item["policy_available_tags"] = available_tags
@@ -4952,7 +4987,7 @@ def apply_monitor_policy_fields(app_item):
     app_item["follow_tag_switch_only"] = follow_tag_switch_only
     app_item["follow_target_state"] = follow_target_state
     app_item["can_version_update"] = can_version_update
-    app_item["installed_version"] = _version_group_installed_tag(group) if group else None
+    app_item["installed_version"] = installed_version
     app_item["version_group"] = _public_version_group(group)
     app_item["version_group_state"] = (
         "selected"
@@ -5232,7 +5267,7 @@ def enrich_scan_installed_versions(results, platform, progress_callback=None):
             for value in (item.get("local_digests") or [])
             if str(value or "").strip()
         }
-        if digest_pinned:
+        if digest_pinned and not local_digest_values:
             pinned_digest = str(item.get("compose_pinned_digest") or "").strip().lower()
             if pinned_digest.startswith("sha256:"):
                 local_digest_values.add(pinned_digest)
@@ -13972,7 +14007,7 @@ def wait_for_container_target_digest(
             expected_digests,
         )
 
-        if last_ref == image_ref and matched:
+        if image_refs_semantically_equal(last_ref, image_ref) and matched:
             return {
                 "container": container_name,
                 "image_ref": last_ref,
@@ -15767,7 +15802,12 @@ def wait_for_version_group_compose_update(
     while time.time() < deadline:
         try:
             compose_text = casaos_compose_yaml(compose_project)
-            compose_saved = all(ref in compose_text for ref in expected_refs)
+            saved_images = compose_service_image_map_from_yaml(compose_text)
+            saved_refs = list(saved_images.values())
+            compose_saved = all(
+                any(image_refs_semantically_equal(saved, expected) for saved in saved_refs)
+                for expected in expected_refs
+            )
         except Exception:
             compose_saved = False
 
@@ -15781,7 +15821,7 @@ def wait_for_version_group_compose_update(
         target_ready = (
             len(current_refs) == len(expected_by_container)
             and all(
-                current_refs.get(name) == expected_ref
+                image_refs_semantically_equal(current_refs.get(name), expected_ref)
                 for name, expected_ref in expected_by_container.items()
             )
         )
@@ -18255,6 +18295,33 @@ def perform_version_update(app_item):
         available_tags = list((group.get("available") or {}).get("display_tags") or [])
         if not target_tag or target_tag not in available_tags:
             raise RuntimeError("The selected version is no longer available")
+
+        installed_version = _version_group_installed_tag(group)
+        if (
+            installed_version
+            and _version_alias(installed_version) == _version_alias(target_tag)
+        ):
+            save_monitor_policy(
+                app_item.get("stack_key"),
+                "fixed",
+                None,
+                auto_enabled=False,
+            )
+            return {
+                "project": project,
+                "target_tag": target_tag,
+                "version_group": _public_version_group(group),
+                "containers": [
+                    str(container.get("name") or "").strip()
+                    for item in group_items
+                    for container in (item.get("containers") or [])
+                    if str(container.get("name") or "").strip()
+                ],
+                "already_installed": True,
+                "policy_after_update": get_monitor_policy(app_item.get("stack_key")),
+                "engine": "digest-resolved-noop",
+            }
+
         target_map = _version_group_target_map(group, target_tag, "available")
     else:
         target_tag = _follow_policy_tag(
@@ -18575,7 +18642,7 @@ def perform_version_update(app_item):
             target_ref = str(plan.get("new_image_ref") or "").strip()
             for service in plan.get("services") or []:
                 actual_ref = str(persisted_images.get(str(service)) or "").strip()
-                if actual_ref != target_ref:
+                if not image_refs_semantically_equal(actual_ref, target_ref):
                     raise RuntimeError(
                         "ZimaOS persisted an incomplete version-group change: "
                         f"service={service}, expected={target_ref}, actual={actual_ref or '-'}"
@@ -19932,9 +19999,10 @@ def _app_versions_unlocked(stack_key: str, request: Request):
             if str(value or "").strip()
         }
         if digest_pinned:
-            pinned_digest = str(item.get("compose_pinned_digest") or "").strip().lower()
-            if pinned_digest.startswith("sha256:"):
-                local_digest_values.add(pinned_digest)
+            if not local_digest_values:
+                pinned_digest = str(item.get("compose_pinned_digest") or "").strip().lower()
+                if pinned_digest.startswith("sha256:"):
+                    local_digest_values.add(pinned_digest)
             if resolution_source in {"configured-tag", "local-repotag"}:
                 resolved_installed = ""
 
