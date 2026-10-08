@@ -13990,10 +13990,11 @@ def wait_for_container_target_digest(
     image_ref,
     expected_digests,
     timeout=600,
+    expected_image_id=None,
 ):
-    """
-    Update success requires both the target Config.Image string and a real
-    RepoDigest match against the registry target.
+    """Verify target bytes, tolerating tag-only Config.Image for digest pins.
+
+    For unpinned tags Config.Image must still identify the target ref.
     """
     deadline = time.time() + timeout
     last_ref = None
@@ -14005,9 +14006,11 @@ def wait_for_container_target_digest(
             container_name,
             image_ref,
             expected_digests,
+            expected_image_id=expected_image_id,
         )
 
-        if image_refs_semantically_equal(last_ref, image_ref) and matched:
+        pinned_ref = bool(parse_image_ref(str(image_ref or "")).get("pinned_digest"))
+        if matched and (pinned_ref or image_refs_semantically_equal(last_ref, image_ref)):
             return {
                 "container": container_name,
                 "image_ref": last_ref,
@@ -15781,11 +15784,16 @@ def wait_for_version_group_compose_update(
     compose_project,
     expected_by_container,
     timeout=300,
+    target_verification=None,
+    original_container_ids=None,
+    recreate_after=30,
 ):
-    """
-    Wait until every service in one version family reached its own expected
-    image reference. This is the multi-image counterpart of
-    wait_for_version_compose_update().
+    """Confirm persisted Compose and the *runtime image bytes* for each service.
+
+    Docker's Config.Image string can omit a Compose @sha256 pin or keep an
+    older tag during ZimaOS recreation. A string-only wait would time out,
+    roll back a valid version upgrade, and never reach the existing recreation
+    fallback. Use the digest/image-ID from the already verified pull instead.
     """
     expected_by_container = {
         str(name): str(ref)
@@ -15795,9 +15803,22 @@ def wait_for_version_group_compose_update(
     if not expected_by_container:
         raise RuntimeError("No target containers were supplied for the version group")
 
+    target_verification = target_verification or {}
+    original_container_ids = original_container_ids or {}
     expected_refs = set(expected_by_container.values())
-    deadline = time.time() + timeout
+    started_at = time.time()
+    deadline = started_at + max(20, int(timeout))
+    recreate_deadline = started_at + max(10, int(recreate_after))
+    recreated = set()
+    container_change_seen_at = {}
     last_images = {}
+    last_digest_state = {}
+    compose_saved = False
+
+    for ref in expected_refs:
+        verification = target_verification.get(ref) or {}
+        if not (verification.get("expected_digests") or verification.get("image_id")):
+            raise RuntimeError(f"No verified target digest/image ID for {ref}")
 
     while time.time() < deadline:
         try:
@@ -15811,33 +15832,67 @@ def wait_for_version_group_compose_update(
         except Exception:
             compose_saved = False
 
-        current_refs = {}
-        for container_name in expected_by_container:
-            current_ref = docker_container_config_image(container_name)
-            if current_ref:
-                current_refs[container_name] = current_ref
+        last_images = {}
+        last_digest_state = {}
+        all_target_digests = True
+        for name, ref in expected_by_container.items():
+            verification = target_verification.get(ref) or {}
+            current_ref = docker_container_config_image(name)
+            current_id = docker_container_id(name)
+            last_images[name] = current_ref
 
-        last_images = current_refs
-        target_ready = (
-            len(current_refs) == len(expected_by_container)
-            and all(
-                image_refs_semantically_equal(current_refs.get(name), expected_ref)
-                for name, expected_ref in expected_by_container.items()
+            old_id = str(original_container_ids.get(name) or "").strip()
+            if current_id and old_id and current_id != old_id:
+                container_change_seen_at.setdefault(name, time.time())
+
+            matched, local_digests = container_matches_target_digest(
+                name,
+                ref,
+                verification.get("expected_digests") or [],
+                expected_image_id=verification.get("image_id"),
             )
-        )
+            last_digest_state[name] = {
+                "matched": bool(matched),
+                "container_id": current_id,
+                "local_digests": sorted(local_digests),
+            }
+            if not matched:
+                all_target_digests = False
 
-        if compose_saved and target_ready:
-            return last_images
+        # ZimaOS persisted the new image and every service runs the exact
+        # already-verified image: the update has reached its real target.
+        if compose_saved and all_target_digests:
+            return dict(last_images)
+
+        # If ZimaOS saved Compose but the runtime is still old, give its own
+        # recreation a chance. Then execute the intended one-shot fallback
+        # *inside* the wait instead of waiting ten minutes before trying it.
+        if compose_saved and time.time() >= recreate_deadline:
+            for name, ref in expected_by_container.items():
+                if last_digest_state[name]["matched"] or name in recreated:
+                    continue
+                recent_recreate_at = container_change_seen_at.get(name)
+                if recent_recreate_at and time.time() - recent_recreate_at < 30:
+                    continue
+                current_id = last_digest_state[name]["container_id"]
+                if not current_id:
+                    continue  # ZimaOS may be between removing and recreating.
+                casaos_recreate_container(
+                    current_id,
+                    compose_project,
+                    pull=False,  # Target was already pulled and verified above.
+                    force=True,
+                )
+                recreated.add(name)
 
         time.sleep(2)
 
     raise RuntimeError(
-        "ZimaOS accepted the version-group change, but not every Compose image "
-        f"became active within {timeout} seconds. "
-        "No destructive recovery action was executed. "
-        f"(expected={expected_by_container}, observed={last_images})"
+        "ZimaOS saved the version-group Compose change, but its containers "
+        f"did not reach the verified target digests within {timeout} seconds "
+        f"(compose_saved={compose_saved}, images={last_images}, "
+        f"digests={last_digest_state}, fallback_recreated={sorted(recreated)})"
     )
-
 
 def _backup_stack_dir_name(stack_key, compose_project=None, app_name=None):
     """Return a human-readable backup folder name.
@@ -18604,6 +18659,7 @@ def perform_version_update(app_item):
             target_verification[new_ref] = pulled
 
     original_states = {}
+    original_container_ids = {}
     original_one_shots = set()
     for container in app_item.get("containers") or []:
         name = str(container.get("name") or "").strip()
@@ -18615,6 +18671,7 @@ def perform_version_update(app_item):
                 f"Unsupported container state for safe version update: {name} ({state})"
             )
         original_states[name] = state
+        original_container_ids[name] = docker_container_id(name)
         snapshot = docker_container_runtime_snapshot(name) or {}
         try:
             exit_code = int(snapshot.get("exit_code"))
@@ -18653,6 +18710,8 @@ def perform_version_update(app_item):
             project,
             expected_by_container,
             timeout=600,
+            target_verification=target_verification,
+            original_container_ids=original_container_ids,
         )
 
         verified_runtime = {}
@@ -18670,6 +18729,7 @@ def perform_version_update(app_item):
                 container_name,
                 expected_ref,
                 expected_digests,
+                expected_image_id=verification.get("image_id"),
             )
 
             if not matched:
@@ -18685,6 +18745,7 @@ def perform_version_update(app_item):
                 expected_ref,
                 expected_digests,
                 timeout=600,
+                expected_image_id=verification.get("image_id"),
             )
 
         # Restore ordinary stopped containers, but never stop a successful
