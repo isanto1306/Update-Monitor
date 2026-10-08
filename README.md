@@ -88,9 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.390**
+Current release: **v0.3.391**
 
-v0.3.390 fixes installed-version detection for digest-pinned images. For refs such as repo:v0.105.0@sha256:..., the immutable digest now wins over a potentially stale textual tag. Update Monitor resolves the running/pinned digest against concrete registry versions, so an image already running v0.106.0 is displayed as v0.106.0 even when ZimaOS retained the older tag text.
+v0.3.391 reconciles digest-pinned apps against the live Docker runtime. A current runtime RepoDigest now wins over a stale cached/Compose digest; the Compose pin is used only as a fallback when Docker exposes no local digest. Manual version selection no longer starts a second update when the selected release is already proven by the running digest, and digest-pinned image refs are compared semantically so harmless ZimaOS/Docker normalization does not trigger a false rollback.\n\nv0.3.390 fixes installed-version detection for digest-pinned images. For refs such as repo:v0.105.0@sha256:..., the immutable digest now wins over a potentially stale textual tag. Update Monitor resolves the running/pinned digest against concrete registry versions, so an image already running v0.106.0 is displayed as v0.106.0 even when ZimaOS retained the older tag text.
 
 v0.3.389 adds safe manual version discovery and switching for intentionally digest-pinned Compose images. Version lists are now loaded for pinned registry images, and a manual version change preserves immutability by resolving and writing the selected tag together with its verified registry digest. Moving-tag follow mode remains blocked for intentional digest pins.
 
