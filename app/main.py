@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.388"
+VERSION = "0.3.389"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -4510,7 +4510,7 @@ def _group_common_tag_data(items, field):
 def build_version_groups(app_item):
     groups = {}
     for item in (app_item or {}).get("items") or []:
-        if item.get("update_policy") in {"digest_pinned", "local"}:
+        if item.get("update_policy") == "local":
             continue
         if not str(item.get("image_ref") or "").strip():
             continue
@@ -18273,8 +18273,14 @@ def perform_version_update(app_item):
     for item in group_items:
         old_ref = str(item.get("image_ref") or "").strip()
         parsed = parse_image_ref(old_ref)
-        if parsed.get("pinned_digest"):
-            raise RuntimeError("Digest-pinned images cannot be changed by this path")
+        digest_pinned = bool(
+            item.get("compose_digest_pin_proven")
+            or parsed.get("pinned_digest")
+        )
+        if digest_pinned and mode != "upgrade":
+            raise RuntimeError(
+                "Digest-pinned images can only switch versions manually"
+            )
         if not old_ref or not parsed.get("repo"):
             raise RuntimeError("Could not determine the configured image reference")
 
@@ -18284,14 +18290,49 @@ def perform_version_update(app_item):
                 f"No installable target tag was found for version-group image {old_ref}"
             )
 
-        new_ref = _update_target_ref_on_active_registry(
+        tag_ref = _update_target_ref_on_active_registry(
             item,
             requested_tag=exact_target_tag,
         )
-        if not new_ref:
+        if not tag_ref:
             raise RuntimeError(
                 f"Could not determine the active Docker registry for {old_ref}"
             )
+
+        new_ref = tag_ref
+        target_pin_digest = None
+        if digest_pinned:
+            parsed_target = parse_image_ref(tag_ref)
+            target_repo = str(parsed_target.get("normalized_repo") or "").strip()
+            if not target_repo:
+                raise RuntimeError(
+                    f"Could not determine the registry repository for {tag_ref}"
+                )
+
+            # Preserve an intentional Compose digest pin when the user
+            # manually switches to another concrete version. With no
+            # platform argument the registry helper returns the top
+            # manifest/index digest from Docker-Content-Digest, which is
+            # the correct immutable pin for the selected release tag.
+            pin_digests, pin_error = registry_manifest_digests(
+                target_repo,
+                exact_target_tag,
+                platform=None,
+                timeout=12,
+            )
+            pin_digests = sorted(
+                str(value or "").strip().lower()
+                for value in (pin_digests or [])
+                if str(value or "").strip().lower().startswith("sha256:")
+            )
+            if pin_error or not pin_digests:
+                raise RuntimeError(
+                    f"Could not resolve an immutable digest for {tag_ref}: "
+                    f"{pin_error or 'no registry digest returned'}. "
+                    "The configuration was left unchanged."
+                )
+            target_pin_digest = pin_digests[0]
+            new_ref = f"{tag_ref}@{target_pin_digest}"
 
         # Do not probe the registry a second time here.  docker_pull_verified()
         # is the authoritative installability check and avoids an extra Docker
@@ -18374,6 +18415,8 @@ def perform_version_update(app_item):
             "services": services,
             "containers": container_names,
             "follow_target_digests": list(item.get("follow_target_digests") or []),
+            "digest_pinned": digest_pinned,
+            "target_pin_digest": target_pin_digest,
             "source_version_hint": source_version_hint or None,
         })
 
@@ -19775,7 +19818,7 @@ def _app_versions_unlocked(stack_key: str, request: Request):
         scan_platform = str(scan_state.get("platform") or "").strip()
 
     for item in app_item.get("items") or []:
-        if item.get("update_policy") in {"digest_pinned", "local"}:
+        if item.get("update_policy") == "local":
             continue
 
         image_ref = str(item.get("image_ref") or "").strip()

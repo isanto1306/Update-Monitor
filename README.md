@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.388**
+Current release: **v0.3.389**
+
+v0.3.389 adds safe manual version discovery and switching for intentionally digest-pinned Compose images. Version lists are now loaded for pinned registry images, and a manual version change preserves immutability by resolving and writing the selected tag together with its verified registry digest. Moving-tag follow mode remains blocked for intentional digest pins.
 
 v0.3.388 adds a viewport-safe height cap to all modal settings and selection dialogs. Every modal keeps a 24 px visual safety margin at the top and bottom and scrolls internally when its content exceeds the available height. Manual display percentages are included in the height calculation, while the Docker card layout and its scaling remain unchanged.
 
