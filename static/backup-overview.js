@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.407 */
+/* Update Monitor — global Docker backup management, v0.3.408 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -119,7 +119,15 @@
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar-track{background:transparent;}',
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar-thumb{background:#38516b;border-radius:6px;}',
     '@media(max-width:860px){.umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}.umbo-top-heading{padding-right:48px;}.umbo-top-actions{justify-content:flex-end;width:100%;}.umbo-top-actions .umbo-stats{width:auto;max-width:100%;margin-right:0;}.umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}}',
-    '@media(max-width:480px){.umbo-top-actions .umbo-stats{width:auto;max-width:100%;gap:16px;}.umbo-top-actions .umbo-stat{padding:0;}.umbo-top-actions .umbo-stat small{font-size:10px;}.umbo-top-actions .umbo-stat strong{font-size:14px;}}'
+    '@media(max-width:480px){.umbo-top-actions .umbo-stats{width:auto;max-width:100%;gap:16px;}.umbo-top-actions .umbo-stat{padding:0;}.umbo-top-actions .umbo-stat small{font-size:10px;}.umbo-top-actions .umbo-stat strong{font-size:14px;}}',
+    // Only the two backup dialogs follow the existing manual display scale.
+    // Do not change the display-settings controller or other app dialogs.
+    'html[data-um-card-scale] #umBackupOverviewDialog,html[data-um-card-scale] #umBackupDeleteDialog{zoom:var(--um-manual-ui-scale,1);}',
+    '#umBackupOverviewDialog.um-backup-manual-narrow .umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}',
+    '#umBackupOverviewDialog.um-backup-manual-narrow .umbo-top-heading{padding-right:48px;}',
+    '#umBackupOverviewDialog.um-backup-manual-narrow .umbo-top-actions{justify-content:flex-end;width:100%;}',
+    '#umBackupOverviewDialog.um-backup-manual-narrow .umbo-top-actions .umbo-stats{margin-right:0;}',
+    '#umBackupOverviewDialog.um-backup-manual-narrow .umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}'
   ].join('\n');
   document.head.appendChild(css);
 
@@ -211,6 +219,36 @@
       '<div id="umBackupDeleteDetail"></div><div class="umbo-delete-actions">' +
       '<button type="button" id="umboDeleteCancel"></button><button type="button" id="umboDeleteConfirm"></button></div></section>';
     document.body.appendChild(deleteBackdrop);
+    var overviewDialog = document.getElementById('umBackupOverviewDialog');
+    var deleteDialog = document.getElementById('umBackupDeleteDialog');
+    function syncBackupManualScale() {
+      // Read the existing settings state; never write or override it.
+      var manual = document.documentElement.hasAttribute('data-um-card-scale');
+      if (!manual) {
+        overviewDialog.style.removeProperty('max-width');
+        overviewDialog.style.removeProperty('max-height');
+        deleteDialog.style.removeProperty('max-width');
+        deleteDialog.style.removeProperty('max-height');
+        overviewDialog.classList.remove('um-backup-manual-narrow');
+        return;
+      }
+      var rawScale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--um-manual-ui-scale'));
+      var scale = Number.isFinite(rawScale) && rawScale >= 1 && rawScale <= 1.5 ? rawScale : 1;
+      var viewport = window.visualViewport;
+      var viewportWidth = (viewport && viewport.width) || document.documentElement.clientWidth || window.innerWidth;
+      var viewportHeight = (viewport && viewport.height) || document.documentElement.clientHeight || window.innerHeight;
+      // A zoomed element occupies scale times its CSS width and height.
+      var overviewWidth = Math.min(1010, Math.max(120, (viewportWidth - 36) / scale));
+      var deleteWidth = Math.min(430, Math.max(120, (viewportWidth - 36) / scale));
+      var availableHeight = Math.max(120, (viewportHeight - 48) / scale);
+      overviewDialog.style.setProperty('max-width', overviewWidth.toFixed(2) + 'px', 'important');
+      overviewDialog.style.setProperty('max-height', Math.min(860, availableHeight).toFixed(2) + 'px', 'important');
+      deleteDialog.style.setProperty('max-width', deleteWidth.toFixed(2) + 'px', 'important');
+      deleteDialog.style.setProperty('max-height', availableHeight.toFixed(2) + 'px', 'important');
+      overviewDialog.classList.toggle('um-backup-manual-narrow', overviewWidth < 760);
+    }
+    window.addEventListener('resize', syncBackupManualScale, {passive:true});
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', syncBackupManualScale, {passive:true});
 
     var data = [];
     var total = 0;
@@ -334,6 +372,7 @@
       document.getElementById('umBackupDeleteDetail').textContent =
         String(row.app_name || '') + ' · ' + timeText(row.created_at) + ' · ' + byteText(row.size_bytes);
       localize();
+      syncBackupManualScale();
       deleteBackdrop.classList.add('visible');
       deleteBackdrop.setAttribute('aria-hidden', 'false');
       document.getElementById('umboDeleteCancel').focus();
@@ -388,6 +427,7 @@
       previousFocus = document.activeElement;
       backdrop.classList.add('visible');
       backdrop.setAttribute('aria-hidden', 'false');
+      syncBackupManualScale();
       lockBackgroundScroll();
       localize();
       document.getElementById('umboClose').focus();
