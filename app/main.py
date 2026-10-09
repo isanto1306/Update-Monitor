@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.393"
+VERSION = "0.3.394"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -21203,3 +21203,8 @@ def update_settings(data: SettingsRequest, request: Request):
         settings["scan_interval_seconds"] = data.scan_interval_seconds
         save_json(SETTINGS_FILE, settings)
     return {"success": True, "settings": dict(settings)}
+
+
+# Central cross-app backup overview (isolated from existing backup/restore code).
+from backup_overview import install_backup_overview
+install_backup_overview(globals())
