@@ -452,4 +452,50 @@ for marker in ("backupProgressVisuals","smoothConfirmedBackupProgress","requestA
         raise SystemExit(f"Frontend marker not found: {marker}")
 
 
+
+# v0.3.393: ZimaOS can report an uninstall complete while leaving AppData
+# behind. Surface a clear, localized warning if the independently checked
+# cleanup is partial or cannot be verified. This changes no card geometry.
+uninstall_old = """    await api('/api/app-uninstall',{
+      method:'POST',
+      body:JSON.stringify({
+        stack_key:app.stack_key,
+        delete_config_folder:!!deleteFolder
+      })
+    });
+
+    // No second success message below the card.
+"""
+uninstall_new = """    const uninstallResult=await api('/api/app-uninstall',{
+      method:'POST',
+      body:JSON.stringify({
+        stack_key:app.stack_key,
+        delete_config_folder:!!deleteFolder
+      })
+    });
+
+    // A removed app can still leave AppData behind. Do not claim complete
+    // data cleanup when the verified result is incomplete or uncertain.
+    const cleanup=uninstallResult&&uninstallResult.data_cleanup;
+    if(deleteFolder&&cleanup&&cleanup.status!=='complete'){
+      const messages={
+        de:'Die App wurde deinstalliert, aber nicht alle Datenordner konnten nachweislich entfernt werden. Bitte AppData prüfen.',
+        en:'The app was uninstalled, but not every data folder could be confirmed removed. Check AppData.',
+        fr:'L’application a été désinstallée, mais tous les dossiers de données n’ont pas pu être supprimés ou vérifiés. Vérifiez AppData.',
+        pt:'A aplicação foi desinstalada, mas não foi possível confirmar a remoção de todas as pastas de dados. Verifique AppData.',
+        es:'La aplicación se desinstaló, pero no se pudo confirmar la eliminación de todas las carpetas de datos. Revisa AppData.'
+      };
+      const folderNames=[
+        ...(cleanup.skipped||[]).map(row=>String(row&&row.folder||'')),
+        ...(cleanup.failed||[]).map(row=>String(row&&row.folder||''))
+      ].filter(Boolean);
+      const details=folderNames.length?'\\\\n/DATA/AppData: '+[...new Set(folderNames)].join(', '):'';
+      window.alert((messages[state.language]||messages.en)+details);
+    }
+
+    // No second success message below the card.
+"""
+if "const cleanup=uninstallResult&&uninstallResult.data_cleanup;" not in text:
+    replace_once(uninstall_old, uninstall_new, "checked AppData uninstall warning")
+
 path.write_text(text, encoding="utf-8")
