@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.398 */
+/* Update Monitor — global Docker backup management, v0.3.399 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -103,7 +103,7 @@
     'html.um-backup-scroll-lock,html.um-backup-scroll-lock body{overflow:hidden!important;overscroll-behavior:none!important;}',
     '#umBackupOverviewBackdrop,#umBackupDeleteBackdrop{overscroll-behavior:contain;}',
     '#umBackupOverviewBackdrop .umbo-content{overscroll-behavior:contain;}',
-    '#umboClose{width:40px!important;min-width:40px!important;height:40px!important;display:flex!important;align-items:center;justify-content:center;padding:0!important;font-size:28px!important;line-height:1!important;}'
+    '#umboClose{font-size:28px!important;line-height:1!important;}'
   ].join('\n');
   document.head.appendChild(css);
 

@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.398**
+Current release: **v0.3.399**
+
+v0.3.399 restores the standard close-button hit area and blue hover border of the backup overview. The larger X glyph remains unchanged, while the surrounding button once again inherits the normal dialog size. No other backup or modal behavior changes.
 
 v0.3.398 simplifies the central backup overview by removing the redundant Refresh button while keeping automatic backup-list reload on each opening and after deletion. The header close X is enlarged to match the dimensions of the application's other modal close controls. Existing backup operations, sorting, warning alignment, and scroll lock remain unchanged.
 
