@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.408 */
+/* Update Monitor — global Docker backup management, v0.3.409 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -118,6 +118,11 @@
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar{width:6px;height:6px;}',
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar-track{background:transparent;}',
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar-thumb{background:#38516b;border-radius:6px;}',
+    // Keep the column labels and their bottom rule outside the scrolling list.
+    '#umBackupOverviewDialog .umbo-table-head{box-sizing:border-box;flex:0 0 auto;min-height:0;padding:0 24px;overflow:hidden;}',
+    '#umBackupOverviewDialog .umbo-content{box-sizing:border-box;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:auto;padding:0 18px 20px 24px;}',
+    '#umBackupOverviewDialog .umbo-table{table-layout:fixed;}',
+    '@media(max-width:650px){#umBackupOverviewDialog .umbo-table-head{padding:0 12px;}#umBackupOverviewDialog .umbo-content{padding:0 6px 14px 12px;}}',
     '@media(max-width:860px){.umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}.umbo-top-heading{padding-right:48px;}.umbo-top-actions{justify-content:flex-end;width:100%;}.umbo-top-actions .umbo-stats{width:auto;max-width:100%;margin-right:0;}.umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}}',
     '@media(max-width:480px){.umbo-top-actions .umbo-stats{width:auto;max-width:100%;gap:16px;}.umbo-top-actions .umbo-stat{padding:0;}.umbo-top-actions .umbo-stat small{font-size:10px;}.umbo-top-actions .umbo-stat strong{font-size:14px;}}',
     // Only the two backup dialogs follow the existing manual display scale.
@@ -207,6 +212,7 @@
             '<button type="button" class="image-source-close" id="umboClose" aria-label="Close">×</button>' +
           '</div>' +
         '</div>' +
+        '<div class="umbo-table-head" id="umboTableHead"></div>' +
         '<div class="umbo-content" id="umboContent" aria-live="polite"></div>' +
       '</section>';
     document.body.appendChild(backdrop);
@@ -261,6 +267,9 @@
     var selectedDelete = null;
     var deleteFocus = null;
     var content = document.getElementById('umboContent');
+    var tableHead = document.getElementById('umboTableHead');
+    // On narrow screens the column headers follow only horizontal list scrolling.
+    content.addEventListener('scroll', function() {tableHead.scrollLeft = content.scrollLeft;}, {passive:true});
 
     // Only the backup table may scroll while the overview is visible.
     // Prevent wheel/touch scrolling over the dark side margins or modal header,
@@ -294,6 +303,7 @@
     }
 
     function showMessage(text, isError) {
+      tableHead.innerHTML = '';
       content.innerHTML = '<div class="umbo-message' + (isError ? ' error' : '') + '">' + esc(text) + '</div>';
     }
 
@@ -326,9 +336,12 @@
         }
         return cmp ? cmp * direction : String(a.entry_id).localeCompare(String(b.entry_id));
       });
-      var html = '<table class="umbo-table"><thead><tr>' + sortHeading('name') + sortHeading('date') +
-        '<th>' + esc(t('type')) + '</th>' + sortHeading('size') +
-        '<th>' + esc(t('actions')) + '</th></tr></thead><tbody>';
+      // Matching column widths keep two separate semantic tables aligned.
+      var columns = '<colgroup><col style="width:30%"><col style="width:24%"><col style="width:18%"><col style="width:16%"><col style="width:12%"></colgroup>';
+      var headerHtml = '<table class="umbo-table umbo-table-header">' + columns + '<thead><tr>' +
+        sortHeading('name') + sortHeading('date') + '<th>' + esc(t('type')) + '</th>' +
+        sortHeading('size') + '<th>' + esc(t('actions')) + '</th></tr></thead></table>';
+      var html = '<table class="umbo-table umbo-table-rows" aria-label="' + esc(t('title')) + '">' + columns + '<tbody>';
       rows.forEach(function(row) {
         html += '<tr><td><div class="umbo-app">' + esc(row.app_name) +
           '</div><div class="umbo-id">' + esc(row.backup_id) + '</div></td>' +
@@ -339,7 +352,11 @@
           '<td><button type="button" class="umbo-delete" data-umbo-id="' + esc(row.entry_id) +
           '" aria-label="' + esc(t('delete')) + '" title="' + esc(t('delete')) + '">×</button></td></tr>';
       });
+      var previousScrollTop = content.scrollTop;
+      tableHead.innerHTML = headerHtml;
       content.innerHTML = html + '</tbody></table>';
+      content.scrollTop = previousScrollTop;
+      tableHead.scrollLeft = content.scrollLeft;
     }
 
     async function requestJson(url, options) {
@@ -450,7 +467,7 @@
         else if (!evt.shiftKey && index === focusables.length - 1) { evt.preventDefault(); focusables[0].focus(); }
       }
     });
-    content.addEventListener('click', function(evt) {
+    overviewDialog.addEventListener('click', function(evt) {
       var sortButton = evt.target.closest('[data-umbo-sort]');
       if (sortButton && !pending && !selectedDelete) {
         var nextSort = sortButton.getAttribute('data-umbo-sort');

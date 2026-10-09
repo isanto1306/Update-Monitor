@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.408**
+Current release: **v0.3.409**
+
+v0.3.409 keeps the central Backup overview's column headings (Name, Date, Type, Size, Action) and their horizontal dividing line fixed above the scrolling backup entries. The slim scrollbar now begins immediately below the header rule, without affecting the title, statistics, sorting, backup actions, language support, or manual scaling. The header and list share fixed column widths and synchronize horizontal movement on narrow viewports.
 
 v0.3.408 applies the existing 105–150% Manual display scale only to the central Backup overview and its delete confirmation. Width/height are capped per viewport and the backup header reflows on narrower layouts. The display-settings controller (`static/layout-options.js`) is byte-for-byte unchanged from the working v0.3.405/0.3.407 revision; all other dialogs are untouched.
 
