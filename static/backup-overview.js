@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.395 */
+/* Update Monitor — global Docker backup management, v0.3.396 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -102,6 +102,7 @@
     ".umbo-delete-actions button:disabled{opacity:.45;cursor:wait;}",
     "@media(max-width:650px){.umbo-top-actions{gap:8px;}.umbo-top-actions .umbo-refresh{font-size:11px;}}"
   ].join('\n');
+  css.textContent += '\n' + "/* Position the warning pointer beneath the warning symbol, not the newly inserted backup button. */\n#headerWarningPopover::after{right:var(--um-warning-pointer-right,17px)!important;}";
   document.head.appendChild(css);
 
   function init() {
@@ -113,6 +114,57 @@
     trigger.className = 'icon-button';
     trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"></path></svg>';
     settingsButton.parentNode.insertBefore(trigger, settingsButton);
+
+    // The header warning popover previously used a fixed offset from the
+    // settings button. Inserting the backup button moves its trigger without
+    // moving the popover's arrow; derive alignment from real screen geometry.
+    (function alignHeaderWarningPopover() {
+      var warningButton = document.getElementById('headerWarningButton');
+      var popover = document.getElementById('headerWarningPopover');
+      if (!warningButton || !popover) return;
+
+      function align() {
+        if (popover.hidden || warningButton.hidden || !popover.offsetWidth) return;
+        var buttonBox = warningButton.getBoundingClientRect();
+        var buttonCenter = (buttonBox.left + buttonBox.right) / 2;
+        var panelBox = popover.getBoundingClientRect();
+        var scale = panelBox.width / popover.offsetWidth;
+        if (!Number.isFinite(scale) || scale <= 0) return;
+
+        // On wide layouts, move the panel with its trigger. On narrow
+        // viewports, preserve the panel's on-screen position and move just
+        // the small pointer instead of clipping the left side.
+        var position = window.getComputedStyle(popover).position;
+        var parent = popover.offsetParent;
+        if (position === 'absolute' && parent) {
+          var viewport = document.documentElement.clientWidth || window.innerWidth;
+          if (panelBox.width <= viewport - 16) {
+            var desiredRight = buttonCenter + 24 * scale;
+            var panelRight = Math.max(panelBox.width + 8,
+              Math.min(viewport - 8, desiredRight));
+            var parentRight = parent.getBoundingClientRect().right;
+            popover.style.right = ((parentRight - panelRight) / scale).toFixed(2) + 'px';
+            panelBox = popover.getBoundingClientRect();
+          }
+        }
+        // The pointer is a 14px rotated square; its center is 7px in.
+        var pointerRight = (panelBox.right - buttonCenter) / scale - 7;
+        pointerRight = Math.max(8, Math.min(popover.offsetWidth - 22, pointerRight));
+        popover.style.setProperty('--um-warning-pointer-right', pointerRight.toFixed(2) + 'px');
+      }
+
+      function scheduleAlign() { window.requestAnimationFrame(align); }
+      var observer = new MutationObserver(scheduleAlign);
+      observer.observe(popover, {attributes:true,attributeFilter:['hidden']});
+      warningButton.addEventListener('click', scheduleAlign);
+      window.addEventListener('resize', scheduleAlign, {passive:true});
+      if ('ResizeObserver' in window) {
+        var resizeObserver = new ResizeObserver(scheduleAlign);
+        resizeObserver.observe(warningButton);
+        resizeObserver.observe(popover);
+      }
+      scheduleAlign();
+    })();
 
     var backdrop = document.createElement('div');
     backdrop.id = 'umBackupOverviewBackdrop';

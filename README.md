@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.395**
+Current release: **v0.3.396**
+
+v0.3.396 fixes the header warning popover anchor after the backup manager icon was added. The yellow pointer now follows the actual warning button position rather than a fixed offset from Settings. The popover repositions only when enough horizontal room exists; on narrow screens its body remains onscreen and only the pointer shifts. Backup management and existing warning content remain unchanged.
 
 v0.3.395 refines the central backup manager: unframed navigation icon, centered in-app deletion confirmation, text-only Refresh in the top header, direct ascending/descending column sorting for Name, Date and Size. The backup counter, storage totals, Type column and all existing backend backup and restore features remain unchanged.
 
