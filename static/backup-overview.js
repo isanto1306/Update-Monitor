@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.399 */
+/* Update Monitor — global Docker backup management, v0.3.400 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -41,7 +41,7 @@
   css.id = 'um-backup-overview-styles';
   css.textContent = [
     '#umBackupOverviewButton{width:40px;height:40px;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}',
-    '#umBackupOverviewButton svg{width:22px;height:22px;display:block;stroke:#d7e0e8;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}',
+    '#umBackupOverviewButton svg{width:28px;height:28px;display:block;stroke:#d7e0e8;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}',
     '#umBackupOverviewButton:hover svg{stroke:#8fcaff;}',
     '#umBackupOverviewBackdrop{position:fixed;inset:0;z-index:23000;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(3,9,17,.79);backdrop-filter:blur(5px);}',
     '#umBackupOverviewBackdrop.visible{display:flex;}',
@@ -114,7 +114,7 @@
     trigger.type = 'button';
     trigger.id = 'umBackupOverviewButton';
     trigger.className = 'icon-button';
-    trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"></path></svg>';
+    trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="4" rx="1.5"></rect><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 13h4"></path></svg>';
     settingsButton.parentNode.insertBefore(trigger, settingsButton);
 
     // The header warning popover previously used a fixed offset from the

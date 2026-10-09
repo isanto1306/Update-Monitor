@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.399**
+Current release: **v0.3.400**
+
+v0.3.400 aligns the header backup icon's overall SVG dimensions with the settings gear at 28 × 28 px while adjusting its lid from 18 × 5 to 16 × 4 viewBox units. The lower archive body and all backup-management behavior remain unchanged.
 
 v0.3.399 restores the standard close-button hit area and blue hover border of the backup overview. The larger X glyph remains unchanged, while the surrounding button once again inherits the normal dialog size. No other backup or modal behavior changes.
 
