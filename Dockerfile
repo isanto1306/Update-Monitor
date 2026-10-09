@@ -12,6 +12,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app/main.py /app/main.py
+COPY app/uninstall_cleanup.py /app/uninstall_cleanup.py
 COPY static/ /app/static/
 # Keep the large production HTML untouched in Git. The card display-scaling
 # controller is appended to the already loaded frontend bridge at image build.
