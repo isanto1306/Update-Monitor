@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.405**
+Current release: **v0.3.406**
+
+v0.3.406 connects the central backup overview and its centered deletion dialog to the existing Manual display scaling (105–150%). Both windows now use the same scale as the main UI, with viewport-based width and height constraints and a responsive backup header to prevent clipping. Automatic display mode, backup data loading, sorting and deletion remain unchanged.
 
 v0.3.405 removes the entire surrounding box, internal backgrounds, and vertical divider from the Backup count and Used storage indicators. Each label appears above its corresponding value, horizontally centered in a clean two-group text-only header. The existing font sizes, backup features, and scrollbar geometry are unchanged.
 

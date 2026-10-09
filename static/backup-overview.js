@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.405 */
+/* Update Monitor — global Docker backup management, v0.3.406 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
