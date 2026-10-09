@@ -1,0 +1,255 @@
+/* Update Monitor — global Docker backup management, v0.3.394 */
+(function () {
+  'use strict';
+  if (window.__umBackupOverviewInstalled) return;
+  window.__umBackupOverviewInstalled = true;
+
+  var labels = {
+    de: {title:'Backup-Verwaltung',subtitle:'Gespeicherte Backups aller Docker-Apps',sort:'Sortieren nach',name:'Name',date:'Datum',size:'Größe',type:'Typ',actions:'Aktion',refresh:'Aktualisieren',close:'Schließen',empty:'Keine gespeicherten Backups vorhanden.',loading:'Backups werden geladen …',count:'Backups',total:'Belegter Speicher',unknown:'zzgl. unbekannter Größen',delete:'Backup löschen',confirm:'Dieses Backup endgültig löschen?',deleted:'Backup wurde gelöscht.',error:'Die Backup-Liste konnte nicht geladen werden.',deleteError:'Das Backup konnte nicht gelöscht werden.',quick:'Schnell',full:'Vollständig',encrypted:'Verschlüsselt',ascending:'Aufsteigend',descending:'Absteigend'},
+    en: {title:'Backup management',subtitle:'Saved backups from all Docker apps',sort:'Sort by',name:'Name',date:'Date',size:'Size',type:'Type',actions:'Action',refresh:'Refresh',close:'Close',empty:'No saved backups found.',loading:'Loading backups …',count:'Backups',total:'Storage used',unknown:'plus unknown sizes',delete:'Delete backup',confirm:'Permanently delete this backup?',deleted:'Backup deleted.',error:'Could not load the backup list.',deleteError:'Could not delete the backup.',quick:'Quick',full:'Full',encrypted:'Encrypted',ascending:'Ascending',descending:'Descending'},
+    fr: {title:'Gestion des sauvegardes',subtitle:'Sauvegardes de toutes les applications Docker',sort:'Trier par',name:'Nom',date:'Date',size:'Taille',type:'Type',actions:'Action',refresh:'Actualiser',close:'Fermer',empty:'Aucune sauvegarde enregistrée.',loading:'Chargement des sauvegardes…',count:'Sauvegardes',total:'Espace utilisé',unknown:'plus tailles inconnues',delete:'Supprimer la sauvegarde',confirm:'Supprimer définitivement cette sauvegarde ?',deleted:'Sauvegarde supprimée.',error:'Impossible de charger les sauvegardes.',deleteError:'Impossible de supprimer la sauvegarde.',quick:'Rapide',full:'Complète',encrypted:'Chiffrée',ascending:'Croissant',descending:'Décroissant'},
+    pt: {title:'Gestão de backups',subtitle:'Backups guardados de todas as aplicações Docker',sort:'Ordenar por',name:'Nome',date:'Data',size:'Tamanho',type:'Tipo',actions:'Ação',refresh:'Atualizar',close:'Fechar',empty:'Não existem backups guardados.',loading:'A carregar backups…',count:'Backups',total:'Espaço utilizado',unknown:'mais tamanhos desconhecidos',delete:'Eliminar backup',confirm:'Eliminar este backup definitivamente?',deleted:'Backup eliminado.',error:'Não foi possível carregar os backups.',deleteError:'Não foi possível eliminar o backup.',quick:'Rápido',full:'Completo',encrypted:'Encriptado',ascending:'Ascendente',descending:'Descendente'},
+    es: {title:'Gestión de copias',subtitle:'Copias guardadas de todas las aplicaciones Docker',sort:'Ordenar por',name:'Nombre',date:'Fecha',size:'Tamaño',type:'Tipo',actions:'Acción',refresh:'Actualizar',close:'Cerrar',empty:'No hay copias guardadas.',loading:'Cargando copias…',count:'Copias',total:'Espacio utilizado',unknown:'más tamaños desconocidos',delete:'Eliminar copia',confirm:'¿Eliminar esta copia definitivamente?',deleted:'Copia eliminada.',error:'No se pudieron cargar las copias.',deleteError:'No se pudo eliminar la copia.',quick:'Rápida',full:'Completa',encrypted:'Cifrada',ascending:'Ascendente',descending:'Descendente'}
+  };
+  function lang() {
+    var v;
+    try { v = localStorage.getItem('updateMonitorLanguage'); } catch (_) {}
+    return labels[v] ? v : 'en';
+  }
+  function t(key) { return labels[lang()][key] || labels.en[key] || key; }
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function byteText(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '—';
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return new Intl.NumberFormat(lang(), {maximumFractionDigits: unit ? 2 : 0}).format(value) + ' ' + units[unit];
+  }
+  function timeText(value) {
+    var date = new Date(value);
+    if (!Number.isFinite(date.valueOf())) return '—';
+    try { return new Intl.DateTimeFormat(lang(), {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(date); }
+    catch (_) { return date.toLocaleString(); }
+  }
+
+  var css = document.createElement('style');
+  css.id = 'um-backup-overview-styles';
+  css.textContent = [
+    '#umBackupOverviewButton{width:40px;height:40px;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}',
+    '#umBackupOverviewButton svg{width:22px;height:22px;display:block;stroke:#d7e0e8;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}',
+    '#umBackupOverviewButton:hover svg{stroke:#8fcaff;}',
+    '#umBackupOverviewBackdrop{position:fixed;inset:0;z-index:23000;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(3,9,17,.79);backdrop-filter:blur(5px);}',
+    '#umBackupOverviewBackdrop.visible{display:flex;}',
+    '#umBackupOverviewDialog{box-sizing:border-box;width:min(1010px,100%);max-height:min(860px,calc(100dvh - 36px));overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(112,143,179,.36);border-radius:13px;background:#141e29;color:#e2eaf2;box-shadow:0 25px 95px rgba(0,0,0,.66);font-family:inherit;}',
+    '.umbo-top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 24px 14px;}',
+    '.umbo-top h2{margin:0;font-size:20px;line-height:1.3;font-weight:800;color:#eaf3ff;}',
+    '.umbo-subtitle{margin:5px 0 0;color:#91a4b7;font-size:12px;}',
+    '.umbo-x{width:34px;height:34px;flex:0 0 34px;border:1px solid rgba(129,152,175,.3);border-radius:8px;background:transparent;color:#d9e6f2;font-size:23px;line-height:1;cursor:pointer;}',
+    '.umbo-x:hover{border-color:#8ec4fa;color:#fff;}',
+    '.umbo-stats{display:flex;gap:10px;flex-wrap:wrap;padding:0 24px 17px;}',
+    '.umbo-stat{background:#1a2837;border:1px solid rgba(95,136,175,.24);border-radius:9px;padding:10px 15px;min-width:115px;}',
+    '.umbo-stat small{display:block;font-size:10px;color:#9cadbd;margin-bottom:4px;}',
+    '.umbo-stat strong{font-size:16px;color:#dcecff;font-variant-numeric:tabular-nums;}',
+    '.umbo-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:11px 24px;border-top:1px solid rgba(112,143,179,.18);border-bottom:1px solid rgba(112,143,179,.2);}',
+    '.umbo-controls label{font-size:12px;color:#a7b7c7;}',
+    '.umbo-controls select,.umbo-controls button{border:1px solid rgba(122,153,181,.39);border-radius:8px;background:#1d2b3a;color:#e0ecf7;min-height:34px;padding:6px 10px;font:inherit;font-size:12px;cursor:pointer;}',
+    '.umbo-controls button:hover{border-color:#71aff2;}',
+    '.umbo-refresh{margin-left:auto;}',
+    '.umbo-content{min-height:130px;max-height:60vh;overflow:auto;padding:0 24px 20px;scrollbar-color:#38516b #141e29;}',
+    '.umbo-table{width:100%;border-collapse:collapse;text-align:left;font-size:12px;}',
+    '.umbo-table th{position:sticky;top:0;background:#141e29;color:#93a6ba;font-weight:700;z-index:1;padding:13px 9px 11px;border-bottom:1px solid rgba(120,147,179,.3);white-space:nowrap;}',
+    '.umbo-table td{padding:12px 9px;border-bottom:1px solid rgba(120,147,179,.15);vertical-align:middle;}',
+    '.umbo-table tr:hover td{background:rgba(69,134,199,.055);}',
+    '.umbo-app{font-weight:700;color:#e1ebf8;overflow-wrap:anywhere;}',
+    '.umbo-id{font-size:10px;color:#839bb1;margin-top:3px;overflow-wrap:anywhere;}',
+    '.umbo-date,.umbo-size{font-variant-numeric:tabular-nums;white-space:nowrap;}',
+    '.umbo-tag{font-size:10px;color:#bcd1e3;}',
+    '.umbo-lock{color:#dfbe7c;font-size:10px;margin-top:4px;}',
+    '.umbo-delete{height:28px;width:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(224,94,94,.43);border-radius:7px;color:#ff9797;background:rgba(163,48,48,.08);cursor:pointer;font:inherit;font-size:19px;line-height:1;}',
+    '.umbo-delete:hover{background:rgba(183,55,55,.18);border-color:#fd7777;color:#fff;}',
+    '.umbo-delete:disabled,.umbo-controls button:disabled{opacity:.45;cursor:wait;}',
+    '.umbo-message{padding:22px 8px;text-align:center;color:#aabbca;font-size:12px;}',
+    '.umbo-message.error{color:#ffaaaa;}',
+    '#umBackupOverviewDialog button:focus-visible,#umBackupOverviewDialog select:focus-visible,#umBackupOverviewButton:focus-visible{outline:2px solid #77baff;outline-offset:2px;}',
+    '@media(max-width:650px){.umbo-top{padding:17px 15px 11px;}.umbo-stats{padding:0 15px 13px;}.umbo-controls{padding:11px 15px;}.umbo-content{padding:0 12px 14px;}.umbo-table{min-width:530px;}.umbo-refresh{margin-left:0;}}'
+  ].join('\n');
+  document.head.appendChild(css);
+
+  function init() {
+    var settingsButton = document.getElementById('settingsButton');
+    if (!settingsButton || !settingsButton.parentNode) return;
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.id = 'umBackupOverviewButton';
+    trigger.className = 'icon-button';
+    trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"></path></svg>';
+    settingsButton.parentNode.insertBefore(trigger, settingsButton);
+
+    var backdrop = document.createElement('div');
+    backdrop.id = 'umBackupOverviewBackdrop';
+    backdrop.setAttribute('aria-hidden', 'true');
+    backdrop.innerHTML =
+      '<section id="umBackupOverviewDialog" role="dialog" aria-modal="true" aria-labelledby="umboTitle">' +
+        '<div class="umbo-top"><div><h2 id="umboTitle"></h2><p class="umbo-subtitle" id="umboSubtitle"></p></div><button type="button" class="umbo-x" id="umboClose" aria-label="Close">×</button></div>' +
+        '<div class="umbo-stats"><div class="umbo-stat"><small id="umboCountLabel"></small><strong id="umboCount">0</strong></div><div class="umbo-stat"><small id="umboTotalLabel"></small><strong id="umboTotal">—</strong></div></div>' +
+        '<div class="umbo-controls"><label for="umboSort" id="umboSortLabel"></label><select id="umboSort"><option value="date"></option><option value="name"></option><option value="size"></option></select>' +
+          '<button type="button" id="umboDirection"></button><button type="button" class="umbo-refresh" id="umboRefresh"></button></div>' +
+        '<div class="umbo-content" id="umboContent" aria-live="polite"></div>' +
+      '</section>';
+    document.body.appendChild(backdrop);
+
+    var data = [];
+    var total = 0;
+    var unknown = 0;
+    var sort = 'date';
+    var direction = -1;
+    var pending = false;
+    var message = null;
+    var previousFocus = null;
+    var sortSelect = document.getElementById('umboSort');
+    var content = document.getElementById('umboContent');
+
+    function localize() {
+      trigger.setAttribute('aria-label', t('title'));
+      trigger.title = t('title');
+      document.getElementById('umboTitle').textContent = t('title');
+      document.getElementById('umboSubtitle').textContent = t('subtitle');
+      document.getElementById('umboCountLabel').textContent = t('count');
+      document.getElementById('umboTotalLabel').textContent = t('total');
+      document.getElementById('umboSortLabel').textContent = t('sort');
+      Array.prototype.forEach.call(sortSelect.options, function(option) { option.textContent = t(option.value); });
+      document.getElementById('umboRefresh').textContent = '↻ ' + t('refresh');
+      document.getElementById('umboClose').setAttribute('aria-label', t('close'));
+      var d = document.getElementById('umboDirection');
+      d.textContent = direction < 0 ? '↓' : '↑';
+      d.title = direction < 0 ? t('descending') : t('ascending');
+      d.setAttribute('aria-label', d.title);
+    }
+
+    function showMessage(text, isError) {
+      content.innerHTML = '<div class="umbo-message' + (isError ? ' error' : '') + '">' + esc(text) + '</div>';
+    }
+
+    function render() {
+      localize();
+      document.getElementById('umboCount').textContent = String(data.length);
+      document.getElementById('umboTotal').textContent = byteText(total) +
+        (unknown ? ' (' + t('unknown') + ': ' + unknown + ')' : '');
+      if (pending) { showMessage(t('loading'), false); return; }
+      if (message) { showMessage(message.text, message.error); return; }
+      if (!data.length) { showMessage(t('empty'), false); return; }
+      var rows = data.slice().sort(function(a,b) {
+        var cmp = 0;
+        if (sort === 'name') cmp = String(a.app_name||'').localeCompare(String(b.app_name||''), lang(), {sensitivity:'base'});
+        if (sort === 'date') cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        if (sort === 'size') {
+          if (a.size_bytes == null && b.size_bytes != null) return 1;
+          if (b.size_bytes == null && a.size_bytes != null) return -1;
+          cmp = (a.size_bytes||0) - (b.size_bytes||0);
+        }
+        return cmp ? cmp * direction : String(a.entry_id).localeCompare(String(b.entry_id));
+      });
+      var html = '<table class="umbo-table"><thead><tr><th>' + t('name') +
+        '</th><th>' + t('date') + '</th><th>' + t('type') + '</th><th>' + t('size') +
+        '</th><th>' + t('actions') + '</th></tr></thead><tbody>';
+      rows.forEach(function(row) {
+        html += '<tr><td><div class="umbo-app">' + esc(row.app_name) +
+          '</div><div class="umbo-id">' + esc(row.backup_id) + '</div></td>' +
+          '<td class="umbo-date">' + esc(timeText(row.created_at)) + '</td>' +
+          '<td><div class="umbo-tag">' + (row.mode === 'full' ? t('full') : t('quick')) + '</div>' +
+          (row.encrypted ? '<div class="umbo-lock">◆ ' + t('encrypted') + '</div>' : '') +
+          '</td><td class="umbo-size">' + esc(byteText(row.size_bytes)) + '</td>' +
+          '<td><button type="button" class="umbo-delete" data-umbo-id="' + esc(row.entry_id) +
+          '" aria-label="' + esc(t('delete')) + '" title="' + esc(t('delete')) + '">×</button></td></tr>';
+      });
+      content.innerHTML = html + '</tbody></table>';
+    }
+
+    async function requestJson(url, options) {
+      var response = await fetch(url, Object.assign({credentials:'same-origin',cache:'no-store'}, options || {}));
+      var json = await response.json().catch(function() { return {}; });
+      if (!response.ok) throw new Error(String(json.detail || 'HTTP ' + response.status));
+      return json;
+    }
+    async function load() {
+      if (pending) return;
+      pending = true;
+      message = null;
+      document.getElementById('umboRefresh').disabled = true;
+      render();
+      try {
+        var result = await requestJson('/api/backup-overview');
+        data = Array.isArray(result.backups) ? result.backups : [];
+        total = Number(result.total_size_bytes) || 0;
+        unknown = Number(result.unknown_size_count) || 0;
+      } catch (err) {
+        message = {text:t('error') + ' ' + (err.message || ''),error:true};
+      } finally {
+        pending = false;
+        document.getElementById('umboRefresh').disabled = false;
+        render();
+      }
+    }
+    async function deleteBackup(id) {
+      if (pending || !window.confirm(t('confirm'))) return;
+      pending = true;
+      render();
+      try {
+        await requestJson('/api/backup-overview?entry_id=' + encodeURIComponent(id), {method:'DELETE'});
+        data = data.filter(function(row) { return row.entry_id !== id; });
+        pending = false;
+        await load();
+      } catch (err) {
+        pending = false;
+        message = {text:t('deleteError') + ' ' + (err.message || ''),error:true};
+        render();
+      }
+    }
+    function close() {
+      if (pending) return;
+      backdrop.classList.remove('visible');
+      backdrop.setAttribute('aria-hidden', 'true');
+      if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+    }
+    trigger.addEventListener('click', function() {
+      previousFocus = document.activeElement;
+      backdrop.classList.add('visible');
+      backdrop.setAttribute('aria-hidden', 'false');
+      sortSelect.value = sort;
+      localize();
+      document.getElementById('umboClose').focus();
+      load();
+    });
+    document.getElementById('umboClose').addEventListener('click', close);
+    backdrop.addEventListener('click', function(evt) { if (evt.target === backdrop) close(); });
+    document.addEventListener('keydown', function(evt) {
+      if (!backdrop.classList.contains('visible')) return;
+      if (evt.key === 'Escape') { evt.preventDefault(); close(); }
+      if (evt.key === 'Tab') {
+        var focusables = Array.prototype.filter.call(backdrop.querySelectorAll('button:not(:disabled),select:not(:disabled)'), function(el){return el.getClientRects().length;});
+        if (!focusables.length) return;
+        var index = focusables.indexOf(document.activeElement);
+        if (evt.shiftKey && index <= 0) { evt.preventDefault(); focusables[focusables.length - 1].focus(); }
+        else if (!evt.shiftKey && index === focusables.length - 1) { evt.preventDefault(); focusables[0].focus(); }
+      }
+    });
+    sortSelect.addEventListener('change', function() { sort = sortSelect.value; direction = sort === 'date' ? -1 : 1; render(); });
+    document.getElementById('umboDirection').addEventListener('click', function() { direction *= -1; render(); });
+    document.getElementById('umboRefresh').addEventListener('click', load);
+    content.addEventListener('click', function(evt) {
+      var button = evt.target.closest('[data-umbo-id]');
+      if (button) deleteBackup(button.getAttribute('data-umbo-id'));
+    });
+    var languageSelect = document.getElementById('languageSelect');
+    if (languageSelect) languageSelect.addEventListener('change', function() { setTimeout(render, 0); });
+    localize();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, {once:true});
+  else init();
+})();
