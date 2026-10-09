@@ -13275,7 +13275,7 @@ _INDEX_ERROR_LOCALIZATION_BRIDGE = r'''<script id="um-error-localization-v0373">
 
 # Public application branding assets, independent of login.
 # Register only these exact filenames; never expose the entire static directory.
-WEB_ICON_ASSETS = {'update-channel.js': 'application/javascript', 'android-chrome-192x192.png': 'image/png', 'apple-touch-icon.png': 'image/png', 'favicon-128x128.png': 'image/png', 'favicon-16x16.png': 'image/png', 'favicon-32x32.png': 'image/png', 'favicon-48x48.png': 'image/png', 'favicon-64x64.png': 'image/png', 'favicon.ico': 'image/x-icon', 'icon-256x256.png': 'image/png', 'update-monitor-master-1024.png': 'image/png', 'update-monitor-source-highres.png': 'image/png', 'web-app-icon-512.png': 'image/png', 'site.webmanifest': 'application/manifest+json'}
+WEB_ICON_ASSETS = {'backup-manager.js': 'application/javascript', 'update-channel.js': 'application/javascript', 'android-chrome-192x192.png': 'image/png', 'apple-touch-icon.png': 'image/png', 'favicon-128x128.png': 'image/png', 'favicon-16x16.png': 'image/png', 'favicon-32x32.png': 'image/png', 'favicon-48x48.png': 'image/png', 'favicon-64x64.png': 'image/png', 'favicon.ico': 'image/x-icon', 'icon-256x256.png': 'image/png', 'update-monitor-master-1024.png': 'image/png', 'update-monitor-source-highres.png': 'image/png', 'web-app-icon-512.png': 'image/png', 'site.webmanifest': 'application/manifest+json'}
 
 
 def _make_web_icon_handler(filename, media_type):
