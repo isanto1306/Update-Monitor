@@ -24,6 +24,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+from uninstall_cleanup import snapshot_appdata_candidates, cleanup_appdata_after_uninstall
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI, HTTPException, Request
@@ -19762,7 +19764,14 @@ def app_uninstall(data: AppUninstallRequest, request: Request):
         )
 
     begin_action_progress(data.stack_key, "uninstall", app_item)
+    data_cleanup = None
     try:
+        # Capture the actual Docker bind sources while the app still exists.
+        # ZimaOS may delete the original Compose metadata and containers.
+        candidates = None
+        if data.delete_config_folder:
+            candidates = snapshot_appdata_candidates(app_item, run)
+
         casaos_uninstall_compose(
             compose_project,
             delete_config_folder=bool(data.delete_config_folder),
@@ -19774,6 +19783,33 @@ def app_uninstall(data: AppUninstallRequest, request: Request):
             timeout=180,
             progress_stack_key=data.stack_key,
         )
+
+        if data.delete_config_folder:
+            # ZimaOS's delete_config_folder only removes paths its own naming
+            # rules recognize. Confirm the result and remove exclusive leftovers
+            # only under /DATA/AppData. Media mounts and shared paths are never
+            # included in the helper's allowlist.
+            update_action_progress(
+                data.stack_key, 92, determinate=True, phase="removing"
+            )
+            try:
+                self_identity = update_monitor_self_identity()
+                data_cleanup = cleanup_appdata_after_uninstall(
+                    candidates,
+                    run,
+                    self_identity.get("container_id")
+                    or self_identity.get("container_name"),
+                )
+            except Exception as cleanup_error:
+                # The app has already been removed; never pretend it was not.
+                # Return the incomplete cleanup to the UI as a visible warning.
+                data_cleanup = {
+                    "status": "partial",
+                    "deleted": [],
+                    "already_absent": [],
+                    "skipped": [],
+                    "failed": [{"reason": str(cleanup_error)[:240]}],
+                }
         finish_action_progress(data.stack_key, True)
     except RuntimeError as exc:
         finish_action_progress(data.stack_key, False, str(exc))
@@ -19797,6 +19833,7 @@ def app_uninstall(data: AppUninstallRequest, request: Request):
         "compose_project": compose_project,
         "delete_config_folder": bool(data.delete_config_folder),
         "uninstall_state": uninstall_state,
+        "data_cleanup": data_cleanup,
     }
 
 
