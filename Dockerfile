@@ -12,14 +12,15 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app/main.py /app/main.py
+COPY app/backup_overview.py /app/backup_overview.py
 COPY app/uninstall_cleanup.py /app/uninstall_cleanup.py
 COPY static/ /app/static/
-# Keep the large production HTML untouched in Git. The card display-scaling
-# controller is appended to the already loaded frontend bridge at image build.
+# Preserve the existing large production HTML. Load optional UI controllers
+# via the established update-channel script, and synchronize the visible version.
 RUN printf '\n' >> /app/static/update-channel.js \
-    && cat /app/static/layout-options.js >> /app/static/update-channel.js \
-    && python -c 'from pathlib import Path; p=Path("/app/static/index.html"); s=p.read_text(encoding="utf-8"); p.write_text(s.replace("/update-channel.js?v=0.3.393", "/update-channel.js?v=0.3.393-appdatacleanup1", 1), encoding="utf-8")'
-RUN python -m py_compile /app/main.py
+    && cat /app/static/layout-options.js /app/static/backup-overview.js >> /app/static/update-channel.js \
+    && python -c 'from pathlib import Path; p=Path("/app/static/index.html"); s=p.read_text(encoding="utf-8").replace("0.3.393", "0.3.394"); s=s.replace("/update-channel.js?v=0.3.394", "/update-channel.js?v=0.3.394-backupoverview1", 1); p.write_text(s, encoding="utf-8")'
+RUN python -m py_compile /app/main.py /app/backup_overview.py
 RUN mkdir -p /app/cache /app/backups
 
 EXPOSE 9001
