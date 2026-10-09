@@ -639,3 +639,19 @@ document.addEventListener('keydown',function(event){
 
 window.openImageChannelDialog=openDialog;
 })();
+
+/* Load the independent backup overview without changing the large synchronized index.html. */
+(function(){
+  function attachBackupManager(){
+    if(document.querySelector('script[data-um-backup-manager]'))return;
+    var script=document.createElement('script');
+    script.src='/backup-manager.js?v=0.3.393';
+    script.dataset.umBackupManager='true';
+    document.body.appendChild(script);
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',attachBackupManager,{once:true});
+  }else{
+    attachBackupManager();
+  }
+})();
