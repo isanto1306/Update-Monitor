@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.396 */
+/* Update Monitor — global Docker backup management, v0.3.397 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -103,6 +103,11 @@
     "@media(max-width:650px){.umbo-top-actions{gap:8px;}.umbo-top-actions .umbo-refresh{font-size:11px;}}"
   ].join('\n');
   css.textContent += '\n' + "/* Position the warning pointer beneath the warning symbol, not the newly inserted backup button. */\n#headerWarningPopover::after{right:var(--um-warning-pointer-right,17px)!important;}";
+  css.textContent += '\n' + [
+    'html.um-backup-scroll-lock,html.um-backup-scroll-lock body{overflow:hidden!important;overscroll-behavior:none!important;}',
+    '#umBackupOverviewBackdrop,#umBackupDeleteBackdrop{overscroll-behavior:contain;}',
+    '#umBackupOverviewBackdrop .umbo-content{overscroll-behavior:contain;}'
+  ].join('\n');
   document.head.appendChild(css);
 
   function init() {
@@ -171,7 +176,7 @@
     backdrop.setAttribute('aria-hidden', 'true');
     backdrop.innerHTML =
       '<section id="umBackupOverviewDialog" role="dialog" aria-modal="true" aria-labelledby="umboTitle">' +
-        '<div class="umbo-top"><div><h2 id="umboTitle"></h2><p class="umbo-subtitle" id="umboSubtitle"></p></div><div class="umbo-top-actions"><button type="button" class="umbo-refresh" id="umboRefresh"></button><button type="button" class="umbo-x" id="umboClose" aria-label="Close">×</button></div></div>' +
+        '<div class="umbo-top"><div><h2 id="umboTitle"></h2><p class="umbo-subtitle" id="umboSubtitle"></p></div><div class="umbo-top-actions"><button type="button" class="umbo-refresh" id="umboRefresh"></button><button type="button" class="image-source-close" id="umboClose" aria-label="Close">×</button></div></div>' +
         '<div class="umbo-stats"><div class="umbo-stat"><small id="umboCountLabel"></small><strong id="umboCount">0</strong></div><div class="umbo-stat"><small id="umboTotalLabel"></small><strong id="umboTotal">—</strong></div></div>' +
         '<div class="umbo-content" id="umboContent" aria-live="polite"></div>' +
       '</section>';
@@ -197,6 +202,23 @@
     var selectedDelete = null;
     var deleteFocus = null;
     var content = document.getElementById('umboContent');
+
+    // Only the backup table may scroll while the overview is visible.
+    // Prevent wheel/touch scrolling over the dark side margins or modal header,
+    // including when the delete confirmation is stacked above the overview.
+    function preventOutsideScroll(event) {
+      if (selectedDelete || !content.contains(event.target)) event.preventDefault();
+    }
+    function lockBackgroundScroll() {
+      document.documentElement.classList.add('um-backup-scroll-lock');
+      document.addEventListener('wheel', preventOutsideScroll, {capture:true,passive:false});
+      document.addEventListener('touchmove', preventOutsideScroll, {capture:true,passive:false});
+    }
+    function unlockBackgroundScroll() {
+      document.removeEventListener('wheel', preventOutsideScroll, true);
+      document.removeEventListener('touchmove', preventOutsideScroll, true);
+      document.documentElement.classList.remove('um-backup-scroll-lock');
+    }
 
     function localize() {
       trigger.setAttribute('aria-label', t('title'));
@@ -341,12 +363,14 @@
       if (pending || selectedDelete) return;
       backdrop.classList.remove('visible');
       backdrop.setAttribute('aria-hidden', 'true');
+      unlockBackgroundScroll();
       if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
     }
     trigger.addEventListener('click', function() {
       previousFocus = document.activeElement;
       backdrop.classList.add('visible');
       backdrop.setAttribute('aria-hidden', 'false');
+      lockBackgroundScroll();
       localize();
       document.getElementById('umboClose').focus();
       load();

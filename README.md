@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.396**
+Current release: **v0.3.397**
+
+v0.3.397 uses the existing shared dialog close button styling for the backup manager and prevents mouse wheel or touch scrolling of the underlying dashboard while the backup overview or its delete confirmation is open. Scrolling within the backup list remains enabled. The v0.3.396 warning-popover positioning and existing backup/update functionality are unchanged.
 
 v0.3.396 fixes the header warning popover anchor after the backup manager icon was added. The yellow pointer now follows the actual warning button position rather than a fixed offset from Settings. The popover repositions only when enough horizontal room exists; on narrow screens its body remains onscreen and only the pointer shifts. Backup management and existing warning content remain unchanged.
 
