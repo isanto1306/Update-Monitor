@@ -19,7 +19,7 @@ COPY static/ /app/static/
 # via the established update-channel script, and synchronize the visible version.
 RUN printf '\n' >> /app/static/update-channel.js \
     && cat /app/static/layout-options.js /app/static/backup-overview.js >> /app/static/update-channel.js \
-    && python -c 'from pathlib import Path; p=Path("/app/static/index.html"); s=p.read_text(encoding="utf-8").replace("0.3.393", "0.3.394"); s=s.replace("/update-channel.js?v=0.3.394", "/update-channel.js?v=0.3.394-backupoverview1", 1); p.write_text(s, encoding="utf-8")'
+    && python -c 'from pathlib import Path; p=Path("/app/static/index.html"); s=p.read_text(encoding="utf-8").replace("0.3.394", "0.3.395"); s=s.replace("/update-channel.js?v=0.3.395", "/update-channel.js?v=0.3.395-backupoverview2", 1); p.write_text(s, encoding="utf-8")'
 RUN python -m py_compile /app/main.py /app/backup_overview.py
 RUN mkdir -p /app/cache /app/backups
 

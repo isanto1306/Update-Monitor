@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.394**
+Current release: **v0.3.395**
+
+v0.3.395 refines the central backup manager: unframed navigation icon, centered in-app deletion confirmation, text-only Refresh in the top header, direct ascending/descending column sorting for Name, Date and Size. The backup counter, storage totals, Type column and all existing backend backup and restore features remain unchanged.
 
 v0.3.394 introduces the central backup overview across all Docker apps, including app names, timestamps, backup sizes, total storage use, sorting by name/date/size and confirmation before deletion. The manager is accessible from the top navigation, has German, English, French, Portuguese and Spanish labels, and leaves existing backup creation, retention and restore workflows in place.
 

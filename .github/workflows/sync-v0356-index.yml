@@ -88,6 +88,12 @@ jobs:
           node --check /tmp/um-async-update-bridge.js
           node --check /tmp/um-error-localization.js
 
+      - name: Validate central backup interface syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check static/backup-overview.js
+
       - name: Run release regression checks
         shell: bash
         run: |
