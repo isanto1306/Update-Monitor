@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.406**
+Current release: **v0.3.407**
+
+v0.3.407 restores the display settings and manual grid layout code exactly as in v0.3.405 by reverting static/layout-options.js to its last working revision. The v0.3.406 backup-dialog manual zoom change is removed. Existing backup overview features remain unchanged.
 
 v0.3.406 connects the central backup overview and its centered deletion dialog to the existing Manual display scaling (105–150%). Both windows now use the same scale as the main UI, with viewport-based width and height constraints and a responsive backup header to prevent clipping. Automatic display mode, backup data loading, sorting and deletion remain unchanged.
 

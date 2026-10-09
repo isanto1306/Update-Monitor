@@ -69,11 +69,6 @@ function updateDialogViewportCap(){
   var scale=readMode()==='manual'?(readCustom()/100):1;
   var available=Math.max(160,viewportHeight-(DIALOG_EDGE_PX*2));
   root.style.setProperty('--um-dialog-max-height',(available/Math.max(1,scale)).toFixed(2)+'px');
-  // Backups use a full-screen overlay rather than the normal dialog backdrop.
-  // Cap the unscaled dialog width so zoom never pushes it beyond the viewport.
-  var viewportWidth=Math.max(160,Math.round((vv&&vv.width)||root.clientWidth||window.innerWidth||160));
-  var availableWidth=Math.max(120,viewportWidth-(DIALOG_EDGE_PX*2));
-  root.style.setProperty('--um-backup-dialog-max-width',(availableWidth/Math.max(1,scale)).toFixed(2)+'px');
 }
 
 function installDialogViewportCap(){
@@ -142,12 +137,6 @@ style.textContent=[
   'html [role="dialog"][aria-modal="true"]{max-height:var(--um-dialog-max-height,calc(100dvh - 48px)) !important;box-sizing:border-box;overflow-y:auto;}',
   'html[data-um-card-scale] main{zoom:var(--um-manual-ui-scale);width:var(--um-manual-main-width) !important;}',
   'html[data-um-card-scale] [class*="-backdrop"]>[role="dialog"][aria-modal="true"]{zoom:var(--um-manual-ui-scale);}',
-  // The global backup overview and its separate confirmation dialog sit in ID-only overlays.
-  'html[data-um-card-scale] #umBackupOverviewDialog,html[data-um-card-scale] #umBackupDeleteDialog{zoom:var(--um-manual-ui-scale);max-width:var(--um-backup-dialog-max-width)!important;}',
-  'html[data-um-card-scale] #umBackupDeleteDialog{max-height:var(--um-dialog-max-height)!important;overflow-y:auto;}',
-  // For scaled windows that become narrower, stack the backup header instead of clipping it.
-  'html[data-um-card-scale] #umBackupOverviewDialog{container-type:inline-size;}',
-  '@container (max-width:720px){#umBackupOverviewDialog .umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}#umBackupOverviewDialog .umbo-top-heading{padding-right:48px;}#umBackupOverviewDialog .umbo-top-actions{justify-content:flex-end;width:100%;}#umBackupOverviewDialog .umbo-top-actions .umbo-stats{margin-right:0;}#umBackupOverviewDialog .umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}}',
   '#gridLayoutSetting.um-card-scale-setting{height:auto !important;min-height:0 !important;}',
   '#gridLayoutSetting .settings-custom-select{width:100% !important;display:block !important;position:relative !important;}',
   '#gridLayoutSetting.manual-active .settings-custom-select-button{padding-right:164px !important;}',
