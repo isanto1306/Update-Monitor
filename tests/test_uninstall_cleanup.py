@@ -36,10 +36,10 @@ class FakeDocker:
             if self.fail_inventory:
                 return 1, "", "Docker unavailable"
             return 0, "\n".join(str(i) for i in range(len(self.containers))), ""
-        if cmd[:2] == ["docker", "inspect"] and len(cmd) > 3:
-            return 0, json.dumps([self.containers[int(i)] for i in cmd[2:]]), ""
         if cmd[:3] == ["docker", "inspect", "--format"]:
             return 0, "sha256:helper-image", ""
+        if cmd[:2] == ["docker", "inspect"] and len(cmd) > 2:
+            return 0, json.dumps([self.containers[int(i)] for i in cmd[2:]]), ""
         if cmd[:2] == ["docker", "run"]:
             return 0, json.dumps(self.helper), ""
         raise AssertionError(cmd)
