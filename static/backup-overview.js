@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.409 */
+/* Update Monitor — global Docker backup management, v0.3.410 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -120,9 +120,11 @@
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar-thumb{background:#38516b;border-radius:6px;}',
     // Keep the column labels and their bottom rule outside the scrolling list.
     '#umBackupOverviewDialog .umbo-table-head{box-sizing:border-box;flex:0 0 auto;min-height:0;padding:0 24px;overflow:hidden;}',
-    '#umBackupOverviewDialog .umbo-content{box-sizing:border-box;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:auto;padding:0 18px 20px 24px;}',
+    // Align the native scrollbar's upper arrow with the fixed heading rule.
+    // Pull only the scrollport up; equal padding preserves the first row's position.
+    '#umBackupOverviewDialog .umbo-content{box-sizing:border-box;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:auto;margin-top:-7px;padding:7px 18px 20px 24px;}',
     '#umBackupOverviewDialog .umbo-table{table-layout:fixed;}',
-    '@media(max-width:650px){#umBackupOverviewDialog .umbo-table-head{padding:0 12px;}#umBackupOverviewDialog .umbo-content{padding:0 6px 14px 12px;}}',
+    '@media(max-width:650px){#umBackupOverviewDialog .umbo-table-head{padding:0 12px;}#umBackupOverviewDialog .umbo-content{padding:7px 6px 14px 12px;}}',
     '@media(max-width:860px){.umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}.umbo-top-heading{padding-right:48px;}.umbo-top-actions{justify-content:flex-end;width:100%;}.umbo-top-actions .umbo-stats{width:auto;max-width:100%;margin-right:0;}.umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}}',
     '@media(max-width:480px){.umbo-top-actions .umbo-stats{width:auto;max-width:100%;gap:16px;}.umbo-top-actions .umbo-stat{padding:0;}.umbo-top-actions .umbo-stat small{font-size:10px;}.umbo-top-actions .umbo-stat strong{font-size:14px;}}',
     // Only the two backup dialogs follow the existing manual display scale.

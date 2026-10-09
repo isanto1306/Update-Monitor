@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.409**
+Current release: **v0.3.410**
+
+v0.3.410 aligns the right-hand scrollbar's top arrow visually with the fixed horizontal rule underneath the Backup overview column headings. Only the backup list scrollport is shifted upward by 7px, with compensating top padding preserving the list's text and layout. Mobile padding has the same correction; manual zoom, fixed headings, backup actions, and settings are unchanged.
 
 v0.3.409 keeps the central Backup overview's column headings (Name, Date, Type, Size, Action) and their horizontal dividing line fixed above the scrolling backup entries. The slim scrollbar now begins immediately below the header rule, without affecting the title, statistics, sorting, backup actions, language support, or manual scaling. The header and list share fixed column widths and synchronize horizontal movement on narrow viewports.
 
