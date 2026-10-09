@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.397**
+Current release: **v0.3.398**
+
+v0.3.398 simplifies the central backup overview by removing the redundant Refresh button while keeping automatic backup-list reload on each opening and after deletion. The header close X is enlarged to match the dimensions of the application's other modal close controls. Existing backup operations, sorting, warning alignment, and scroll lock remain unchanged.
 
 v0.3.397 uses the existing shared dialog close button styling for the backup manager and prevents mouse wheel or touch scrolling of the underlying dashboard while the backup overview or its delete confirmation is open. Scrolling within the backup list remains enabled. The v0.3.396 warning-popover positioning and existing backup/update functionality are unchanged.
 

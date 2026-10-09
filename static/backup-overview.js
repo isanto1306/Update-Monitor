@@ -1,15 +1,15 @@
-/* Update Monitor — global Docker backup management, v0.3.397 */
+/* Update Monitor — global Docker backup management, v0.3.398 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
   window.__umBackupOverviewInstalled = true;
 
   var labels = {
-    de: {title:'Backup-Verwaltung',subtitle:'Gespeicherte Backups aller Docker-Apps',sort:'Sortieren nach',name:'Name',date:'Datum',size:'Größe',type:'Typ',actions:'Aktion',refresh:'Aktualisieren',close:'Schließen',empty:'Keine gespeicherten Backups vorhanden.',loading:'Backups werden geladen …',count:'Backups',total:'Belegter Speicher',unknown:'zzgl. unbekannter Größen',delete:'Backup löschen',confirm:'Dieses Backup endgültig löschen?',deleted:'Backup wurde gelöscht.',error:'Die Backup-Liste konnte nicht geladen werden.',deleteError:'Das Backup konnte nicht gelöscht werden.',quick:'Schnell',full:'Vollständig',encrypted:'Verschlüsselt',ascending:'Aufsteigend',descending:'Absteigend',cancel:'Abbrechen',deleteConfirm:'Endgültig löschen'},
-    en: {title:'Backup management',subtitle:'Saved backups from all Docker apps',sort:'Sort by',name:'Name',date:'Date',size:'Size',type:'Type',actions:'Action',refresh:'Refresh',close:'Close',empty:'No saved backups found.',loading:'Loading backups …',count:'Backups',total:'Storage used',unknown:'plus unknown sizes',delete:'Delete backup',confirm:'Permanently delete this backup?',deleted:'Backup deleted.',error:'Could not load the backup list.',deleteError:'Could not delete the backup.',quick:'Quick',full:'Full',encrypted:'Encrypted',ascending:'Ascending',descending:'Descending',cancel:'Cancel',deleteConfirm:'Delete permanently'},
-    fr: {title:'Gestion des sauvegardes',subtitle:'Sauvegardes de toutes les applications Docker',sort:'Trier par',name:'Nom',date:'Date',size:'Taille',type:'Type',actions:'Action',refresh:'Actualiser',close:'Fermer',empty:'Aucune sauvegarde enregistrée.',loading:'Chargement des sauvegardes…',count:'Sauvegardes',total:'Espace utilisé',unknown:'plus tailles inconnues',delete:'Supprimer la sauvegarde',confirm:'Supprimer définitivement cette sauvegarde ?',deleted:'Sauvegarde supprimée.',error:'Impossible de charger les sauvegardes.',deleteError:'Impossible de supprimer la sauvegarde.',quick:'Rapide',full:'Complète',encrypted:'Chiffrée',ascending:'Croissant',descending:'Décroissant',cancel:'Annuler',deleteConfirm:'Supprimer définitivement'},
-    pt: {title:'Gestão de backups',subtitle:'Backups guardados de todas as aplicações Docker',sort:'Ordenar por',name:'Nome',date:'Data',size:'Tamanho',type:'Tipo',actions:'Ação',refresh:'Atualizar',close:'Fechar',empty:'Não existem backups guardados.',loading:'A carregar backups…',count:'Backups',total:'Espaço utilizado',unknown:'mais tamanhos desconhecidos',delete:'Eliminar backup',confirm:'Eliminar este backup definitivamente?',deleted:'Backup eliminado.',error:'Não foi possível carregar os backups.',deleteError:'Não foi possível eliminar o backup.',quick:'Rápido',full:'Completo',encrypted:'Encriptado',ascending:'Ascendente',descending:'Descendente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente'},
-    es: {title:'Gestión de copias',subtitle:'Copias guardadas de todas las aplicaciones Docker',sort:'Ordenar por',name:'Nombre',date:'Fecha',size:'Tamaño',type:'Tipo',actions:'Acción',refresh:'Actualizar',close:'Cerrar',empty:'No hay copias guardadas.',loading:'Cargando copias…',count:'Copias',total:'Espacio utilizado',unknown:'más tamaños desconocidos',delete:'Eliminar copia',confirm:'¿Eliminar esta copia definitivamente?',deleted:'Copia eliminada.',error:'No se pudieron cargar las copias.',deleteError:'No se pudo eliminar la copia.',quick:'Rápida',full:'Completa',encrypted:'Cifrada',ascending:'Ascendente',descending:'Descendente'}
+    de: {title:'Backup-Verwaltung',subtitle:'Gespeicherte Backups aller Docker-Apps',sort:'Sortieren nach',name:'Name',date:'Datum',size:'Größe',type:'Typ',actions:'Aktion',close:'Schließen',empty:'Keine gespeicherten Backups vorhanden.',loading:'Backups werden geladen …',count:'Backups',total:'Belegter Speicher',unknown:'zzgl. unbekannter Größen',delete:'Backup löschen',confirm:'Dieses Backup endgültig löschen?',deleted:'Backup wurde gelöscht.',error:'Die Backup-Liste konnte nicht geladen werden.',deleteError:'Das Backup konnte nicht gelöscht werden.',quick:'Schnell',full:'Vollständig',encrypted:'Verschlüsselt',ascending:'Aufsteigend',descending:'Absteigend',cancel:'Abbrechen',deleteConfirm:'Endgültig löschen'},
+    en: {title:'Backup management',subtitle:'Saved backups from all Docker apps',sort:'Sort by',name:'Name',date:'Date',size:'Size',type:'Type',actions:'Action',close:'Close',empty:'No saved backups found.',loading:'Loading backups …',count:'Backups',total:'Storage used',unknown:'plus unknown sizes',delete:'Delete backup',confirm:'Permanently delete this backup?',deleted:'Backup deleted.',error:'Could not load the backup list.',deleteError:'Could not delete the backup.',quick:'Quick',full:'Full',encrypted:'Encrypted',ascending:'Ascending',descending:'Descending',cancel:'Cancel',deleteConfirm:'Delete permanently'},
+    fr: {title:'Gestion des sauvegardes',subtitle:'Sauvegardes de toutes les applications Docker',sort:'Trier par',name:'Nom',date:'Date',size:'Taille',type:'Type',actions:'Action',close:'Fermer',empty:'Aucune sauvegarde enregistrée.',loading:'Chargement des sauvegardes…',count:'Sauvegardes',total:'Espace utilisé',unknown:'plus tailles inconnues',delete:'Supprimer la sauvegarde',confirm:'Supprimer définitivement cette sauvegarde ?',deleted:'Sauvegarde supprimée.',error:'Impossible de charger les sauvegardes.',deleteError:'Impossible de supprimer la sauvegarde.',quick:'Rapide',full:'Complète',encrypted:'Chiffrée',ascending:'Croissant',descending:'Décroissant',cancel:'Annuler',deleteConfirm:'Supprimer définitivement'},
+    pt: {title:'Gestão de backups',subtitle:'Backups guardados de todas as aplicações Docker',sort:'Ordenar por',name:'Nome',date:'Data',size:'Tamanho',type:'Tipo',actions:'Ação',close:'Fechar',empty:'Não existem backups guardados.',loading:'A carregar backups…',count:'Backups',total:'Espaço utilizado',unknown:'mais tamanhos desconhecidos',delete:'Eliminar backup',confirm:'Eliminar este backup definitivamente?',deleted:'Backup eliminado.',error:'Não foi possível carregar os backups.',deleteError:'Não foi possível eliminar o backup.',quick:'Rápido',full:'Completo',encrypted:'Encriptado',ascending:'Ascendente',descending:'Descendente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente'},
+    es: {title:'Gestión de copias',subtitle:'Copias guardadas de todas las aplicaciones Docker',sort:'Ordenar por',name:'Nombre',date:'Fecha',size:'Tamaño',type:'Tipo',actions:'Acción',close:'Cerrar',empty:'No hay copias guardadas.',loading:'Cargando copias…',count:'Copias',total:'Espacio utilizado',unknown:'más tamaños desconocidos',delete:'Eliminar copia',confirm:'¿Eliminar esta copia definitivamente?',deleted:'Copia eliminada.',error:'No se pudieron cargar las copias.',deleteError:'No se pudo eliminar la copia.',quick:'Rápida',full:'Completa',encrypted:'Cifrada',ascending:'Ascendente',descending:'Descendente'}
   };
   function lang() {
     var v;
@@ -59,7 +59,6 @@
     '.umbo-controls label{font-size:12px;color:#a7b7c7;}',
     '.umbo-controls select,.umbo-controls button{border:1px solid rgba(122,153,181,.39);border-radius:8px;background:#1d2b3a;color:#e0ecf7;min-height:34px;padding:6px 10px;font:inherit;font-size:12px;cursor:pointer;}',
     '.umbo-controls button:hover{border-color:#71aff2;}',
-    '.umbo-refresh{margin-left:auto;}',
     '.umbo-content{min-height:130px;max-height:60vh;overflow:auto;padding:0 24px 20px;scrollbar-color:#38516b #141e29;}',
     '.umbo-table{width:100%;border-collapse:collapse;text-align:left;font-size:12px;}',
     '.umbo-table th{position:sticky;top:0;background:#141e29;color:#93a6ba;font-weight:700;z-index:1;padding:13px 9px 11px;border-bottom:1px solid rgba(120,147,179,.3);white-space:nowrap;}',
@@ -76,15 +75,12 @@
     '.umbo-message{padding:22px 8px;text-align:center;color:#aabbca;font-size:12px;}',
     '.umbo-message.error{color:#ffaaaa;}',
     '#umBackupOverviewDialog button:focus-visible,#umBackupOverviewDialog select:focus-visible,#umBackupOverviewButton:focus-visible{outline:2px solid #77baff;outline-offset:2px;}',
-    '@media(max-width:650px){.umbo-top{padding:17px 15px 11px;}.umbo-stats{padding:0 15px 13px;}.umbo-controls{padding:11px 15px;}.umbo-content{padding:0 12px 14px;}.umbo-table{min-width:530px;}.umbo-refresh{margin-left:0;}}'
+    '@media(max-width:650px){.umbo-top{padding:17px 15px 11px;}.umbo-stats{padding:0 15px 13px;}.umbo-controls{padding:11px 15px;}.umbo-content{padding:0 12px 14px;}.umbo-table{min-width:530px;}}'
   ].join('\n');
   css.textContent += '\n' + [
     "#umBackupOverviewButton,#umBackupOverviewButton:hover,#umBackupOverviewButton:active{border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;appearance:none!important;}",
     "#umBackupOverviewButton::before,#umBackupOverviewButton::after{display:none!important;}",
     ".umbo-top-actions{display:flex;align-items:center;gap:14px;flex:0 0 auto;}",
-    ".umbo-top-actions .umbo-refresh{margin:0;padding:5px 2px;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;color:#a7cff4;font:inherit;font-size:12px;font-weight:700;cursor:pointer;}",
-    ".umbo-top-actions .umbo-refresh:hover{color:#edf7ff;text-decoration:underline;}",
-    ".umbo-top-actions .umbo-refresh:disabled{opacity:.48;cursor:wait;text-decoration:none;}",
     ".umbo-sort-button{display:inline-flex;align-items:center;gap:7px;background:none;border:0;color:inherit;padding:4px 0;font:inherit;font-weight:inherit;white-space:nowrap;cursor:pointer;}",
     ".umbo-sort-button:hover,.umbo-sort-button.active{color:#a6d1fc;}",
     ".umbo-sort-arrow{display:inline-block;min-width:13px;opacity:.6;font-size:13px;}",
@@ -100,13 +96,14 @@
     ".umbo-delete-actions button{border:1px solid rgba(122,153,181,.42);border-radius:8px;background:#27394c;color:#e7eff8;padding:9px 14px;font:inherit;font-size:12px;cursor:pointer;}",
     ".umbo-delete-actions #umboDeleteConfirm{background:#983c3c;border-color:#c25b5b;color:white;}",
     ".umbo-delete-actions button:disabled{opacity:.45;cursor:wait;}",
-    "@media(max-width:650px){.umbo-top-actions{gap:8px;}.umbo-top-actions .umbo-refresh{font-size:11px;}}"
+    "@media(max-width:650px){.umbo-top-actions{gap:8px;}}"
   ].join('\n');
   css.textContent += '\n' + "/* Position the warning pointer beneath the warning symbol, not the newly inserted backup button. */\n#headerWarningPopover::after{right:var(--um-warning-pointer-right,17px)!important;}";
   css.textContent += '\n' + [
     'html.um-backup-scroll-lock,html.um-backup-scroll-lock body{overflow:hidden!important;overscroll-behavior:none!important;}',
     '#umBackupOverviewBackdrop,#umBackupDeleteBackdrop{overscroll-behavior:contain;}',
-    '#umBackupOverviewBackdrop .umbo-content{overscroll-behavior:contain;}'
+    '#umBackupOverviewBackdrop .umbo-content{overscroll-behavior:contain;}',
+    '#umboClose{width:40px!important;min-width:40px!important;height:40px!important;display:flex!important;align-items:center;justify-content:center;padding:0!important;font-size:28px!important;line-height:1!important;}'
   ].join('\n');
   document.head.appendChild(css);
 
@@ -176,7 +173,7 @@
     backdrop.setAttribute('aria-hidden', 'true');
     backdrop.innerHTML =
       '<section id="umBackupOverviewDialog" role="dialog" aria-modal="true" aria-labelledby="umboTitle">' +
-        '<div class="umbo-top"><div><h2 id="umboTitle"></h2><p class="umbo-subtitle" id="umboSubtitle"></p></div><div class="umbo-top-actions"><button type="button" class="umbo-refresh" id="umboRefresh"></button><button type="button" class="image-source-close" id="umboClose" aria-label="Close">×</button></div></div>' +
+        '<div class="umbo-top"><div><h2 id="umboTitle"></h2><p class="umbo-subtitle" id="umboSubtitle"></p></div><div class="umbo-top-actions"><button type="button" class="image-source-close" id="umboClose" aria-label="Close">×</button></div></div>' +
         '<div class="umbo-stats"><div class="umbo-stat"><small id="umboCountLabel"></small><strong id="umboCount">0</strong></div><div class="umbo-stat"><small id="umboTotalLabel"></small><strong id="umboTotal">—</strong></div></div>' +
         '<div class="umbo-content" id="umboContent" aria-live="polite"></div>' +
       '</section>';
@@ -227,7 +224,6 @@
       document.getElementById('umboSubtitle').textContent = t('subtitle');
       document.getElementById('umboCountLabel').textContent = t('count');
       document.getElementById('umboTotalLabel').textContent = t('total');
-      document.getElementById('umboRefresh').textContent = t('refresh');
       document.getElementById('umboClose').setAttribute('aria-label', t('close'));
       document.getElementById('umBackupDeleteTitle').textContent = t('delete');
       document.getElementById('umBackupDeleteMessage').textContent = t('confirm');
@@ -294,7 +290,6 @@
       if (pending) return;
       pending = true;
       message = null;
-      document.getElementById('umboRefresh').disabled = true;
       render();
       try {
         var result = await requestJson('/api/backup-overview');
@@ -305,7 +300,6 @@
         message = {text:t('error') + ' ' + (err.message || ''),error:true};
       } finally {
         pending = false;
-        document.getElementById('umboRefresh').disabled = false;
         render();
       }
     }
@@ -326,7 +320,7 @@
       deleteBackdrop.classList.remove('visible');
       deleteBackdrop.setAttribute('aria-hidden', 'true');
       if (deleteFocus && deleteFocus.isConnected) deleteFocus.focus();
-      else document.getElementById('umboRefresh').focus();
+      else document.getElementById('umboClose').focus();
       deleteFocus = null;
     }
     async function confirmDelete() {
@@ -344,7 +338,7 @@
         deleteFocus = null;
         pending = false;
         await load();
-        document.getElementById('umboRefresh').focus();
+        document.getElementById('umboClose').focus();
       } catch (err) {
         selectedDelete = null;
         deleteBackdrop.classList.remove('visible');
@@ -353,7 +347,7 @@
         pending = false;
         message = {text:t('deleteError') + ' ' + (err.message || ''),error:true};
         render();
-        document.getElementById('umboRefresh').focus();
+        document.getElementById('umboClose').focus();
       } finally {
         document.getElementById('umboDeleteConfirm').disabled = false;
         document.getElementById('umboDeleteCancel').disabled = false;
@@ -392,7 +386,6 @@
         else if (!evt.shiftKey && index === focusables.length - 1) { evt.preventDefault(); focusables[0].focus(); }
       }
     });
-    document.getElementById('umboRefresh').addEventListener('click', load);
     content.addEventListener('click', function(evt) {
       var sortButton = evt.target.closest('[data-umbo-sort]');
       if (sortButton && !pending && !selectedDelete) {
