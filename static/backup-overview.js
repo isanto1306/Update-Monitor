@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.403 */
+/* Update Monitor — global Docker backup management, v0.3.404 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -107,19 +107,19 @@
     '.umbo-top{align-items:center;gap:24px;padding:20px 24px 20px;}',
     '.umbo-top-heading{min-width:0;}',
     '.umbo-top-actions{gap:18px;}',
-    '.umbo-top-actions .umbo-stats{box-sizing:border-box;display:grid;grid-template-columns:1fr 1fr;align-items:stretch;flex:0 0 auto;gap:0;width:310px;min-width:0;min-height:48px;margin-right:60px;padding:0;border:1px solid rgba(105,137,169,.32);border-radius:10px;background:rgba(17,27,39,.50);}',
-    '.umbo-top-actions .umbo-stat{box-sizing:border-box;display:flex;align-items:center;min-width:0;min-height:46px;padding:5px 12px;border:0;border-radius:0;background:transparent;}',
+    '.umbo-top-actions .umbo-stats{box-sizing:border-box;display:grid;grid-template-columns:max-content max-content;align-items:stretch;flex:0 0 auto;gap:0;width:max-content;max-width:100%;min-width:0;min-height:40px;margin-right:60px;padding:0;border:1px solid rgba(105,137,169,.32);border-radius:9px;background:rgba(17,27,39,.50);}',
+    '.umbo-top-actions .umbo-stat{box-sizing:border-box;display:flex;align-items:center;min-width:0;min-height:38px;padding:3px 10px;border:0;border-radius:0;background:transparent;}',
     '.umbo-top-actions .umbo-stat+.umbo-stat{border-left:1px solid rgba(105,137,169,.30);}',
-    '.umbo-stat-copy{display:flex;flex-direction:column;gap:3px;min-width:0;}',
-    '.umbo-top-actions .umbo-stat small{display:block;margin:0;font-size:11px;font-weight:400;color:#93a5b7;white-space:nowrap;}',
-    '.umbo-top-actions .umbo-stat strong{display:block;font-size:15px;font-weight:800;white-space:nowrap;color:#e4edf7;}',
+    '.umbo-stat-copy{display:flex;flex-direction:column;gap:2px;min-width:0;}',
+    '.umbo-top-actions .umbo-stat small{display:block;margin:0;font-size:11px;line-height:14px;font-weight:400;color:#93a5b7;white-space:nowrap;}',
+    '.umbo-top-actions .umbo-stat strong{display:block;font-size:15px;line-height:19px;font-weight:800;white-space:nowrap;color:#e4edf7;}',
     '.umbo-top-actions #umboClose{flex:0 0 auto;}',
     '#umBackupOverviewBackdrop .umbo-content{scrollbar-width:thin;margin-bottom:14px;}',
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar{width:6px;height:6px;}',
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar-track{background:transparent;}',
     '#umBackupOverviewBackdrop .umbo-content::-webkit-scrollbar-thumb{background:#38516b;border-radius:6px;}',
-    '@media(max-width:860px){.umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}.umbo-top-heading{padding-right:48px;}.umbo-top-actions{justify-content:flex-end;width:100%;}.umbo-top-actions .umbo-stats{width:min(100%,310px);margin-right:0;}.umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}}',
-    '@media(max-width:480px){.umbo-top-actions .umbo-stats{width:100%;}.umbo-top-actions .umbo-stat{padding:6px 8px;}.umbo-top-actions .umbo-stat small{font-size:10px;}.umbo-top-actions .umbo-stat strong{font-size:14px;}}'
+    '@media(max-width:860px){.umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}.umbo-top-heading{padding-right:48px;}.umbo-top-actions{justify-content:flex-end;width:100%;}.umbo-top-actions .umbo-stats{width:max-content;max-width:100%;margin-right:0;}.umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}}',
+    '@media(max-width:480px){.umbo-top-actions .umbo-stats{width:max-content;max-width:100%;}.umbo-top-actions .umbo-stat{padding:3px 8px;}.umbo-top-actions .umbo-stat small{font-size:10px;}.umbo-top-actions .umbo-stat strong{font-size:14px;}}'
   ].join('\n');
   document.head.appendChild(css);
 

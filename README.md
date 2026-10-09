@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.403**
+Current release: **v0.3.404**
+
+v0.3.404 makes the two backup statistic fields truly content-sized, eliminating the large unused space inside the boxes. The panel uses intrinsic column widths and reduced horizontal and vertical padding; the original 11px labels and 15px values remain unchanged on desktop. Existing backup functions, sorting, scrolling and modal behavior remain unchanged.
 
 v0.3.403 further compacts the top-right backup summary: the two-column status panel is 310px wide and 48px high with 11px labels and 15px values, retaining readable storage labels in every language. The backup table's slim native scrollbar ends above the dialog's bottom rounded corner. Backup listing, sorting, deletion, and scroll locking remain unchanged.
 
