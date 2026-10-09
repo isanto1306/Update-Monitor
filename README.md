@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.400**
+Current release: **v0.3.401**
+
+v0.3.401 moves the backup count and used storage from separate cards on the left into one outlined, two-column status panel on the top right of the central backup dialog. The design mirrors the existing Installed/Version status panel, with separate archive and disk icons, a fine vertical divider, and responsive behavior. Backup inventory, sorting, deletion, and close-button behavior are unchanged.
 
 v0.3.400 aligns the header backup icon's overall SVG dimensions with the settings gear at 28 × 28 px while adjusting its lid from 18 × 5 to 16 × 4 viewBox units. The lower archive body and all backup-management behavior remain unchanged.
 

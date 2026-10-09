@@ -1,4 +1,4 @@
-/* Update Monitor — global Docker backup management, v0.3.400 */
+/* Update Monitor — global Docker backup management, v0.3.401 */
 (function () {
   'use strict';
   if (window.__umBackupOverviewInstalled) return;
@@ -103,7 +103,20 @@
     'html.um-backup-scroll-lock,html.um-backup-scroll-lock body{overflow:hidden!important;overscroll-behavior:none!important;}',
     '#umBackupOverviewBackdrop,#umBackupDeleteBackdrop{overscroll-behavior:contain;}',
     '#umBackupOverviewBackdrop .umbo-content{overscroll-behavior:contain;}',
-    '#umboClose{font-size:28px!important;line-height:1!important;}'
+    '#umboClose{font-size:28px!important;line-height:1!important;}',
+    '.umbo-top{align-items:center;gap:24px;padding:20px 24px 20px;}',
+    '.umbo-top-heading{min-width:0;}',
+    '.umbo-top-actions{gap:18px;}',
+    '.umbo-top-actions .umbo-stats{box-sizing:border-box;display:grid;grid-template-columns:1fr 1fr;align-items:stretch;flex:0 0 auto;gap:0;width:400px;min-width:0;min-height:64px;padding:0;border:1px solid rgba(105,137,169,.32);border-radius:12px;background:rgba(17,27,39,.50);}',
+    '.umbo-top-actions .umbo-stat{box-sizing:border-box;display:flex;align-items:center;gap:11px;min-width:0;min-height:62px;padding:9px 14px;border:0;border-radius:0;background:transparent;}',
+    '.umbo-top-actions .umbo-stat+.umbo-stat{border-left:1px solid rgba(105,137,169,.30);}',
+    '.umbo-stat-copy{display:flex;flex-direction:column;gap:5px;min-width:0;}',
+    '.umbo-top-actions .umbo-stat small{display:block;margin:0;font-size:12px;font-weight:400;color:#93a5b7;white-space:nowrap;}',
+    '.umbo-top-actions .umbo-stat strong{display:block;font-size:16px;font-weight:800;white-space:nowrap;color:#e4edf7;}',
+    '.umbo-stat-icon{display:block;flex:0 0 23px;width:23px;height:23px;fill:none;stroke:#7ab9fd;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round;}',
+    '.umbo-top-actions #umboClose{flex:0 0 auto;}',
+    '@media(max-width:860px){.umbo-top{position:relative;flex-direction:column;align-items:stretch;gap:14px;padding:18px 16px 14px;}.umbo-top-heading{padding-right:48px;}.umbo-top-actions{justify-content:flex-end;width:100%;}.umbo-top-actions .umbo-stats{width:min(100%,400px);}.umbo-top-actions #umboClose{position:absolute;right:16px;top:16px;}}',
+    '@media(max-width:480px){.umbo-top-actions .umbo-stats{width:100%;}.umbo-top-actions .umbo-stat{padding:8px;gap:7px;}.umbo-top-actions .umbo-stat small{font-size:10px;}.umbo-top-actions .umbo-stat strong{font-size:14px;}.umbo-stat-icon{flex-basis:20px;width:20px;height:20px;}}'
   ].join('\n');
   document.head.appendChild(css);
 
@@ -173,8 +186,16 @@
     backdrop.setAttribute('aria-hidden', 'true');
     backdrop.innerHTML =
       '<section id="umBackupOverviewDialog" role="dialog" aria-modal="true" aria-labelledby="umboTitle">' +
-        '<div class="umbo-top"><div><h2 id="umboTitle"></h2><p class="umbo-subtitle" id="umboSubtitle"></p></div><div class="umbo-top-actions"><button type="button" class="image-source-close" id="umboClose" aria-label="Close">×</button></div></div>' +
-        '<div class="umbo-stats"><div class="umbo-stat"><small id="umboCountLabel"></small><strong id="umboCount">0</strong></div><div class="umbo-stat"><small id="umboTotalLabel"></small><strong id="umboTotal">—</strong></div></div>' +
+        '<div class="umbo-top">' +
+          '<div class="umbo-top-heading"><h2 id="umboTitle"></h2><p class="umbo-subtitle" id="umboSubtitle"></p></div>' +
+          '<div class="umbo-top-actions">' +
+            '<div class="umbo-stats">' +
+              '<div class="umbo-stat"><svg class="umbo-stat-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"></path></svg><span class="umbo-stat-copy"><small id="umboCountLabel"></small><strong id="umboCount">0</strong></span></div>' +
+              '<div class="umbo-stat"><svg class="umbo-stat-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M3 13h18M7.5 16h.01M11 16h.01"></path></svg><span class="umbo-stat-copy"><small id="umboTotalLabel"></small><strong id="umboTotal">—</strong></span></div>' +
+            '</div>' +
+            '<button type="button" class="image-source-close" id="umboClose" aria-label="Close">×</button>' +
+          '</div>' +
+        '</div>' +
         '<div class="umbo-content" id="umboContent" aria-live="polite"></div>' +
       '</section>';
     document.body.appendChild(backdrop);
