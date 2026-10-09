@@ -29,6 +29,13 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_version_group_digest.py' -v
 
+      - name: Test exclusive AppData cleanup safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/uninstall_cleanup.py
+          python3 -m unittest discover -s tests -p 'test_uninstall_cleanup.py' -v
+
       - name: Synchronize large frontend safely
         shell: bash
         run: |
