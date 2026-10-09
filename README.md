@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.402**
+Current release: **v0.3.403**
+
+v0.3.403 further compacts the top-right backup summary: the two-column status panel is 310px wide and 48px high with 11px labels and 15px values, retaining readable storage labels in every language. The backup table's slim native scrollbar ends above the dialog's bottom rounded corner. Backup listing, sorting, deletion, and scroll locking remain unchanged.
 
 v0.3.402 removes both icons from the top-right backup count and used-storage status panel, reduces its width from 400px to 355px and height from 64px to 56px, positions it a little farther left from the close button, and renders the right-side backup list scrollbar thinner. All backup listing, sorting, delete confirmation, and scroll-lock behavior is unchanged.
 
