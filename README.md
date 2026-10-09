@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.404**
+Current release: **v0.3.405**
+
+v0.3.405 removes the entire surrounding box, internal backgrounds, and vertical divider from the Backup count and Used storage indicators. Each label appears above its corresponding value, horizontally centered in a clean two-group text-only header. The existing font sizes, backup features, and scrollbar geometry are unchanged.
 
 v0.3.404 makes the two backup statistic fields truly content-sized, eliminating the large unused space inside the boxes. The panel uses intrinsic column widths and reduced horizontal and vertical padding; the original 11px labels and 15px values remain unchanged on desktop. Existing backup functions, sorting, scrolling and modal behavior remain unchanged.
 
