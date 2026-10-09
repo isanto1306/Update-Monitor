@@ -20433,6 +20433,128 @@ def app_policy(data: AppPolicyRequest, request: Request):
 
 
 
+def all_docker_backup_list():
+    """Return all completed backup records, including apps no longer installed.
+
+    Only direct children of BACKUP_DIR with valid metadata are exposed.
+    """
+    try:
+        cleanup_expired_backups()
+    except Exception:
+        pass
+
+    rows = []
+    if not BACKUP_DIR.exists():
+        return rows
+
+    now = datetime.now(timezone.utc)
+    with BACKUP_LOCK:
+        for stack_dir in BACKUP_DIR.iterdir():
+            if not stack_dir.is_dir() or stack_dir.is_symlink():
+                continue
+            for candidate in stack_dir.iterdir():
+                if (not candidate.is_dir() or candidate.is_symlink()
+                        or candidate.name.endswith(".incomplete")):
+                    continue
+                metadata_path = candidate / "metadata.json"
+                if not metadata_path.is_file() or metadata_path.is_symlink():
+                    continue
+                meta = load_json(metadata_path, {})
+                if not isinstance(meta, dict):
+                    continue
+                created = _parse_backup_timestamp(meta.get("created_at"))
+                if created is None:
+                    continue
+                expires = backup_expiry_for_created(created)
+                if expires is not None and expires <= now:
+                    continue
+
+                size = meta.get("size_bytes")
+                try:
+                    size = int(size) if size is not None else None
+                except (TypeError, ValueError):
+                    size = None
+                if size is None or size < 0:
+                    size = _backup_directory_size_bytes(candidate)
+
+                rows.append({
+                    "folder_id": stack_dir.name,
+                    "backup_id": str(meta.get("backup_id") or candidate.name),
+                    "name": (str(meta.get("app_name") or "").strip()
+                             or str(meta.get("compose_project") or "").strip()
+                             or stack_dir.name),
+                    "stack_key": str(meta.get("stack_key") or "").strip(),
+                    "compose_project": str(meta.get("compose_project") or "").strip(),
+                    "created_at": created.isoformat(),
+                    "size_bytes": size,
+                    "mode": _normalize_backup_mode(meta.get("mode"), "quick"),
+                    "container_count": _backup_container_count_from_metadata(meta),
+                    "encrypted": bool(
+                        isinstance(meta.get("encryption"), dict)
+                        and meta.get("encryption", {}).get("encrypted")
+                    ),
+                })
+
+    rows.sort(key=lambda row: row["created_at"], reverse=True)
+    return rows
+
+
+def delete_global_docker_backup(folder_id, backup_id):
+    """Delete exactly one complete backup contained in our own backup root."""
+    folder_id = str(folder_id or "").strip()
+    backup_id = str(backup_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", folder_id) or folder_id in {".", ".."}:
+        raise RuntimeError("Invalid backup folder")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", backup_id) or backup_id in {".", ".."}:
+        raise RuntimeError("Invalid backup ID")
+
+    root = BACKUP_DIR.resolve()
+    folder = BACKUP_DIR / folder_id
+    target = folder / backup_id
+    if folder.is_symlink() or target.is_symlink():
+        raise RuntimeError("Refusing to follow backup symlinks")
+    if folder.resolve() != root / folder_id or target.resolve() != root / folder_id / backup_id:
+        raise RuntimeError("Backup path is not inside the backup root")
+
+    with BACKUP_LOCK:
+        if not target.is_dir() or not (target / "metadata.json").is_file():
+            raise RuntimeError("The selected backup no longer exists")
+        meta = load_json(target / "metadata.json", {})
+        if not isinstance(meta, dict) or str(meta.get("backup_id") or backup_id) != backup_id:
+            raise RuntimeError("Backup metadata does not match the selected backup")
+        shutil.rmtree(target)
+        try:
+            if folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError:
+            pass
+    return backup_id
+
+
+@app.get("/api/backups")
+def all_docker_backups(request: Request):
+    require_auth(request)
+    return {"backups": all_docker_backup_list()}
+
+
+@app.delete("/api/backups")
+def all_docker_backups_delete(folder_id: str, backup_id: str, request: Request):
+    require_auth(request)
+    reject_mutation_during_scan()
+    if not app_update_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="Another app update, restore or uninstall is already running",
+        )
+    try:
+        deleted = delete_global_docker_backup(folder_id, backup_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        app_update_lock.release()
+    return {"success": True, "deleted_backup_id": deleted}
+
+
 @app.get("/api/app-backups")
 def app_backups(stack_key: str, request: Request):
     require_auth(request)
