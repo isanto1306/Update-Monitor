@@ -13,6 +13,7 @@ APPDATA_ROOT = "/DATA/AppData"
 _IGNORED_NAMES = {
     "app", "apps", "data", "docker", "config", "files",
     "server", "service", "default", "database", "web", "root",
+    "bear", "big", "zimaos", "casaos", "monitor",
 }
 
 # Runs ONLY in an isolated, ephemeral helper container with APPDATA_ROOT bind
@@ -235,6 +236,13 @@ def cleanup_appdata_after_uninstall(snapshot, run, self_container_name):
                         result["deleted"] = list(payload["deleted"])
                         result["already_absent"] = list(payload["absent"])
                         result["failed"].extend(payload["failed"])
+                        reported = set(result["deleted"]) | set(result["already_absent"]) | {
+                            entry.get("folder") for entry in payload["failed"]
+                        }
+                        if reported != set(safe):
+                            result["failed"].append({
+                                "reason": "Cleanup helper did not account for every selected folder"
+                            })
                     except (KeyError, IndexError, TypeError, ValueError):
                         result["failed"].append({"reason": "Cleanup helper returned no verifiable result"})
 
