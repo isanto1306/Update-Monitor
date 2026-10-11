@@ -1,5 +1,8 @@
 name: AppData cleanup regression tests
 on:
+  push:
+    branches:
+      - fix/appdata-compose-ownership-v0412
   pull_request:
     paths:
       - app/uninstall_cleanup.py
