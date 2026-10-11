@@ -575,4 +575,20 @@ if "uninstallFolderSelection.delete(String(app.stack_key));" not in text:
     new = "    uninstallFolderSelection.delete(String(app.stack_key));\n\n" + old
     replace_once(old,new,"clear folder choice after successful uninstall")
 
+
+# Migrate the already-injected checkbox handler from index lookups to the
+# stable stack key. A previous release rendered the first variant once.
+legacy_folder_handler = """  const index=Number(checkbox.dataset.uninstallFolderIndex);
+  const app=state.apps&&state.apps[index];
+  if(!app||!app.stack_key)return;
+  uninstallFolderSelection.set(String(app.stack_key),!!checkbox.checked);"""
+stable_folder_handler = """  const button=checkbox.closest('.uninstall-panel')?.querySelector('[data-progress-stack]');
+  const key=String(button?.dataset.progressStack||'');
+  if(!key)return;
+  uninstallFolderSelection.set(key,!!checkbox.checked);"""
+if legacy_folder_handler in text:
+    replace_once(legacy_folder_handler, stable_folder_handler, "stable uninstall checkbox state")
+if folder_state_marker in text and stable_folder_handler not in text:
+    raise SystemExit("Uninstall folder state handler has not been migrated")
+
 path.write_text(text, encoding="utf-8")
