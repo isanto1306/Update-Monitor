@@ -1,0 +1,17 @@
+name: AppData cleanup regression tests
+on:
+  push:
+    branches:
+      - fix/appdata-compose-ownership-v0412
+  pull_request:
+    paths:
+      - app/uninstall_cleanup.py
+      - tests/test_uninstall_cleanup.py
+      - .github/workflows/appdata-cleanup-tests.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -p 'test_uninstall_cleanup.py' -v
+      - run: python3 -m py_compile app/main.py app/uninstall_cleanup.py

@@ -100,6 +100,24 @@ def _owner_names(app):
     return names
 
 
+def _matches_appdata_owner(child, owners):
+    """Recognize compound app names without matching unrelated shared folders."""
+    slug = _slug(child)
+    if not slug or slug in _IGNORED_NAMES:
+        return False
+    if slug in owners:
+        return True
+    # Compose project names often contain a namespace (e.g. casa-drop-app).
+    # Require a complete, distinctive name as a prefix/suffix, not a generic
+    # substring; never use short generic tokens to authorize a deletion.
+    return any(
+        len(owner) >= 8
+        and (owner.startswith(slug) or owner.endswith(slug))
+        and len(slug) >= 7
+        for owner in owners
+    )
+
+
 def _list_containers(run):
     rc, raw, err = run(["docker", "ps", "-aq", "--no-trunc"], timeout=30)
     if rc != 0:
@@ -144,7 +162,7 @@ def snapshot_appdata_candidates(app, run):
             child = _appdata_child(source)
             if child is None:
                 continue
-            if _slug(child) in owners:
+            if _matches_appdata_owner(child, owners):
                 candidates.add(child)
             else:
                 skipped.add(child)

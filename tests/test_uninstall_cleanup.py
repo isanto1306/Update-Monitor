@@ -65,6 +65,29 @@ class UninstallCleanupTests(unittest.TestCase):
         self.assertEqual(snapshot["candidates"], ["trilium"])
         self.assertEqual(snapshot["not_attributable"], ["shared-database"])
 
+    def test_namespaced_casadrop_appdata(self):
+        app = {
+            "name": "Casa Drop",
+            "compose_project": "casa-drop-app",
+            "containers": [{"name": "casa-drop-app-1"}],
+        }
+        docker = FakeDocker([row("casa-drop-app-1", "casa-drop-app", [
+            "/DATA/AppData/casadrop/config",
+            "/DATA/AppData/shared/data",
+        ])])
+        snapshot = module.snapshot_appdata_candidates(app, docker)
+        self.assertEqual(snapshot["candidates"], ["casadrop"])
+        self.assertEqual(snapshot["not_attributable"], ["shared"])
+        docker.containers = []
+        docker.helper = {"deleted": ["casadrop"], "absent": [], "failed": []}
+        result = module.cleanup_appdata_after_uninstall(snapshot, docker, "update-monitor")
+        self.assertEqual(result["deleted"], ["casadrop"])
+
+    def test_prefix_does_not_authorize_unrelated_folders(self):
+        self.assertFalse(module._matches_appdata_owner("postgres", {"casadropapp"}))
+        self.assertFalse(module._matches_appdata_owner("data", {"casadropapp"}))
+        self.assertFalse(module._matches_appdata_owner("casadrop-backup", {"casadropapp"}))
+
     def test_does_not_select_parent_or_other_storage(self):
         for source in (
             "/DATA/AppData", "/DATA/AppData/../storage/photos",
