@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.414**
+Current release: **v0.3.415**
+
+v0.3.415 corrects the checkbox handler migration to stable stack keys while retaining Casa Drop AppData cleanup and the centered result dialog.
 
 v0.3.414 preserves the uninstall folder checkbox during operation and includes the Casa Drop cleanup/dialog fixes from v0.3.413.
 
