@@ -1,4 +1,4 @@
-"""Conservative ZimaOS AppData cleanup after an opted-in uninstall.
+"""Verified ZimaOS AppData cleanup after an opted-in uninstall.
 
 Only a uniquely attributable, direct /DATA/AppData child may be removed.
 All other bind mounts, external shares and named Docker volumes stay untouched.
@@ -249,7 +249,10 @@ def cleanup_appdata_after_uninstall(snapshot, run, self_container_name):
                     "--pull", "never",
                     "--network", "none",
                     "--read-only",
+                    "--user", "0:0",
                     "--cap-drop", "ALL",
+                    "--cap-add", "DAC_OVERRIDE",
+                    "--cap-add", "DAC_READ_SEARCH",
                     "--security-opt", "no-new-privileges",
                     "--pids-limit", "64",
                     "--memory", "128m",
