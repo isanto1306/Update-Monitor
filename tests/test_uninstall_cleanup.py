@@ -83,6 +83,32 @@ class UninstallCleanupTests(unittest.TestCase):
         result = module.cleanup_appdata_after_uninstall(snapshot, docker, "update-monitor")
         self.assertEqual(result["deleted"], ["casadrop"])
 
+    def test_private_casadrop_directory_without_bind_mount(self):
+        app = {
+            "name": "Casa Drop",
+            "compose_project": "casa-drop",
+            "containers": [{"name": "casa-drop-1"}],
+        }
+        docker = FakeDocker([row("casa-drop-1", "casa-drop", [
+            "/DATA/storage/media",
+        ])])
+        snapshot = module.snapshot_appdata_candidates(app, docker)
+        self.assertEqual(snapshot["candidates"], ["casadrop"])
+        docker.containers = []
+        docker.helper = {"deleted": ["casadrop"], "absent": [], "failed": []}
+        result = module.cleanup_appdata_after_uninstall(snapshot, docker, "update-monitor")
+        self.assertEqual(result["status"], "complete")
+
+    def test_unrelated_project_never_infers_appdata(self):
+        app = {
+            "name": "Casa Drop",
+            "compose_project": "unrelated-project",
+            "containers": [{"name": "unrelated-project-1"}],
+        }
+        docker = FakeDocker([row("unrelated-project-1", "unrelated-project", [])])
+        snapshot = module.snapshot_appdata_candidates(app, docker)
+        self.assertEqual(snapshot["candidates"], [])
+
     def test_prefix_does_not_authorize_unrelated_folders(self):
         self.assertFalse(module._matches_appdata_owner("postgres", {"casadropapp"}))
         self.assertFalse(module._matches_appdata_owner("data", {"casadropapp"}))
