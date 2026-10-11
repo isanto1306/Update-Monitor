@@ -591,4 +591,17 @@ if legacy_folder_handler in text:
 if folder_state_marker in text and stable_folder_handler not in text:
     raise SystemExit("Uninstall folder state handler has not been migrated")
 
+# Repair an extra closing brace inserted during the v0.3.413
+# uninstall-dialog migration. It prevents the entire main UI script from parsing.
+broken_uninstall_tail = """    // No second success message below the card.
+
+    }
+
+    // No second success message below the card."""
+fixed_uninstall_tail = "    // No second success message below the card."
+if broken_uninstall_tail in text:
+    replace_once(broken_uninstall_tail, fixed_uninstall_tail, "uninstall dialog stray brace")
+if broken_uninstall_tail in text:
+    raise SystemExit("Uninstall dialog syntax repair failed")
+
 path.write_text(text, encoding="utf-8")
