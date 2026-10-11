@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.410**
+Current release: **v0.3.411**
+
+v0.3.411 automatically discovers new Docker containers using Docker events and a 60-second local reconciliation, without triggering full update scans.
 
 v0.3.410 aligns the right-hand scrollbar's top arrow visually with the fixed horizontal rule underneath the Backup overview column headings. Only the backup list scrollport is shifted upward by 7px, with compensating top padding preserving the list's text and layout. Mobile padding has the same correction; manual zoom, fixed headings, backup actions, and settings are unchanged.
 
