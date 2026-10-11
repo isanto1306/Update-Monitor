@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.410"
+VERSION = "0.3.411"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -9898,6 +9898,116 @@ def _prune_removed_stacks_from_scan_snapshot(stack_keys):
     return True
 
 
+
+DOCKER_DISCOVERY_INTERVAL_SECONDS = 60
+docker_discovery_wakeup = threading.Event()
+docker_discovery_lock = threading.Lock()
+
+def discover_local_docker_stacks():
+    """Reconcile the local Docker topology, without remote version lookups."""
+    if not docker_discovery_lock.acquire(blocking=False):
+        return
+    try:
+        if app_update_lock.locked() or has_pending_app_scan():
+            return
+        with scan_lock:
+            if scan_state.get("state") == "scanning":
+                return
+            known = {str(a.get("stack_key") or "") for a in scan_state.get("apps") or []}
+        snapshot = collect_current_local_scan_cache_snapshot()
+        missing = set(snapshot.get("stacks") or {}) - known
+        if not missing:
+            return
+        rc, ids_raw, err = run(["docker", "ps", "-aq"], timeout=20)
+        if rc != 0:
+            return
+        ids = [x.strip() for x in ids_raw.splitlines() if x.strip()]
+        if not ids:
+            return
+        rc, raw, err = run(["docker", "inspect"] + ids, timeout=60)
+        if rc != 0:
+            return
+        found = {}
+        for container in select_current_compose_containers(json.loads(raw)):
+            meta = container_stack_metadata(container)
+            key = meta["stack_key"]
+            if key not in missing:
+                continue
+            entry = found.setdefault(key, {"meta": meta, "containers": []})
+            entry["containers"].append({
+                "name": str(container.get("Name") or "").lstrip("/"),
+                "state": (container.get("State") or {}).get("Status", "unknown"),
+                "compose_service": meta.get("compose_service"),
+                "created_at": container.get("Created"),
+                "ports": container_published_ports(container),
+                "runtime_image_ref": (container.get("Config") or {}).get("Image", ""),
+            })
+        if not found:
+            return
+        with scan_lock:
+            if app_update_lock.locked() or scan_state.get("state") == "scanning":
+                return
+            apps = scan_state.setdefault("apps", [])
+            present = {str(a.get("stack_key") or "") for a in apps}
+            for key, entry in found.items():
+                if key in present:
+                    continue
+                meta = entry["meta"]
+                apps.append({
+                    "stack_key": key,
+                    "name": meta.get("stack_name") or key,
+                    "compose_project": meta.get("compose_project"),
+                    "compose_working_dir": meta.get("compose_working_dir"),
+                    "compose_config_files": meta.get("compose_config_files"),
+                    "icon_url": meta.get("icon_url"),
+                    "status": "LOCAL",
+                    "discovery_pending": True,
+                    "containers": entry["containers"],
+                    "items": [],
+                    "image_count": 0,
+                    "container_count": len(entry["containers"]),
+                    "update_count": 0,
+                })
+            save_json(SCAN_FILE, scan_state)
+        for i, key in enumerate(found):
+            schedule_app_scan(key, delay=0.5 + 0.2 * i)
+    finally:
+        docker_discovery_lock.release()
+
+def docker_discovery_loop():
+    """Use event notifications and a local fallback comparison every minute."""
+    while True:
+        docker_discovery_wakeup.wait(timeout=DOCKER_DISCOVERY_INTERVAL_SECONDS)
+        docker_discovery_wakeup.clear()
+        time.sleep(1.5)
+        try:
+            discover_local_docker_stacks()
+        except Exception:
+            pass
+
+def docker_discovery_event_loop():
+    """Reconnect to Docker events after daemon/socket interruptions."""
+    while True:
+        try:
+            with subprocess.Popen(
+                ["docker", "events", "--filter", "type=container", "--format", "{{json .}}"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, bufsize=1,
+            ) as process:
+                for line in process.stdout:
+                    try:
+                        event = json.loads(line)
+                    except (TypeError, ValueError):
+                        continue
+                    if str(event.get("Action") or event.get("status") or "") in {
+                        "create", "destroy", "start", "stop", "die", "rename"
+                    }:
+                        docker_discovery_wakeup.set()
+        except OSError:
+            pass
+        docker_discovery_wakeup.set()
+        time.sleep(5)
+
 def startup_cache_refresh_if_needed(baseline_finished_at):
     """Fast restart path: cached UI immediately, then local-only comparison.
 
@@ -9972,16 +10082,10 @@ def startup_cache_refresh_if_needed(baseline_finished_at):
         )
     )
 
-    # A brand-new stack has no old app record from which a targeted scan can
-    # safely resolve the Compose target. One full discovery scan is required.
     if added:
-        _set_startup_cache_status(
-            "topology-added",
-            added_stacks=added,
-            removed_stacks=removed,
-            changed_stacks=changed,
-        )
-        return "full-scan" if start_scan(origin="startup-new-stack") else "busy"
+        _set_startup_cache_status("topology-added", added_stacks=added)
+        docker_discovery_wakeup.set()
+        return "targeted-discovery"
 
     if removed:
         _prune_removed_stacks_from_scan_snapshot(removed)
@@ -12094,6 +12198,8 @@ def startup():
     false_pin_stacks = stale_cached_digest_pin_stack_keys()
 
     threading.Thread(target=scheduler_loop, name="update-monitor-scheduler", daemon=True).start()
+    threading.Thread(target=docker_discovery_loop, name="docker-discovery", daemon=True).start()
+    threading.Thread(target=docker_discovery_event_loop, name="docker-events", daemon=True).start()
     threading.Thread(target=message_bus_listener_loop, name="update-monitor-message-bus", daemon=True).start()
     threading.Timer(1.0, reconcile_self_update_after_restart).start()
 
