@@ -542,4 +542,37 @@ if legacy_alert in text:
     raise SystemExit("Legacy browser alert survived uninstall dialog migration")
 
 
+
+# Retain the "Delete app folders" checkbox across card re-renders until the
+# uninstall really completes. Event delegation survives replacement of cards.
+folder_state_marker = "const uninstallFolderSelection=new Map();"
+if folder_state_marker not in text:
+    old = "let pendingUninstallAction=null;"
+    new = """const uninstallFolderSelection=new Map();
+document.addEventListener('change',event=>{
+  const checkbox=event.target&&event.target.closest?event.target.closest('[data-uninstall-folder-index]'):null;
+  if(!checkbox)return;
+  const index=Number(checkbox.dataset.uninstallFolderIndex);
+  const app=state.apps&&state.apps[index];
+  if(!app||!app.stack_key)return;
+  uninstallFolderSelection.set(String(app.stack_key),!!checkbox.checked);
+});
+let pendingUninstallAction=null;"""
+    replace_once(old,new,"persistent uninstall folder selection")
+
+checkbox_old = '<input type="checkbox" data-uninstall-folder-index="${index}" ${blocked?\'disabled\':\'\'}>'
+checkbox_new = '<input type="checkbox" data-uninstall-folder-index="${index}" ${uninstallFolderSelection.get(String(app.stack_key))?\'checked\':\'\'} ${blocked?\'disabled\':\'\'}>'
+if checkbox_new not in text:
+    replace_once(checkbox_old,checkbox_new,"checked uninstall folder across renders")
+
+request_old = "  const deleteFolder=!!(checkbox&&checkbox.checked);"
+request_new = "  const deleteFolder=checkbox?!!checkbox.checked:!!uninstallFolderSelection.get(String(app.stack_key));"
+if request_new not in text:
+    replace_once(request_old,request_new,"read preserved folder choice")
+
+if "uninstallFolderSelection.delete(String(app.stack_key));" not in text:
+    old = "    // No second success message below the card."
+    new = "    uninstallFolderSelection.delete(String(app.stack_key));\n\n" + old
+    replace_once(old,new,"clear folder choice after successful uninstall")
+
 path.write_text(text, encoding="utf-8")
