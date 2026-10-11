@@ -20065,7 +20065,7 @@ function renderUninstallPanel(app,index){
   return `<section class="uninstall-panel">
     <div class="uninstall-panel-title">${esc(t('uninstallTitle'))}</div>
     <label class="uninstall-folder-option">
-      <input type="checkbox" data-uninstall-folder-index="${index}" ${blocked?'disabled':''}>
+      <input type="checkbox" data-uninstall-folder-index="${index}" ${uninstallFolderSelection.get(String(app.stack_key))?'checked':''} ${blocked?'disabled':''}>
       <span>${esc(t('uninstallDeleteFolder'))}</span>
     </label>
     <div class="uninstall-folder-help">${esc(helpText)}</div>
@@ -23367,6 +23367,15 @@ async function saveAppPolicy(app,card){
   }
 }
 
+const uninstallFolderSelection=new Map();
+document.addEventListener('change',event=>{
+  const checkbox=event.target&&event.target.closest?event.target.closest('[data-uninstall-folder-index]'):null;
+  if(!checkbox)return;
+  const index=Number(checkbox.dataset.uninstallFolderIndex);
+  const app=state.apps&&state.apps[index];
+  if(!app||!app.stack_key)return;
+  uninstallFolderSelection.set(String(app.stack_key),!!checkbox.checked);
+});
 let pendingUninstallAction=null;
 
 function closeUninstallConfirm(){
@@ -23381,7 +23390,7 @@ function requestUninstall(app,index){
   if(!app||!app.compose_project||appSelfProtected(app)||state.uninstallingApps.has(app.stack_key))return;
 
   const checkbox=document.querySelector(`[data-uninstall-folder-index="${index}"]`);
-  const deleteFolder=!!(checkbox&&checkbox.checked);
+  const deleteFolder=checkbox?!!checkbox.checked:!!uninstallFolderSelection.get(String(app.stack_key));
 
   pendingUninstallAction={app,deleteFolder};
 
@@ -23707,6 +23716,8 @@ async function executeUninstall(app,deleteFolder){
       document.body.append(shade);
       button.focus();
     }
+
+    uninstallFolderSelection.delete(String(app.stack_key));
 
     // No second success message below the card.
 
