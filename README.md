@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.413**
+Current release: **v0.3.414**
+
+v0.3.414 preserves the uninstall folder checkbox during operation and includes the Casa Drop cleanup/dialog fixes from v0.3.413.
 
 v0.3.413 adds local AppData ownership fallback and a centered cleanup diagnostic dialog.
 
