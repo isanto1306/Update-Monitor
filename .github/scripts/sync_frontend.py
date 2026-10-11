@@ -490,7 +490,41 @@ uninstall_new = """    const uninstallResult=await api('/api/app-uninstall',{
         ...(cleanup.failed||[]).map(row=>String(row&&row.folder||''))
       ].filter(Boolean);
       const details=folderNames.length?'\\\\n/DATA/AppData: '+[...new Set(folderNames)].join(', '):'';
-      window.alert((messages[state.language]||messages.en)+details);
+      const title={de:'Deinstallation abgeschlossen',en:'Uninstall completed',fr:'Désinstallation terminée',pt:'Desinstalação concluída',es:'Desinstalación completada'};
+      const text=(messages[state.language]||messages.en);
+      const reasons=[...(cleanup.skipped||[]),...(cleanup.failed||[])].map(row=>{
+        const folder=String(row&&row.folder||'').trim();
+        const reason=String(row&&row.reason||'').trim();
+        return [folder?'/DATA/AppData/'+folder:'',reason].filter(Boolean).join(' — ');
+      }).filter(Boolean);
+      const shade=document.createElement('div');
+      shade.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:2147483640;display:flex;align-items:center;justify-content:center;padding:20px';
+      const panel=document.createElement('section');
+      panel.setAttribute('role','alertdialog');
+      panel.setAttribute('aria-modal','true');
+      panel.style.cssText='background:#151e27;border:1px solid #32516e;border-radius:14px;color:#e6eef7;width:min(480px,100%);padding:24px;box-shadow:0 24px 80px #0009;text-align:center';
+      const head=document.createElement('h3');
+      head.style.cssText='margin:0 0 14px;font-size:18px';
+      head.textContent=title[state.language]||title.en;
+      const message=document.createElement('p');
+      message.style.cssText='line-height:1.5;white-space:pre-wrap;font-size:14px';
+      message.textContent=text;
+      panel.append(head,message);
+      if(reasons.length){
+        const detail=document.createElement('pre');
+        detail.style.cssText='text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 inherit;background:#0c1520;border-radius:8px;padding:12px;max-height:180px;overflow:auto';
+        detail.textContent=reasons.join('\\n');
+        panel.append(detail);
+      }
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent='OK';
+      button.style.cssText='margin-top:18px;background:#2569a5;color:white;border:0;border-radius:8px;padding:9px 32px;cursor:pointer';
+      button.onclick=()=>shade.remove();
+      panel.append(button);
+      shade.append(panel);
+      document.body.append(shade);
+      button.focus();
     }
 
     // No second success message below the card.
