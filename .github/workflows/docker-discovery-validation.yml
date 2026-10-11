@@ -1,0 +1,41 @@
+name: Docker discovery validation
+on:
+  pull_request:
+    paths:
+      - 'app/main.py'
+      - '.github/workflows/docker-discovery-validation.yml'
+  push:
+    branches:
+      - feature/automatic-docker-discovery
+    paths:
+      - 'app/main.py'
+      - '.github/workflows/docker-discovery-validation.yml'
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python syntax and discovery invariants
+        run: |
+          python -m py_compile app/main.py
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          p=Path("app/main.py")
+          src=p.read_text()
+          tree=ast.parse(src)
+          funcs={n.name:n for n in tree.body if isinstance(n,ast.FunctionDef)}
+          for name in ("discover_local_docker_stacks", "docker_discovery_loop", "docker_discovery_event_loop"):
+              assert name in funcs, name
+          local=ast.get_source_segment(src,funcs["discover_local_docker_stacks"])
+          assert 'collect_current_local_scan_cache_snapshot()' in local
+          assert 'schedule_app_scan(' in local
+          assert 'start_scan(' not in local
+          assert 'scan_all(' not in local
+          assert 'docker", "inspect' in local
+          assert 'DOCKER_DISCOVERY_INTERVAL_SECONDS = 60' in src
+          startup=ast.get_source_segment(src,funcs["startup_cache_refresh_if_needed"])
+          assert 'docker_discovery_wakeup.set()' in startup
+          assert 'origin="startup-new-stack"' not in startup
+          print("Docker discovery syntax and invariants validated")
+          PY
