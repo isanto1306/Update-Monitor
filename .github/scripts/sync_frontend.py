@@ -532,4 +532,14 @@ uninstall_new = """    const uninstallResult=await api('/api/app-uninstall',{
 if "const cleanup=uninstallResult&&uninstallResult.data_cleanup;" not in text:
     replace_once(uninstall_old, uninstall_new, "checked AppData uninstall warning")
 
+# Refresh the already-injected legacy warning on existing installations.
+# The original migration guard above does not run once the warning exists.
+legacy_alert = "      window.alert((messages[state.language]||messages.en)+details);"
+if legacy_alert in text:
+    new_alert = uninstall_new.split("      const title=", 1)[1].split("\\n    }", 1)[0]
+    text = text.replace(legacy_alert, "      const title=" + new_alert, 1)
+if legacy_alert in text:
+    raise SystemExit("Legacy browser alert survived uninstall dialog migration")
+
+
 path.write_text(text, encoding="utf-8")
