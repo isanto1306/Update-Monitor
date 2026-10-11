@@ -552,10 +552,10 @@ if folder_state_marker not in text:
 document.addEventListener('change',event=>{
   const checkbox=event.target&&event.target.closest?event.target.closest('[data-uninstall-folder-index]'):null;
   if(!checkbox)return;
-  const index=Number(checkbox.dataset.uninstallFolderIndex);
-  const app=state.apps&&state.apps[index];
-  if(!app||!app.stack_key)return;
-  uninstallFolderSelection.set(String(app.stack_key),!!checkbox.checked);
+  const button=checkbox.closest('.uninstall-panel')?.querySelector('[data-progress-stack]');
+  const key=String(button?.dataset.progressStack||'');
+  if(!key)return;
+  uninstallFolderSelection.set(key,!!checkbox.checked);
 });
 let pendingUninstallAction=null;"""
     replace_once(old,new,"persistent uninstall folder selection")
