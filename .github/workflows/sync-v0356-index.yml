@@ -488,7 +488,11 @@ jobs:
               assert set((translations.get(language) or {}).keys()) == reference_keys
 
           # Frontend/release regression: all active version markers must agree.
+          # Verify the exact version shown in the left-logo information panel.
           assert f"const UPDATE_MONITOR_VERSION = 'v{release_version}';" in html
+          assert f'id="systemInfoVersion">v{release_version}</div>' in html
+          assert f"/update-channel.js?v={release_version}" in html
+          assert f"favicon.ico?v={release_version}" in html
           assert f'id="systemInfoVersion">v{release_version}</div>' in html
           compose = Path("docker-compose.zimaos.yml").read_text(encoding="utf-8")
           readme = Path("README.md").read_text(encoding="utf-8")
@@ -497,7 +501,8 @@ jobs:
           audit = Path("translation-audit-current.json").read_text(encoding="utf-8")
           assert f'version: "{release_version}"' in compose
           assert f"Current release: **v{release_version}**" in readme
-          assert release_version in manifest
+          assert manifest.count(f"?v={release_version}") >= 2
+          assert f"replace(\"0.3.416\", \"{release_version}\")" in Path("Dockerfile").read_text(encoding="utf-8")
           patch = release_version.rsplit(".", 1)[-1]
           assert f"um-update-channel-v0{patch}" in channel_js
           assert f'"version": "v{release_version}"' in audit
