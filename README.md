@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.412**
+Current release: **v0.3.413**
+
+v0.3.413 adds local AppData ownership fallback and a centered cleanup diagnostic dialog.
 
 v0.3.412 improves exclusive AppData ownership matching for namespaced Compose projects such as Casa Drop while preserving shared-data deletion safeguards.
 

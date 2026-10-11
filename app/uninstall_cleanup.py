@@ -167,6 +167,20 @@ def snapshot_appdata_candidates(app, run):
             else:
                 skipped.add(child)
 
+    # Some ZimaOS apps create their private AppData directory without
+    # exposing it as a bind mount. For opted-in deletion, recognize ONLY
+    # the exact distinctive app name backed by the current Compose identity.
+    # Never infer arbitrary sibling directories or storage mount paths.
+    app_slug = _slug(app.get("name"))
+    project_slug = _slug(project)
+    if (
+        len(app_slug) >= 7
+        and app_slug not in _IGNORED_NAMES
+        and (app_slug == project_slug or app_slug in project_slug)
+        and not candidates
+    ):
+        candidates.add(app_slug)
+
     return {
         "project": project,
         "candidates": sorted(candidates),
