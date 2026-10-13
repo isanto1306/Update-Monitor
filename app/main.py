@@ -4340,6 +4340,8 @@ def save_monitor_policy(
         follow_normalize_reset = (
             str(previous.get("mode") or "fixed") != mode
             or mode != "follow"
+            or str(previous.get("target_tag") or "").casefold()
+            != str(target_tag or "").casefold()
         )
 
         value = {
