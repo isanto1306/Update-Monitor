@@ -502,7 +502,7 @@ jobs:
           assert f'version: "{release_version}"' in compose
           assert f"Current release: **v{release_version}**" in readme
           assert manifest.count(f"?v={release_version}") >= 2
-          assert f"replace(\"0.3.418\", \"{release_version}\")" in Path("Dockerfile").read_text(encoding="utf-8")
+          assert f"replace(\"0.3.419\", \"{release_version}\")" in Path("Dockerfile").read_text(encoding="utf-8")
           patch = release_version.rsplit(".", 1)[-1]
           assert f"um-update-channel-v0{patch}" in channel_js
           assert f'"version": "v{release_version}"' in audit
