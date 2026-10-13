@@ -4,7 +4,6 @@ import concurrent.futures
 import copy
 import hashlib
 import ipaddress
-import fcntl
 import socket
 import ssl
 import struct
@@ -3602,37 +3601,6 @@ def cached_icon_file(cache_key):
     return data_path, (content_type or "application/octet-stream")
 
 
-def _local_icon_interface_ips():
-    """Only the host's assigned IPv4 addresses may supply local app icons."""
-    ips = set()
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        for _, interface in socket.if_nameindex():
-            try:
-                data = fcntl.ioctl(
-                    sock.fileno(), 0x8915,
-                    struct.pack("256s", interface[:15].encode("ascii")),
-                )
-                ips.add(ipaddress.ip_address(socket.inet_ntoa(data[20:24])))
-            except (OSError, ValueError, UnicodeError):
-                continue
-    return ips
-
-
-def _is_own_host_icon(parsed, ips):
-    if parsed.scheme != "http" or parsed.username or parsed.password:
-        return False
-    try:
-        host = ipaddress.ip_address(parsed.hostname or "")
-    except ValueError:
-        return False
-    if host.version != 4 or host not in ips or host not in _local_icon_interface_ips() or len(ips) != 1:
-        return False
-    return bool(re.fullmatch(
-        r"/static/[A-Za-z0-9_./-]+\.(?:png|jpe?g|webp|gif|ico|svg|avif)",
-        parsed.path, re.I,
-    ) and ".." not in parsed.path.split("/"))
-
-
 def validate_public_icon_url(url):
     parsed = urllib.parse.urlparse(str(url))
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -3658,8 +3626,6 @@ def validate_public_icon_url(url):
         except ValueError:
             continue
 
-    if _is_own_host_icon(parsed, ips):
-        return
     if not ips or any(not ip.is_global for ip in ips):
         raise RuntimeError("Private or non-public icon hosts are not cached")
 
@@ -19782,14 +19748,6 @@ def docker_info(stack_key: str, image_ref: str, request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def proxy_scan_icon_urls(scan_payload):
-    """Rewrite browser-visible icons without changing saved scan metadata."""
-    for group in ("apps", "results"):
-        for item in scan_payload.get(group) or []:
-            if isinstance(item, dict) and item.get("icon_url"):
-                item["icon_url"] = icon_proxy_url(item["icon_url"])
-
-
 @app.get("/api/status")
 def status(request: Request):
     require_auth(request)
@@ -19798,7 +19756,6 @@ def status(request: Request):
         scan_payload = copy.deepcopy(scan_state)
     annotate_self_protection(scan_payload)
     annotate_version_confirmations(scan_payload)
-    proxy_scan_icon_urls(scan_payload)
     return {"version": VERSION, "docker_version": docker_version(), "zimaos_app_management_detected": casaos_detected(), "settings": dict(settings), "github": github_token_public_status(), "backup_encryption": backup_encryption_public_status(), "project_links": {"cache_file": str(PROJECT_LINK_CACHE_FILE), "cached_repositories": len(PROJECT_LINK_CACHE)}, "resource_usage": container_resource_usage(), "service_runtime": {"started_at": SERVICE_STARTED_AT}, "automation": {"pending_post_scans": pending_app_scan_keys()}, "scan": scan_payload}
 
 
