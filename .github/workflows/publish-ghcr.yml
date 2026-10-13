@@ -7,8 +7,6 @@ on:
     types:
       - completed
   push:
-    branches:
-      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -39,27 +37,6 @@ jobs:
       - name: Check out requested ref
         if: github.event_name != 'workflow_run'
         uses: actions/checkout@v4
-
-      - name: Verify rollback and synchronize frontend before image build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m py_compile app/main.py app/uninstall_cleanup.py
-          python3 .github/scripts/sync_frontend.py
-          python3 .github/scripts/check_inline_scripts.py
-          python3 .github/scripts/audit_translations.py
-          python3 - <<'PY'
-          from pathlib import Path
-          source = Path("app/main.py").read_text(encoding="utf-8")
-          html = Path("static/index.html").read_text(encoding="utf-8")
-          assert 'VERSION = "0.3.420"' in source
-          assert 'proxy_scan_icon_urls' not in source
-          assert '_is_own_host_icon' not in source
-          assert 'id="systemInfoVersion">v0.3.420' in html
-          assert 'const UPDATE_MONITOR_VERSION = \'v0.3.420\'' in html
-          print("Rollback v0.3.420 verified")
-          PY
 
       - name: Read app version
         id: app_version
