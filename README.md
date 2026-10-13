@@ -88,7 +88,7 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.419**
+Current release: **v0.3.420**
 
 v0.3.417 fixes the empty web dashboard caused by an extra JavaScript brace accidentally injected into the uninstall completion flow in v0.3.413. The frontend synchronizer now repairs the legacy markup, and the release workflow validates every inline JavaScript block in the complete HTML with Node.js before publishing. Existing uninstall and Docker-discovery features are retained.
 
