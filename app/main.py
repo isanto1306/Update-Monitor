@@ -5009,12 +5009,20 @@ def refresh_scan_policy_fields():
                 dict(app_item.get("monitor_policy") or {}),
                 list(app_item.get("policy_available_tags") or []),
                 bool(app_item.get("can_version_update")),
+                str(app_item.get("policy_follow_tag") or ""),
+                bool(app_item.get("follow_tag_switch_only")),
+                str(app_item.get("follow_target_state") or ""),
+                str(app_item.get("installed_version") or ""),
             )
             apply_monitor_policy_fields(app_item)
             after = (
                 dict(app_item.get("monitor_policy") or {}),
                 list(app_item.get("policy_available_tags") or []),
                 bool(app_item.get("can_version_update")),
+                str(app_item.get("policy_follow_tag") or ""),
+                bool(app_item.get("follow_tag_switch_only")),
+                str(app_item.get("follow_target_state") or ""),
+                str(app_item.get("installed_version") or ""),
             )
             if before != after:
                 changed = True
