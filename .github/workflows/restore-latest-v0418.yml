@@ -1,0 +1,52 @@
+name: Restore verified 0.3.418 as latest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/restore-latest-v0418.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-update-monitor
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify repo is back at 0.3.418
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          b = Path("app/main.py").read_text()
+          assert 'VERSION = "0.3.418"' in b
+          assert 'proxy_scan_icon_urls' not in b
+          assert 'version: "0.3.418"' in Path("docker-compose.zimaos.yml").read_text()
+          assert 'id="systemInfoVersion">v0.3.418' in Path("static/index.html").read_text()
+          PY
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore latest from verified immutable release
+        shell: bash
+        env:
+          IMAGE: ghcr.io/isanto1306/update-monitor
+          VERIFIED_DIGEST: sha256:2916a8d817400cfa2839a931b3c9cb61ceb52eca4edf4311e934e5c0fba0a233
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE}:0.3.418" | grep -F "${VERIFIED_DIGEST}"
+          docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}@${VERIFIED_DIGEST}"
+          docker buildx imagetools inspect "${IMAGE}:latest" | grep -F "${VERIFIED_DIGEST}"
+          echo "latest now refers to verified v0.3.418 image"
