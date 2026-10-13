@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.419"
+VERSION = "0.3.420"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -9298,7 +9298,15 @@ def build_apps(results):
             "compose_project": item.get("compose_project"),
             "compose_working_dir": item.get("compose_working_dir"),
             "compose_config_files": item.get("compose_config_files"),
-            "icon_url": item.get("icon_url"),
+            "icon_url": (
+                item.get("icon_url")
+                or (
+                    "https://raw.githubusercontent.com/isanto1306/Update-Monitor/main/static/update-monitor-source-highres.png"
+                    if str(item.get("image_ref") or "").split("@", 1)[0].split(":", 1)[0].lower()
+                    == "ghcr.io/isanto1306/update-monitor"
+                    else None
+                )
+            ),
             "project_url": item.get("project_url"),
             "project_provider": item.get("project_provider"),
             "project_url_source": item.get("project_url_source"),
