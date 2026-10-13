@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.418"
+VERSION = "0.3.419"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -4340,6 +4340,8 @@ def save_monitor_policy(
         follow_normalize_reset = (
             str(previous.get("mode") or "fixed") != mode
             or mode != "follow"
+            or str(previous.get("target_tag") or "").casefold()
+            != str(target_tag or "").casefold()
         )
 
         value = {
@@ -5007,12 +5009,20 @@ def refresh_scan_policy_fields():
                 dict(app_item.get("monitor_policy") or {}),
                 list(app_item.get("policy_available_tags") or []),
                 bool(app_item.get("can_version_update")),
+                str(app_item.get("policy_follow_tag") or ""),
+                bool(app_item.get("follow_tag_switch_only")),
+                str(app_item.get("follow_target_state") or ""),
+                str(app_item.get("installed_version") or ""),
             )
             apply_monitor_policy_fields(app_item)
             after = (
                 dict(app_item.get("monitor_policy") or {}),
                 list(app_item.get("policy_available_tags") or []),
                 bool(app_item.get("can_version_update")),
+                str(app_item.get("policy_follow_tag") or ""),
+                bool(app_item.get("follow_tag_switch_only")),
+                str(app_item.get("follow_target_state") or ""),
+                str(app_item.get("installed_version") or ""),
             )
             if before != after:
                 changed = True
