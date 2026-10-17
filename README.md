@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.420**
+Current release: **v0.3.421**
+
+v0.3.421 prioritizes primary application image groups over auxiliary Watchtower/database containers for app-level version display and policy selection.
 
 v0.3.420 supplies the bundled Update Monitor logo URL as a fallback when the app is installed without the Docker `icon` label. This targets the dashboard tile after reinstalling through ZimaOS.
 
