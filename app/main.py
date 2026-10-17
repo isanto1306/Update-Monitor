@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.421"
+VERSION = "0.3.422"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -5049,7 +5049,19 @@ def apply_monitor_policy_fields(app_item):
     app_item["follow_tag_switch_only"] = follow_tag_switch_only
     app_item["follow_target_state"] = follow_target_state
     app_item["can_version_update"] = can_version_update
-    app_item["installed_version"] = installed_version
+    display_hint = None
+    if not installed_version and group:
+        hints = {
+            str(item.get("display_installed_version") or "").strip()
+            for item in group.get("items") or []
+            if str(item.get("display_installed_version") or "").strip()
+        }
+        if len(hints) == 1:
+            display_hint = next(iter(hints))
+    # Hints affect the display only, never the verified install/update decision.
+    app_item["installed_version"] = installed_version or display_hint
+    app_item["installed_version_is_hint"] = bool(display_hint)
+
     app_item["version_group"] = _public_version_group(group)
     app_item["version_group_state"] = (
         "selected"
