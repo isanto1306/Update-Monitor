@@ -4,6 +4,7 @@ Installed and removed Compose apps are both included. Active .incomplete staging
 directories and encryption key/configuration files are never listed or deleted.
 """
 import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import HTTPException, Request
 
@@ -17,6 +18,7 @@ def install_backup_overview(main):
     reject_during_scan = main["reject_mutation_during_scan"]
     load_json = main["load_json"]
     directory_size = main["_backup_directory_size_bytes"]
+    retention_days_fn = main["current_backup_retention_days"]
 
     def completed_entries():
         if not backup_dir.is_dir() or backup_dir.is_symlink():
@@ -45,12 +47,24 @@ def install_backup_overview(main):
                         size_bytes = directory_size(folder)
                     if type(size_bytes) is not int or size_bytes < 0:
                         size_bytes = None
+                    # Use the effective current retention setting, not stale metadata.
+                    retention_days = retention_days_fn()
+                    expires_at = None
+                    if retention_days is not None:
+                        try:
+                            created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                            if created_dt.tzinfo is not None:
+                                expires_at = (created_dt + timedelta(days=retention_days)).isoformat()
+                        except (ValueError, OverflowError):
+                            pass
                     rows.append({
                         "entry_id": app_dir.name + "/" + folder.name,
                         "backup_id": str(metadata.get("backup_id") or folder.name),
                         "app_name": str(metadata.get("app_name") or metadata.get("compose_project") or app_dir.name),
                         "compose_project": str(metadata.get("compose_project") or ""),
                         "created_at": created_at,
+                        "expires_at": expires_at,
+                        "retention_forever": retention_days is None,
                         "mode": str(metadata.get("mode") or "quick"),
                         "size_bytes": size_bytes,
                         "encrypted": bool(
