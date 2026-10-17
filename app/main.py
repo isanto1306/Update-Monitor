@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.420"
+VERSION = "0.3.421"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -4693,6 +4693,44 @@ def _version_group_has_direct_app_identity(group, app_item):
     return False
 
 
+def _primary_group_explicit_service(app_item):
+    """Read the ZimaOS main service only when supplied by scan metadata."""
+    return str((app_item or {}).get("main_service") or "").strip().casefold()
+
+
+def _primary_group_service_match(group, name):
+    if not name:
+        return False
+    return any(
+        str(container.get("compose_service") or "").strip().casefold() == name
+        for item in (group or {}).get("items") or []
+        for container in (item.get("containers") or [])
+    )
+
+
+def _primary_group_auxiliary(group):
+    auxiliary = {"watchtower", "scrypted-watchtower", "mongodb", "mongo",
+                 "redis", "valkey", "postgres", "postgresql", "mariadb",
+                 "mysql", "rabbitmq", "memcached"}
+    items = list((group or {}).get("items") or [])
+    if not items:
+        return False
+    return all(
+        _version_group_is_infrastructure({"items": [item]})
+        or any(
+            name in auxiliary or name.endswith("-watchtower")
+            for name in [
+                _version_item_repo_key(item).rsplit("/", 1)[-1],
+                *[
+                    str(c.get("compose_service") or "").lower()
+                    for c in item.get("containers") or []
+                ],
+            ]
+        )
+        for item in items
+    )
+
+
 def select_primary_version_group(app_item):
     """
     Choose exactly one app-level version family.
@@ -4711,6 +4749,26 @@ def select_primary_version_group(app_item):
         return None
     if len(groups) == 1:
         return groups[0]
+
+    explicit_service = _primary_group_explicit_service(app_item)
+    if explicit_service:
+        matches = [g for g in groups if _primary_group_service_match(g, explicit_service)]
+        if len(matches) == 1:
+            return matches[0]
+
+    direct_matches = [
+        g for g in groups
+        if _version_group_has_direct_app_identity(g, app_item)
+        and not _primary_group_auxiliary(g)
+    ]
+    if len(direct_matches) == 1:
+        return direct_matches[0]
+
+    non_auxiliary = [g for g in groups if not _primary_group_auxiliary(g)]
+    if len(non_auxiliary) == 1:
+        return non_auxiliary[0]
+    if non_auxiliary:
+        groups = non_auxiliary
 
     # v0.3.303: for apps such as MediaCMS/Silo, the image family owning the
     # published host port is normally the actual web application.  Sidecars
