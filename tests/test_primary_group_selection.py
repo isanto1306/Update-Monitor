@@ -38,6 +38,10 @@ class PrimaryGroupTests(unittest.TestCase):
             },
             "_version_group_published_port_count": lambda group: 0,
             "_version_group_score": lambda group, app: 0,
+            "_version_group_has_direct_app_identity": lambda group, app: any(
+                app["name"].lower() in i["image_ref"].lower()
+                for i in group["items"]
+            ),
         }
         exec(compile(ast.Module(body=NODES, type_ignores=[]), "<selection>", "exec"), self.ns)
 
