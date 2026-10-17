@@ -5,11 +5,11 @@
   window.__umBackupOverviewInstalled = true;
 
   var labels = {
-    de: {title:'Backup-Verwaltung',subtitle:'Gespeicherte Backups aller Docker-Apps',sort:'Sortieren nach',name:'Name',date:'Datum',size:'Größe',type:'Typ',actions:'Aktion',close:'Schließen',empty:'Keine gespeicherten Backups vorhanden.',loading:'Backups werden geladen …',count:'Backups',total:'Belegter Speicher',unknown:'zzgl. unbekannter Größen',delete:'Backup löschen',confirm:'Dieses Backup endgültig löschen?',deleted:'Backup wurde gelöscht.',error:'Die Backup-Liste konnte nicht geladen werden.',deleteError:'Das Backup konnte nicht gelöscht werden.',quick:'Schnell',full:'Vollständig',encrypted:'Verschlüsselt',ascending:'Aufsteigend',descending:'Absteigend',cancel:'Abbrechen',deleteConfirm:'Endgültig löschen'},
-    en: {title:'Backup management',subtitle:'Saved backups from all Docker apps',sort:'Sort by',name:'Name',date:'Date',size:'Size',type:'Type',actions:'Action',close:'Close',empty:'No saved backups found.',loading:'Loading backups …',count:'Backups',total:'Storage used',unknown:'plus unknown sizes',delete:'Delete backup',confirm:'Permanently delete this backup?',deleted:'Backup deleted.',error:'Could not load the backup list.',deleteError:'Could not delete the backup.',quick:'Quick',full:'Full',encrypted:'Encrypted',ascending:'Ascending',descending:'Descending',cancel:'Cancel',deleteConfirm:'Delete permanently'},
-    fr: {title:'Gestion des sauvegardes',subtitle:'Sauvegardes de toutes les applications Docker',sort:'Trier par',name:'Nom',date:'Date',size:'Taille',type:'Type',actions:'Action',close:'Fermer',empty:'Aucune sauvegarde enregistrée.',loading:'Chargement des sauvegardes…',count:'Sauvegardes',total:'Espace utilisé',unknown:'plus tailles inconnues',delete:'Supprimer la sauvegarde',confirm:'Supprimer définitivement cette sauvegarde ?',deleted:'Sauvegarde supprimée.',error:'Impossible de charger les sauvegardes.',deleteError:'Impossible de supprimer la sauvegarde.',quick:'Rapide',full:'Complète',encrypted:'Chiffrée',ascending:'Croissant',descending:'Décroissant',cancel:'Annuler',deleteConfirm:'Supprimer définitivement'},
-    pt: {title:'Gestão de backups',subtitle:'Backups guardados de todas as aplicações Docker',sort:'Ordenar por',name:'Nome',date:'Data',size:'Tamanho',type:'Tipo',actions:'Ação',close:'Fechar',empty:'Não existem backups guardados.',loading:'A carregar backups…',count:'Backups',total:'Espaço utilizado',unknown:'mais tamanhos desconhecidos',delete:'Eliminar backup',confirm:'Eliminar este backup definitivamente?',deleted:'Backup eliminado.',error:'Não foi possível carregar os backups.',deleteError:'Não foi possível eliminar o backup.',quick:'Rápido',full:'Completo',encrypted:'Encriptado',ascending:'Ascendente',descending:'Descendente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente'},
-    es: {title:'Gestión de copias',subtitle:'Copias guardadas de todas las aplicaciones Docker',sort:'Ordenar por',name:'Nombre',date:'Fecha',size:'Tamaño',type:'Tipo',actions:'Acción',close:'Cerrar',empty:'No hay copias guardadas.',loading:'Cargando copias…',count:'Copias',total:'Espacio utilizado',unknown:'más tamaños desconocidos',delete:'Eliminar copia',confirm:'¿Eliminar esta copia definitivamente?',deleted:'Copia eliminada.',error:'No se pudieron cargar las copias.',deleteError:'No se pudo eliminar la copia.',quick:'Rápida',full:'Completa',encrypted:'Cifrada',ascending:'Ascendente',descending:'Descendente'}
+    de: {title:'Backup-Verwaltung',subtitle:'Gespeicherte Backups aller Docker-Apps',sort:'Sortieren nach',name:'Name',date:'Datum',size:'Größe',type:'Typ',expiry:'Ablauf',forever:'Unbegrenzt',actions:'Aktion',close:'Schließen',empty:'Keine gespeicherten Backups vorhanden.',loading:'Backups werden geladen …',count:'Backups',total:'Belegter Speicher',unknown:'zzgl. unbekannter Größen',delete:'Backup löschen',confirm:'Dieses Backup endgültig löschen?',deleted:'Backup wurde gelöscht.',error:'Die Backup-Liste konnte nicht geladen werden.',deleteError:'Das Backup konnte nicht gelöscht werden.',quick:'Schnell',full:'Vollständig',encrypted:'Verschlüsselt',ascending:'Aufsteigend',descending:'Absteigend',cancel:'Abbrechen',deleteConfirm:'Endgültig löschen'},
+    en: {title:'Backup management',subtitle:'Saved backups from all Docker apps',sort:'Sort by',name:'Name',date:'Date',size:'Size',type:'Type',expiry:'Expires',forever:'Never',actions:'Action',close:'Close',empty:'No saved backups found.',loading:'Loading backups …',count:'Backups',total:'Storage used',unknown:'plus unknown sizes',delete:'Delete backup',confirm:'Permanently delete this backup?',deleted:'Backup deleted.',error:'Could not load the backup list.',deleteError:'Could not delete the backup.',quick:'Quick',full:'Full',encrypted:'Encrypted',ascending:'Ascending',descending:'Descending',cancel:'Cancel',deleteConfirm:'Delete permanently'},
+    fr: {title:'Gestion des sauvegardes',subtitle:'Sauvegardes de toutes les applications Docker',sort:'Trier par',name:'Nom',date:'Date',size:'Taille',type:'Type',expiry:'Expiration',forever:'Illimité',actions:'Action',close:'Fermer',empty:'Aucune sauvegarde enregistrée.',loading:'Chargement des sauvegardes…',count:'Sauvegardes',total:'Espace utilisé',unknown:'plus tailles inconnues',delete:'Supprimer la sauvegarde',confirm:'Supprimer définitivement cette sauvegarde ?',deleted:'Sauvegarde supprimée.',error:'Impossible de charger les sauvegardes.',deleteError:'Impossible de supprimer la sauvegarde.',quick:'Rapide',full:'Complète',encrypted:'Chiffrée',ascending:'Croissant',descending:'Décroissant',cancel:'Annuler',deleteConfirm:'Supprimer définitivement'},
+    pt: {title:'Gestão de backups',subtitle:'Backups guardados de todas as aplicações Docker',sort:'Ordenar por',name:'Nome',date:'Data',size:'Tamanho',type:'Tipo',expiry:'Expira',forever:'Sem limite',actions:'Ação',close:'Fechar',empty:'Não existem backups guardados.',loading:'A carregar backups…',count:'Backups',total:'Espaço utilizado',unknown:'mais tamanhos desconhecidos',delete:'Eliminar backup',confirm:'Eliminar este backup definitivamente?',deleted:'Backup eliminado.',error:'Não foi possível carregar os backups.',deleteError:'Não foi possível eliminar o backup.',quick:'Rápido',full:'Completo',encrypted:'Encriptado',ascending:'Ascendente',descending:'Descendente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente',cancel:'Cancelar',deleteConfirm:'Eliminar definitivamente'},
+    es: {title:'Gestión de copias',subtitle:'Copias guardadas de todas las aplicaciones Docker',sort:'Ordenar por',name:'Nombre',date:'Fecha',size:'Tamaño',type:'Tipo',expiry:'Caduca',forever:'Sin límite',actions:'Acción',close:'Cerrar',empty:'No hay copias guardadas.',loading:'Cargando copias…',count:'Copias',total:'Espacio utilizado',unknown:'más tamaños desconocidos',delete:'Eliminar copia',confirm:'¿Eliminar esta copia definitivamente?',deleted:'Copia eliminada.',error:'No se pudieron cargar las copias.',deleteError:'No se pudo eliminar la copia.',quick:'Rápida',full:'Completa',encrypted:'Cifrada',ascending:'Ascendente',descending:'Descendente'}
   };
   function lang() {
     var v;
@@ -35,6 +35,12 @@
     if (!Number.isFinite(date.valueOf())) return '—';
     try { return new Intl.DateTimeFormat(lang(), {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(date); }
     catch (_) { return date.toLocaleString(); }
+  }
+
+  function expiryText(row) {
+    if (row.retention_forever) return t('forever');
+    if (!row.expires_at) return '—';
+    return timeText(row.expires_at);
   }
 
   var css = document.createElement('style');
@@ -66,7 +72,7 @@
     '.umbo-table tr:hover td{background:rgba(69,134,199,.055);}',
     '.umbo-app{font-weight:700;color:#e1ebf8;overflow-wrap:anywhere;}',
     '.umbo-id{font-size:10px;color:#839bb1;margin-top:3px;overflow-wrap:anywhere;}',
-    '.umbo-date,.umbo-size{font-variant-numeric:tabular-nums;white-space:nowrap;}',
+    '.umbo-date,.umbo-size,.umbo-expiry{font-variant-numeric:tabular-nums;white-space:nowrap;}',
     '.umbo-tag{font-size:10px;color:#bcd1e3;}',
     '.umbo-lock{color:#dfbe7c;font-size:10px;margin-top:4px;}',
     '.umbo-delete{height:28px;width:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(224,94,94,.43);border-radius:7px;color:#ff9797;background:rgba(163,48,48,.08);cursor:pointer;font:inherit;font-size:19px;line-height:1;}',
@@ -339,10 +345,10 @@
         return cmp ? cmp * direction : String(a.entry_id).localeCompare(String(b.entry_id));
       });
       // Matching column widths keep two separate semantic tables aligned.
-      var columns = '<colgroup><col style="width:30%"><col style="width:24%"><col style="width:18%"><col style="width:16%"><col style="width:12%"></colgroup>';
+      var columns = '<colgroup><col style="width:25%"><col style="width:21%"><col style="width:12%"><col style="width:13%"><col style="width:20%"><col style="width:9%"></colgroup>';
       var headerHtml = '<table class="umbo-table umbo-table-header">' + columns + '<thead><tr>' +
         sortHeading('name') + sortHeading('date') + '<th>' + esc(t('type')) + '</th>' +
-        sortHeading('size') + '<th>' + esc(t('actions')) + '</th></tr></thead></table>';
+        sortHeading('size') + '<th>' + esc(t('expiry')) + '</th><th>' + esc(t('actions')) + '</th></tr></thead></table>';
       var html = '<table class="umbo-table umbo-table-rows" aria-label="' + esc(t('title')) + '">' + columns + '<tbody>';
       rows.forEach(function(row) {
         html += '<tr><td><div class="umbo-app">' + esc(row.app_name) +
@@ -351,6 +357,7 @@
           '<td><div class="umbo-tag">' + (row.mode === 'full' ? t('full') : t('quick')) + '</div>' +
           (row.encrypted ? '<div class="umbo-lock">◆ ' + t('encrypted') + '</div>' : '') +
           '</td><td class="umbo-size">' + esc(byteText(row.size_bytes)) + '</td>' +
+          '<td class="umbo-expiry">' + esc(expiryText(row)) + '</td>' +
           '<td><button type="button" class="umbo-delete" data-umbo-id="' + esc(row.entry_id) +
           '" aria-label="' + esc(t('delete')) + '" title="' + esc(t('delete')) + '">×</button></td></tr>';
       });
