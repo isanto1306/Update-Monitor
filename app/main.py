@@ -8254,10 +8254,6 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         or not target_repo_text
     ):
         raise RuntimeError("Incomplete update channel switch plan")
-    if is_update_monitor_self_app(app_item):
-        raise RuntimeError(
-            "Update Monitor cannot change its own Docker channel while it is running"
-        )
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", target_tag):
         raise RuntimeError("Invalid Docker update channel")
     if not _is_update_channel_tag(target_tag):
@@ -8290,6 +8286,14 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         target_ref,
     ):
         raise RuntimeError("The selected update channel is already active")
+
+    # Our own container cannot safely PUT its Compose file while it is running.
+    # Delegate the validated channel change to the already proven external
+    # self-update helper, which persists Compose and verifies the new digest.
+    if is_update_monitor_self_app(app_item):
+        return perform_self_compose_update_handoff(
+            app_item, item, target_tag, policy_mode="follow",
+        )
 
     service_names = _image_source_service_names(item)
     container_names = _image_source_container_names(item)
@@ -9171,6 +9175,154 @@ def _launch_self_update_helper(marker):
     marker["helper_started_at"] = utc_now()
     save_json(SELF_UPDATE_STATE_FILE, marker)
     return helper_name
+
+
+
+def perform_self_compose_update_handoff(app_item, item, target_tag, policy_mode="follow"):
+    """Change our own Compose image by an external, digest-verifying helper.
+
+    Both policy-driven version updates and Update Kanal changes use this path.
+    The app process NEVER applies its own Compose YAML in place.
+    """
+    if not is_update_monitor_self_app(app_item):
+        raise RuntimeError("Self update handoff was requested for a different app")
+
+    project = str(app_item.get("compose_project") or "").strip()
+    stack_key = str(app_item.get("stack_key") or "").strip()
+    target_tag = str(target_tag or "").strip()
+    if not project or not stack_key or not target_tag:
+        raise RuntimeError("Incomplete self update plan")
+    if policy_mode not in {"follow", "upgrade"}:
+        raise RuntimeError("Unsupported self update policy")
+    if policy_mode == "follow" and not _is_update_channel_tag(target_tag):
+        raise RuntimeError("Self update follow mode requires a moving Docker tag")
+
+    identity = update_monitor_self_identity()
+    self_name = str(identity.get("container_name") or "update-monitor").strip().lstrip("/")
+    old_id = str(identity.get("container_id") or "").strip() or str(docker_container_id(self_name) or "").strip()
+    if not old_id:
+        raise RuntimeError("Could not resolve the running Update Monitor container")
+
+    all_names = {
+        str(container.get("name") or "").strip().lstrip("/")
+        for container in app_item.get("containers") or []
+        if str(container.get("name") or "").strip()
+    }
+    services = {
+        str(container.get("compose_service") or "").strip()
+        for container in item.get("containers") or []
+        if str(container.get("compose_service") or "").strip()
+    }
+    # A self update must never recreate an unrelated sidecar.
+    if all_names != {self_name} or len(services) != 1:
+        raise RuntimeError("Self update requires one isolated Compose service")
+
+    current_ref = str(docker_container_config_image(self_name) or "").strip()
+    if not current_ref:
+        raise RuntimeError("Could not read the active Update Monitor image")
+    parsed = parse_image_ref(current_ref)
+    if not parsed.get("repo"):
+        raise RuntimeError("Could not determine the active Update Monitor registry")
+    if (item.get("compose_digest_pin_proven") or parse_image_ref(str(item.get("image_ref") or "")).get("pinned_digest")):
+        raise RuntimeError("Digest-pinned self updates need a separate explicit restore workflow")
+
+    target_ref = f"{parsed['repo']}:{target_tag}"
+    original_yaml = casaos_compose_yaml(project)
+    updated_yaml, replacements, changed_services = replace_compose_service_images(
+        original_yaml, sorted(services), target_ref,
+    )
+    if replacements != 1 or set(changed_services) != services:
+        raise RuntimeError("Could not safely change the Update Monitor Compose service")
+    if original_yaml == updated_yaml:
+        raise RuntimeError("The selected version is already configured")
+    casaos_apply_compose(project, updated_yaml, dry_run=True)
+
+    with scan_lock:
+        platform = str(scan_state.get("platform") or "").strip()
+    if not platform:
+        rc, value, err = run(["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"], timeout=20)
+        if rc != 0:
+            raise RuntimeError(err or "Could not determine Docker platform")
+        platform = {"linux/x86_64": "linux/amd64", "linux/aarch64": "linux/arm64"}.get(value.strip(), value.strip())
+
+    update_action_progress(stack_key, phase="pulling")
+    pulled = docker_pull_verified(target_ref, platform)
+    expected = sorted({
+        str(value or "").strip().lower()
+        for value in pulled.get("expected_digests") or []
+        if str(value or "").strip()
+    })
+    if not expected:
+        raise RuntimeError("No verified target digest is available for the self update")
+
+    # Compose may include secrets. Keep the original/target YAML only in a
+    # short-lived, mode-0600 file shared with the helper, never in action logs,
+    # Docker environment, or the persistent self-update marker.
+    compose_path = CACHE_DIR / ("self-update-compose-" + secrets.token_hex(12) + ".json")
+    compose_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(compose_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({
+                "original_yaml": original_yaml,
+                "target_yaml": updated_yaml,
+                "target_ref": target_ref,
+            }, stream)
+    except Exception:
+        compose_path.unlink(missing_ok=True)
+        raise
+
+    before_image_id = str(docker_container_image_id(self_name) or "").strip()
+    marker = {
+        "schema": 2,
+        "stack_key": stack_key,
+        "compose_project": project,
+        "container_name": self_name,
+        "old_container_id": old_id,
+        "old_image_id": before_image_id or None,
+        "image_ref": target_ref,
+        "expected_digests": expected,
+        "compose_payload_file": str(compose_path),
+        "requested_at": utc_now(),
+        "service_started_at": SERVICE_STARTED_AT,
+        "status": "prepared",
+    }
+    try:
+        save_json(SELF_UPDATE_STATE_FILE, marker)
+        update_action_progress(stack_key, phase="restarting")
+        helper_name = _launch_self_update_helper(marker)
+    except Exception:
+        compose_path.unlink(missing_ok=True)
+        raise
+
+    # The helper is running independently now. Do not initiate an in-process
+    # Compose write or claim the replacement has already been verified.
+    previous = get_monitor_policy(stack_key)
+    after = save_monitor_policy(
+        stack_key,
+        "follow" if policy_mode == "follow" else "fixed",
+        target_tag if policy_mode == "follow" else None,
+        auto_enabled=bool(previous.get("auto_enabled")) if policy_mode == "follow" else False,
+        auto_immediate=bool(previous.get("auto_immediate")) if policy_mode == "follow" else False,
+        auto_time=previous.get("auto_time"),
+        auto_days=previous.get("auto_days"),
+        auto_timezone=previous.get("auto_timezone"),
+        auto_backup_mode=previous.get("auto_backup_mode"),
+    )
+    return {
+        "project": project,
+        "containers": [self_name],
+        "old_image_ref": current_ref,
+        "new_image_ref": target_ref,
+        "target_tag": target_tag,
+        "compose_services": sorted(services),
+        "target_verification": pulled,
+        "self_update_handoff": True,
+        "restart_expected": True,
+        "helper_container_name": helper_name,
+        "policy_after_update": after,
+        "engine": "verified-pull+self-compose-handoff",
+    }
 
 
 def perform_self_image_update_handoff(app_item):
@@ -18621,6 +18773,22 @@ def perform_version_update(app_item):
             if str(item.get("image_ref") or "").strip()
         }
 
+    if is_update_monitor_self_app(app_item):
+        identity = update_monitor_self_identity()
+        own_name = str(identity.get("container_name") or "update-monitor").strip().lstrip("/")
+        self_items = [
+            item for item in group_items
+            if any(
+                str(container.get("name") or "").strip().lstrip("/") == own_name
+                for container in item.get("containers") or []
+            )
+        ]
+        if len(self_items) != 1 or len(group_items) != 1:
+            raise RuntimeError("Self update requires one unambiguous primary image")
+        return perform_self_compose_update_handoff(
+            app_item, self_items[0], target_tag, policy_mode=mode,
+        )
+
     if len(target_map) != len(group_items):
         raise RuntimeError(
             "The selected version is not available for every image in the version group"
@@ -21063,7 +21231,8 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
         )
         if isinstance(result, dict):
             result["backup"] = backup_result
-        register_successful_image_source_switch(app_item, result)
+        if not (isinstance(result, dict) and result.get("self_update_handoff")):
+            register_successful_image_source_switch(app_item, result)
         finish_action_progress(data.stack_key, True)
     except BackupCancelledError:
         cancelled = True
