@@ -310,7 +310,7 @@ time.sleep = lambda n: None
 if scenario == 'timeout':
     clock = {'now': 0}
     def fast_time():
-        clock['now'] += 130
+        clock['now'] += 20
         return clock['now']
     time.time = fast_time
 """
