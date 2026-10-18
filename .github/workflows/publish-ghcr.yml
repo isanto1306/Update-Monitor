@@ -6,11 +6,8 @@ on:
       - Validate and synchronize release
     types:
       - completed
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+  # Never build on an unvalidated main push: the release synchronizer
+  # updates HTML/version metadata in a subsequent commit.
   workflow_dispatch:
 
 permissions:
