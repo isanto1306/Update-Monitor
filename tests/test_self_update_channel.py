@@ -206,6 +206,7 @@ class ExternalHelperTests(unittest.TestCase):
         self.assertIn("compose_request(str(compose_data['original_yaml']))", script)
         self.assertIn("compose_payload_path.unlink(missing_ok=True)", script)
         self.assertIn("repo_digests.intersection(expected)", script)
+        self.assertIn("original-compose-and-runtime-restored", script)
         self.assertIn("persisted Compose target disagrees", script)
         self.assertIn("current_id != old_id", script)
 
@@ -250,7 +251,7 @@ class SimulatedHelperExecutionTests(unittest.TestCase):
                 }), encoding="utf-8")
                 base_url.write_text("http://127.0.0.1:9999", encoding="utf-8")
                 payload = {
-                    "old_container_id": "old-id", "container_name": "update-monitor",
+                    "old_container_id": "old-id", "old_image_id": "sha256:old", "container_name": "update-monitor",
                     "compose_project": "update-monitor", "stack_key": "self",
                     "image_ref": "example/app:latest",
                     "expected_digests": ["sha256:newimage"],
@@ -322,7 +323,7 @@ time.sleep = lambda n: None
                     self.assertEqual(status["matched_digests"], ["sha256:newimage"])
                 else:
                     self.assertEqual(status["status"], "failed")
-                    self.assertEqual(status["rollback"], "original-compose-restored")
+                    self.assertEqual(status["rollback"], "original-compose-and-runtime-restored")
                 self.assertFalse(compose_payload.exists(), "helper left credentials on disk")
 
 if __name__ == "__main__":
