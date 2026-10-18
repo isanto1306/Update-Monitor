@@ -9472,6 +9472,10 @@ def perform_self_compose_update_handoff(app_item, item, target_tag, policy_mode=
         "old_container_id": old_id,
         "old_image_id": before_image_id or None,
         "image_ref": target_ref,
+        "policy_after_success": {
+            "mode": "follow" if policy_mode == "follow" else "fixed",
+            "target_tag": target_tag if policy_mode == "follow" else None,
+        },
         "expected_digests": expected,
         "compose_payload_file": str(compose_path),
         "requested_at": utc_now(),
@@ -9486,20 +9490,9 @@ def perform_self_compose_update_handoff(app_item, item, target_tag, policy_mode=
         compose_path.unlink(missing_ok=True)
         raise
 
-    # The helper is running independently now. Do not initiate an in-process
-    # Compose write or claim the replacement has already been verified.
-    previous = get_monitor_policy(stack_key)
-    after = save_monitor_policy(
-        stack_key,
-        "follow" if policy_mode == "follow" else "fixed",
-        target_tag if policy_mode == "follow" else None,
-        auto_enabled=bool(previous.get("auto_enabled")) if policy_mode == "follow" else False,
-        auto_immediate=bool(previous.get("auto_immediate")) if policy_mode == "follow" else False,
-        auto_time=previous.get("auto_time"),
-        auto_days=previous.get("auto_days"),
-        auto_timezone=previous.get("auto_timezone"),
-        auto_backup_mode=previous.get("auto_backup_mode"),
-    )
+    # Do not alter the saved policy until the *new* process proves the target
+    # image is running. A failed handoff must not silently enable follow-tag
+    # automation on the old version and create a repeat-update loop.
     return {
         "project": project,
         "containers": [self_name],
@@ -9511,7 +9504,8 @@ def perform_self_compose_update_handoff(app_item, item, target_tag, policy_mode=
         "self_update_handoff": True,
         "restart_expected": True,
         "helper_container_name": helper_name,
-        "policy_after_update": after,
+        "policy_after_update": None,
+        "policy_update_pending_verification": True,
         "engine": "verified-pull+self-compose-handoff",
     }
 
@@ -9653,6 +9647,25 @@ def reconcile_self_update_after_restart():
                 and not runtime.get("restarting")
                 and runtime.get("health") != "unhealthy"
             ):
+                # An external helper can finish after this process started,
+                # but only an exact runtime digest match commits a policy.
+                requested = marker.get("policy_after_success")
+                if isinstance(requested, dict):
+                    mode = str(requested.get("mode") or "").strip().lower()
+                    target_tag = str(requested.get("target_tag") or "").strip() or None
+                    if mode in {"fixed", "follow"}:
+                        prior = get_monitor_policy(stack_key)
+                        save_monitor_policy(
+                            stack_key,
+                            mode,
+                            target_tag if mode == "follow" else None,
+                            auto_enabled=bool(prior.get("auto_enabled")) if mode == "follow" else False,
+                            auto_immediate=bool(prior.get("auto_immediate")) if mode == "follow" else False,
+                            auto_time=prior.get("auto_time"),
+                            auto_days=prior.get("auto_days"),
+                            auto_timezone=prior.get("auto_timezone"),
+                            auto_backup_mode=prior.get("auto_backup_mode"),
+                        )
                 marker["status"] = "restarted-verified"
                 marker["new_container_id"] = current_id
                 marker["new_image_id"] = image_id
