@@ -237,7 +237,7 @@ class SimulatedHelperExecutionTests(unittest.TestCase):
         )
         source = ast.literal_eval(assignment.value)
 
-        for scenario in ("success", "rollback"):
+        for scenario in ("success", "rollback", "timeout"):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 marker = root / "self-update.json"
@@ -278,7 +278,8 @@ def fake_open(request, timeout=None):
         if method == 'PUT':
             body = request.data.decode('utf-8')
             mock_state['persisted'] = body
-            if 'example/app:latest' in body: mock_state['new'] = True
+            if 'example/app:latest' in body:
+                mock_state['new'] = (scenario != 'timeout')
             else:
                 mock_state['new'] = False
                 mock_state['rolled_back'] = True
@@ -288,7 +289,7 @@ def fake_open(request, timeout=None):
                 return Response(b'wrong persisted compose')
             return Response(mock_state['persisted'].encode())
     if '/container/' in url and method == 'PATCH':
-        mock_state['new'] = True
+        mock_state['new'] = (scenario != 'timeout')
         return Response(b'{}')
     raise RuntimeError('Unexpected ZimaOS request: ' + method + ' ' + url)
 def fake_run(args, **kwargs):
@@ -306,6 +307,12 @@ def fake_run(args, **kwargs):
 urllib.request.urlopen = fake_open
 subprocess.run = fake_run
 time.sleep = lambda n: None
+if scenario == 'timeout':
+    clock = {'now': 0}
+    def fast_time():
+        clock['now'] += 130
+        return clock['now']
+    time.time = fast_time
 """
                 env = os.environ.copy()
                 env["UM_SELF_UPDATE_PAYLOAD"] = base64.b64encode(
@@ -323,8 +330,72 @@ time.sleep = lambda n: None
                     self.assertEqual(status["matched_digests"], ["sha256:newimage"])
                 else:
                     self.assertEqual(status["status"], "failed")
-                    self.assertEqual(status["rollback"], "original-compose-and-runtime-restored")
+                    self.assertEqual(status["rollback"], "original-compose-and-runtime-restored", status)
+                    if scenario == "timeout":
+                        self.assertIn("within 600 seconds", status.get("error", ""))
                 self.assertFalse(compose_payload.exists(), "helper left credentials on disk")
+
+
+
+class InternalSelfHelperVisibilityTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = load("is_internal_self_update_helper", {"re": re})
+        self.selector = load("select_current_compose_containers", {
+            "is_internal_self_update_helper": self.helper,
+        })
+        self.prune = load("prune_internal_helper_scan_state", {"re": re})
+
+    def test_legacy_self_helper_is_excluded_but_real_monitor_is_preserved(self):
+        helper_row = {
+            "Name": "/update-monitor-self-update-7bae0aeb37",
+            "Config": {"Image": "ghcr.io/isanto1306/update-monitor:latest", "Labels": {}},
+        }
+        app_row = {
+            "Name": "/update-monitor",
+            "Config": {"Image": "ghcr.io/isanto1306/update-monitor:latest", "Labels": {}},
+        }
+        self.assertTrue(self.helper(helper_row))
+        self.assertFalse(self.helper(app_row))
+        self.assertEqual(self.selector([helper_row, app_row]), [app_row])
+
+    def test_helper_role_label_is_excluded_even_with_other_name(self):
+        helper_row = {
+            "Name": "/temporary-helper",
+            "Config": {"Labels": {
+                "io.github.isanto1306.update-monitor.role": "self-update-helper",
+            }},
+        }
+        self.assertEqual(self.selector([helper_row]), [])
+
+    def test_regular_lookalike_name_is_not_excluded(self):
+        row = {"Name": "/update-monitor-self-update-custom",
+               "Config": {"Labels": {}}}
+        self.assertEqual(self.selector([row]), [row])
+
+    def test_persisted_duplicate_is_pruned_without_deleting_real_app(self):
+        scan = {
+            "apps": [
+                {"stack_key": "container:update-monitor-self-update-7bae0aeb37",
+                 "containers": [{"name": "update-monitor-self-update-7bae0aeb37"}]},
+                {"stack_key": "project:update-monitor",
+                 "containers": [{"name": "update-monitor"}]},
+            ],
+            "results": [
+                {"stack_key": "container:update-monitor-self-update-7bae0aeb37",
+                 "containers": [{"name": "update-monitor-self-update-7bae0aeb37"}]},
+                {"stack_key": "project:update-monitor",
+                 "containers": [{"name": "update-monitor"}]},
+            ],
+            "local_cache_snapshot": {"stacks": {
+                "container:update-monitor-self-update-7bae0aeb37": {},
+                "project:update-monitor": {},
+            }},
+        }
+        self.assertTrue(self.prune(scan))
+        self.assertEqual(len(scan["apps"]), 1)
+        self.assertEqual(len(scan["results"]), 1)
+        self.assertEqual(list(scan["local_cache_snapshot"]["stacks"]), ["project:update-monitor"])
+        self.assertFalse(self.prune(scan))
 
 if __name__ == "__main__":
     unittest.main()
