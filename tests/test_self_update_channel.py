@@ -1,5 +1,8 @@
 """Self update/channel regression tests: no Docker/ZimaOS mutation is performed."""
 import ast
+import base64
+import subprocess
+import sys
 import json
 import re
 import os
@@ -219,6 +222,108 @@ class ExternalHelperTests(unittest.TestCase):
         self.assertIn('result.get("self_update_handoff")', endpoint)
         self.assertIn("register_successful_image_source_switch", endpoint)
 
+
+
+
+class SimulatedHelperExecutionTests(unittest.TestCase):
+    """Exercise the actual standalone helper against fake local Docker/ZimaOS."""
+
+    def test_external_helper_applies_verifies_and_rolls_back(self):
+        assignment = next(
+            node for node in TREE.body if isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "_SELF_UPDATE_HELPER_SCRIPT"
+                    for t in node.targets)
+        )
+        source = ast.literal_eval(assignment.value)
+
+        for scenario in ("success", "rollback"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                marker = root / "self-update.json"
+                base_url = root / "app-management.url"
+                compose_payload = root / "self-update-compose-test.json"
+                old_yaml = "services:\\n  update-monitor:\\n    image: example/app:0.3.423\\n"
+                new_yaml = "services:\\n  update-monitor:\\n    image: example/app:latest\\n"
+                compose_payload.write_text(json.dumps({
+                    "original_yaml": old_yaml, "target_yaml": new_yaml,
+                    "target_ref": "example/app:latest",
+                }), encoding="utf-8")
+                base_url.write_text("http://127.0.0.1:9999", encoding="utf-8")
+                payload = {
+                    "old_container_id": "old-id", "container_name": "update-monitor",
+                    "compose_project": "update-monitor", "stack_key": "self",
+                    "image_ref": "example/app:latest",
+                    "expected_digests": ["sha256:newimage"],
+                    "compose_payload_file": str(compose_payload),
+                }
+                mocked_script = source.replace("/app/cache", str(root)).replace(
+                    "/host/run/casaos/app-management.url", str(base_url)
+                )
+                prelude = """
+import json, os, subprocess, time, types, urllib.request
+scenario = os.environ['TEST_SCENARIO']
+state = {'persisted': 'services:\\\\n  update-monitor:\\\\n    image: example/app:0.3.423\\\\n',
+         'new': False, 'rolled_back': False}
+class Response:
+    status = 200
+    def __init__(self, body=b''): self.body = body
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def read(self, n=-1): return self.body
+def fake_open(request, timeout=None):
+    url = request.full_url
+    method = request.get_method()
+    if '/compose/' in url:
+        if method == 'PUT':
+            body = request.data.decode('utf-8')
+            state['persisted'] = body
+            if 'example/app:latest' in body: state['new'] = True
+            else:
+                state['new'] = False
+                state['rolled_back'] = True
+            return Response(b'{}')
+        if method == 'GET':
+            if scenario == 'rollback' and state['new']:
+                return Response(b'wrong persisted compose')
+            return Response(state['persisted'].encode())
+    if '/container/' in url and method == 'PATCH':
+        state['new'] = True
+        return Response(b'{}')
+    raise RuntimeError('Unexpected ZimaOS request: ' + method + ' ' + url)
+def fake_run(args, **kwargs):
+    if args[:2] == ['docker', 'inspect']:
+        new = state['new']
+        rows = [{'Id': 'new-id' if new else 'old-id',
+                 'Image': 'sha256:new' if new else 'sha256:old',
+                 'State': {'Running': True, 'Restarting': False,
+                           'Health': {'Status': 'healthy'}}}]
+    elif args[:3] == ['docker', 'image', 'inspect']:
+        rows = [{'RepoDigests': ['example/app@sha256:newimage']}]
+    else:
+        raise RuntimeError('Unexpected Docker command: ' + repr(args))
+    return types.SimpleNamespace(returncode=0, stdout=json.dumps(rows), stderr='')
+urllib.request.urlopen = fake_open
+subprocess.run = fake_run
+time.sleep = lambda n: None
+"""
+                env = os.environ.copy()
+                env["UM_SELF_UPDATE_PAYLOAD"] = base64.b64encode(
+                    json.dumps(payload).encode("utf-8")
+                ).decode("ascii")
+                env["TEST_SCENARIO"] = scenario
+                result = subprocess.run(
+                    [sys.executable, "-c", prelude + "\n" + mocked_script],
+                    capture_output=True, text=True, timeout=15, env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                status = json.loads(marker.read_text(encoding="utf-8"))
+                if scenario == "success":
+                    self.assertEqual(status["status"], "restarted-verified")
+                    self.assertEqual(status["matched_digests"], ["sha256:newimage"])
+                else:
+                    self.assertEqual(status["status"], "failed")
+                    self.assertEqual(status["rollback"], "original-compose-restored")
+                self.assertFalse(compose_payload.exists(), "helper left credentials on disk")
 
 if __name__ == "__main__":
     unittest.main()
