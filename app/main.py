@@ -9317,7 +9317,11 @@ def perform_self_compose_update_handoff(app_item, item, target_tag, policy_mode=
     parsed = parse_image_ref(current_ref)
     if not parsed.get("repo"):
         raise RuntimeError("Could not determine the active Update Monitor registry")
-    if (item.get("compose_digest_pin_proven") or parse_image_ref(str(item.get("image_ref") or "")).get("pinned_digest")):
+    if (
+        item.get("compose_digest_pin_proven")
+        or parse_image_ref(str(item.get("image_ref") or "")).get("pinned_digest")
+        or parsed.get("pinned_digest")
+    ):
         raise RuntimeError("Digest-pinned self updates need a separate explicit restore workflow")
 
     target_ref = f"{parsed['repo']}:{target_tag}"
