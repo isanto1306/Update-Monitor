@@ -170,12 +170,16 @@ class SelfComposeSafetyTests(unittest.TestCase):
         self.assertNotIn(("dry_run", False), self.calls)
         self.assertLess(self.calls.index(("dry_run", True)), self.calls.index(("launch", result["new_image_ref"])))
         self.assertNotIn("confidential-placeholder", json.dumps(saved["marker"]))
-        self.assertEqual(self.calls[-1], ("policy", "follow", "latest"))
+        self.assertEqual(self.calls[-1], ("launch", result["new_image_ref"]))
+        self.assertEqual(saved["marker"]["policy_after_success"],
+                         {"mode": "follow", "target_tag": "latest"})
+        self.assertTrue(result["policy_update_pending_verification"])
 
     def test_manual_upgrade_ends_in_fixed_mode(self):
         result, _ = self.run_update(tag="0.3.424", mode="upgrade")
         self.assertTrue(result["self_update_handoff"])
-        self.assertEqual(self.calls[-1], ("policy", "fixed", None))
+        self.assertEqual(self.calls[-1], ("launch", result["new_image_ref"]))
+        self.assertIsNone(result["policy_after_update"])
 
     def test_unisolated_container_rejected(self):
         self.app["containers"].append({"name": "another-container"})
@@ -396,6 +400,76 @@ class InternalSelfHelperVisibilityTests(unittest.TestCase):
         self.assertEqual(len(scan["results"]), 1)
         self.assertEqual(list(scan["local_cache_snapshot"]["stacks"]), ["project:update-monitor"])
         self.assertFalse(self.prune(scan))
+
+
+class DeferredPolicyVerificationTests(unittest.TestCase):
+    def test_verified_restart_commits_policy(self):
+        events = []
+        marker = {
+            "old_container_id": "old-1", "stack_key": "project:update-monitor",
+            "image_ref": "ghcr.io/isanto1306/update-monitor:latest",
+            "expected_digests": ["sha256:new"],
+            "policy_after_success": {"mode": "follow", "target_tag": "latest"},
+        }
+        def record(path, value):
+            events.append(("marker", dict(value)))
+        def change(key, mode, tag, **kwargs):
+            events.append(("policy", mode, tag))
+        fn = load("reconcile_self_update_after_restart", {
+            "load_json": lambda *args: dict(marker),
+            "SELF_UPDATE_STATE_FILE": "marker.json",
+            "update_monitor_self_identity": lambda: {
+                "container_id": "new-2", "container_name": "update-monitor",
+            },
+            "docker_container_image_id": lambda name: "sha256:actual-new",
+            "parse_image_ref": lambda ref: {"normalized_repo": "ghcr.io/isanto1306/update-monitor"},
+            "docker_image_repo_digests": lambda *args: ["sha256:new"],
+            "docker_container_runtime_snapshot": lambda name: {
+                "status": "running", "restarting": False, "health": "healthy",
+            },
+            "get_monitor_policy": lambda key: {
+                "mode": "fixed", "auto_enabled": False,
+                "auto_time": "03:00", "auto_timezone": "Europe/Berlin",
+                "auto_days": [0,1,2,3,4,5,6], "auto_backup_mode": "quick",
+            },
+            "save_monitor_policy": change,
+            "utc_now": lambda: "2026-10-18T18:00:00Z",
+            "save_json": record,
+            "schedule_app_scan": lambda *args, **kwargs: events.append(("scan", args)),
+            "time": SimpleNamespace(time=lambda: 0, sleep=lambda _: None),
+            "str": str,
+        })
+        self.assertTrue(fn())
+        self.assertEqual(events[0], ("policy", "follow", "latest"))
+        self.assertTrue(events[1][1]["consumed_at"])
+        self.assertEqual(events[-1][0], "scan")
+
+    def test_no_policy_change_when_original_is_still_running(self):
+        # The old process must not quietly opt in to automatic follow-tag.
+        marker = {
+            "old_container_id": "old-1", "stack_key": "self",
+            "image_ref": "ghcr.io/isanto1306/update-monitor:latest",
+            "expected_digests": ["sha256:new"],
+            "policy_after_success": {"mode": "follow", "target_tag": "latest"},
+        }
+        events = []
+        tick = {"n": 0}
+        def clock():
+            tick["n"] += 100
+            return tick["n"]
+        fn = load("reconcile_self_update_after_restart", {
+            "load_json": lambda *args: dict(marker),
+            "SELF_UPDATE_STATE_FILE": "marker.json",
+            "update_monitor_self_identity": lambda: {
+                "container_id": "old-1", "container_name": "update-monitor",
+            },
+            "save_monitor_policy": lambda *args, **kwargs: events.append("policy"),
+            "utc_now": lambda: "now",
+            "save_json": lambda *args: events.append("marker"),
+            "time": SimpleNamespace(time=clock, sleep=lambda _: None),
+        })
+        self.assertFalse(fn())
+        self.assertNotIn("policy", events)
 
 if __name__ == "__main__":
     unittest.main()
