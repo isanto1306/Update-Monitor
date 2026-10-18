@@ -9222,9 +9222,32 @@ except Exception as exc:
     if compose_applied and compose_data:
         try:
             compose_request(str(compose_data['original_yaml']))
-            rollback_note = 'original-compose-restored'
+            # Returning the Compose document alone is not proof of rollback:
+            # ZimaOS sometimes persists YAML without recreating its container.
+            # Verify the original image ID is actually running; if necessary
+            # request a forced recreate against the reverted Compose source.
+            original_image_id = str(payload.get('old_image_id') or '').strip()
+            name = str(payload.get('container_name') or '').strip()
+            deadline = time.time() + 90
+            recreated = False
+            rollback_note = 'original-compose-restored; runtime-not-verified'
+            while original_image_id and name and time.time() < deadline:
+                rows = docker_json('inspect', name)
+                row = rows[0] if isinstance(rows, list) and rows else {}
+                runtime_id = str(row.get('Id') or '').strip()
+                runtime_image = str(row.get('Image') or '').strip()
+                runtime_state = row.get('State') if isinstance(row.get('State'), dict) else {}
+                if (runtime_image == original_image_id
+                        and runtime_state.get('Running')
+                        and not runtime_state.get('Restarting')):
+                    rollback_note = 'original-compose-and-runtime-restored'
+                    break
+                if runtime_id and not recreated:
+                    recreated = True
+                    recreate(runtime_id)
+                time.sleep(2.0)
         except Exception as restore_exc:
-            rollback_note = 'compose-rollback-failed: ' + str(restore_exc)[:350]
+            rollback_note = 'compose-or-runtime-rollback-failed: ' + str(restore_exc)[:350]
     write_marker('failed', error=str(exc)[:1000], rollback=rollback_note)
 finally:
     if compose_payload_path is not None:
@@ -9371,6 +9394,9 @@ def perform_self_compose_update_handoff(app_item, item, target_tag, policy_mode=
         raise
 
     before_image_id = str(docker_container_image_id(self_name) or "").strip()
+    if not before_image_id:
+        compose_path.unlink(missing_ok=True)
+        raise RuntimeError("Could not verify the old Update Monitor image for rollback")
     marker = {
         "schema": 2,
         "stack_key": stack_key,
