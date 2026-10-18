@@ -4136,6 +4136,60 @@ def container_published_ports(container):
     return values
 
 
+def is_internal_self_update_helper(container):
+    """Detect only our transient self-update helpers, never real Compose apps.
+
+    Older helpers have the reserved update-monitor-self-update-<hex> name.
+    New helpers also carry an explicit role label. No Docker mutation occurs.
+    """
+    container = container or {}
+    config = container.get("Config") or {}
+    labels = config.get("Labels") or {}
+    if str(labels.get("io.github.isanto1306.update-monitor.role") or "") == "self-update-helper":
+        return True
+    name = str(container.get("Name") or "").strip().lstrip("/")
+    return bool(re.fullmatch(r"update-monitor-self-update-[0-9a-f]{10}", name))
+
+
+def prune_internal_helper_scan_state(snapshot):
+    """Drop obsolete helper cards from persisted scans and startup cache."""
+    if not isinstance(snapshot, dict):
+        return False
+    changed = False
+    for field in ("results", "apps"):
+        old = snapshot.get(field)
+        if not isinstance(old, list):
+            continue
+        kept = []
+        for item in old:
+            if not isinstance(item, dict):
+                kept.append(item)
+                continue
+            key = str(item.get("stack_key") or "")
+            names = [str(c.get("name") or "") for c in item.get("containers") or [] if isinstance(c, dict)]
+            internal = (
+                bool(re.fullmatch(r"container:update-monitor-self-update-[0-9a-f]{10}", key))
+                or (bool(names) and all(
+                    bool(re.fullmatch(r"update-monitor-self-update-[0-9a-f]{10}", name.lstrip("/")))
+                    for name in names
+                ))
+            )
+            if internal:
+                changed = True
+            else:
+                kept.append(item)
+        if len(kept) != len(old):
+            snapshot[field] = kept
+    cache = snapshot.get("local_cache_snapshot")
+    if isinstance(cache, dict) and isinstance(cache.get("stacks"), dict):
+        stacks = cache["stacks"]
+        for key in list(stacks):
+            if re.fullmatch(r"container:update-monitor-self-update-[0-9a-f]{10}", str(key)):
+                stacks.pop(key, None)
+                changed = True
+    return changed
+
+
 def select_current_compose_containers(containers):
     """
     Remove obsolete Compose container generations from a Docker inspect list.
@@ -4151,6 +4205,8 @@ def select_current_compose_containers(containers):
     passthrough = []
 
     for container in containers or []:
+        if is_internal_self_update_helper(container):
+            continue
         config = container.get("Config", {}) or {}
         labels = config.get("Labels", {}) or {}
 
@@ -9053,6 +9109,7 @@ def docker_json(*args):
 compose_payload_path = None
 compose_data = None
 compose_applied = False
+compose_apply_attempted = False
 base = ''
 
 
@@ -9129,6 +9186,7 @@ try:
         if not all(compose_data.get(key) for key in ('original_yaml', 'target_yaml', 'target_ref')):
             raise RuntimeError('Incomplete self update Compose payload')
         write_marker('compose-applying')
+        compose_apply_attempted = True
         compose_request(str(compose_data['target_yaml']))
         compose_applied = True
         persisted_yaml = compose_request()
@@ -9217,11 +9275,21 @@ try:
         time.sleep(2.0)
     else:
         write_marker('verification-timeout', last_runtime=last_state)
+        raise RuntimeError('Self update replacement did not reach the verified image within 600 seconds')
 except Exception as exc:
     rollback_note = None
-    if compose_applied and compose_data:
+    if compose_apply_attempted and compose_data:
         try:
-            compose_request(str(compose_data['original_yaml']))
+            # A timed-out PUT can have been applied even though the HTTP
+            # client never received its acknowledgement.
+            current_compose = compose_request()
+            if str(compose_data['target_ref']) in current_compose:
+                compose_request(str(compose_data['original_yaml']))
+            elif str(compose_data['target_ref']) not in str(compose_data['original_yaml']):
+                rollback_note = 'compose-no-longer-at-target; verifying original runtime'
+            persisted_original = compose_request()
+            if str(compose_data['target_ref']) in persisted_original:
+                raise RuntimeError('Compose rollback failed: target image remains configured')
             # Returning the Compose document alone is not proof of rollback:
             # ZimaOS sometimes persists YAML without recreating its container.
             # Verify the original image ID is actually running; if necessary
@@ -9272,6 +9340,7 @@ def _launch_self_update_helper(marker):
         [
             "docker", "run", "-d", "--rm",
             "--name", helper_name,
+            "--label", "io.github.isanto1306.update-monitor.role=self-update-helper",
             "--network", "host",
             "--volumes-from", old_id,
             "--entrypoint", "python",
@@ -12577,6 +12646,8 @@ def startup():
         }
     if scan_state.get("state") == "scanning":
         scan_state["state"] = "idle"
+    if prune_internal_helper_scan_state(scan_state):
+        save_json(SCAN_FILE, scan_state)
 
     # One-time migration: old versions had only finished_at. Seed the normal
     # interval anchor once; targeted scans from v0.3.152 onward never advance it.
