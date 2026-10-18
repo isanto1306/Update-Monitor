@@ -88,9 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.425**
+Current release: **v0.3.426**
 
-v0.3.425 restores fixed-version to moving-tag self-update changes through an external helper, validating the Compose change before applying it, verifying the target digest after recreation, and attempting Compose rollback on failure. Docker/ZimaOS behavior requires verification on a real installation.\n\nv0.3.424 fixes Install Monitor main-container detection, prevents the Registry sidecar from being mistaken for the app, and resolves the published app icon when ZimaOS omits service-level labels.\n\nv0.3.423 was an intermediate build and is superseded by v0.3.424 after complete frontend synchronization.\n\nv0.3.422 adds a localized backup expiry column using the current global retention policy and surfaces primary-image version hints when exact digest resolution is unavailable, without changing version-update eligibility.
+v0.3.426 prevents temporary self-update helper containers from appearing as separate apps, clears stale helper entries, verifies rollback after a timeout, and defers policy changes until a successful self-update.\n\nv0.3.425 restores fixed-version to moving-tag self-update changes through an external helper, validating the Compose change before applying it, verifying the target digest after recreation, and attempting Compose rollback on failure. Docker/ZimaOS behavior requires verification on a real installation.\n\nv0.3.424 fixes Install Monitor main-container detection, prevents the Registry sidecar from being mistaken for the app, and resolves the published app icon when ZimaOS omits service-level labels.\n\nv0.3.423 was an intermediate build and is superseded by v0.3.424 after complete frontend synchronization.\n\nv0.3.422 adds a localized backup expiry column using the current global retention policy and surfaces primary-image version hints when exact digest resolution is unavailable, without changing version-update eligibility.
 
 v0.3.421 prioritizes primary application image groups over auxiliary Watchtower/database containers for app-level version display and policy selection.
 

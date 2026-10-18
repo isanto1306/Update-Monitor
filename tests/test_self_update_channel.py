@@ -170,12 +170,16 @@ class SelfComposeSafetyTests(unittest.TestCase):
         self.assertNotIn(("dry_run", False), self.calls)
         self.assertLess(self.calls.index(("dry_run", True)), self.calls.index(("launch", result["new_image_ref"])))
         self.assertNotIn("confidential-placeholder", json.dumps(saved["marker"]))
-        self.assertEqual(self.calls[-1], ("policy", "follow", "latest"))
+        self.assertEqual(self.calls[-1], ("launch", result["new_image_ref"]))
+        self.assertEqual(saved["marker"]["policy_after_success"],
+                         {"mode": "follow", "target_tag": "latest"})
+        self.assertTrue(result["policy_update_pending_verification"])
 
     def test_manual_upgrade_ends_in_fixed_mode(self):
         result, _ = self.run_update(tag="0.3.424", mode="upgrade")
         self.assertTrue(result["self_update_handoff"])
-        self.assertEqual(self.calls[-1], ("policy", "fixed", None))
+        self.assertEqual(self.calls[-1], ("launch", result["new_image_ref"]))
+        self.assertIsNone(result["policy_after_update"])
 
     def test_unisolated_container_rejected(self):
         self.app["containers"].append({"name": "another-container"})
@@ -237,7 +241,7 @@ class SimulatedHelperExecutionTests(unittest.TestCase):
         )
         source = ast.literal_eval(assignment.value)
 
-        for scenario in ("success", "rollback"):
+        for scenario in ("success", "rollback", "timeout"):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 marker = root / "self-update.json"
@@ -278,7 +282,8 @@ def fake_open(request, timeout=None):
         if method == 'PUT':
             body = request.data.decode('utf-8')
             mock_state['persisted'] = body
-            if 'example/app:latest' in body: mock_state['new'] = True
+            if 'example/app:latest' in body:
+                mock_state['new'] = (scenario != 'timeout')
             else:
                 mock_state['new'] = False
                 mock_state['rolled_back'] = True
@@ -288,7 +293,7 @@ def fake_open(request, timeout=None):
                 return Response(b'wrong persisted compose')
             return Response(mock_state['persisted'].encode())
     if '/container/' in url and method == 'PATCH':
-        mock_state['new'] = True
+        mock_state['new'] = (scenario != 'timeout')
         return Response(b'{}')
     raise RuntimeError('Unexpected ZimaOS request: ' + method + ' ' + url)
 def fake_run(args, **kwargs):
@@ -306,6 +311,12 @@ def fake_run(args, **kwargs):
 urllib.request.urlopen = fake_open
 subprocess.run = fake_run
 time.sleep = lambda n: None
+if scenario == 'timeout':
+    clock = {'now': 0}
+    def fast_time():
+        clock['now'] += 20
+        return clock['now']
+    time.time = fast_time
 """
                 env = os.environ.copy()
                 env["UM_SELF_UPDATE_PAYLOAD"] = base64.b64encode(
@@ -323,8 +334,142 @@ time.sleep = lambda n: None
                     self.assertEqual(status["matched_digests"], ["sha256:newimage"])
                 else:
                     self.assertEqual(status["status"], "failed")
-                    self.assertEqual(status["rollback"], "original-compose-and-runtime-restored")
+                    self.assertEqual(status["rollback"], "original-compose-and-runtime-restored", status)
+                    if scenario == "timeout":
+                        self.assertIn("within 600 seconds", status.get("error", ""))
                 self.assertFalse(compose_payload.exists(), "helper left credentials on disk")
+
+
+
+class InternalSelfHelperVisibilityTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = load("is_internal_self_update_helper", {"re": re})
+        self.selector = load("select_current_compose_containers", {
+            "is_internal_self_update_helper": self.helper,
+        })
+        self.prune = load("prune_internal_helper_scan_state", {"re": re})
+
+    def test_legacy_self_helper_is_excluded_but_real_monitor_is_preserved(self):
+        helper_row = {
+            "Name": "/update-monitor-self-update-7bae0aeb37",
+            "Config": {"Image": "ghcr.io/isanto1306/update-monitor:latest", "Labels": {}},
+        }
+        app_row = {
+            "Name": "/update-monitor",
+            "Config": {"Image": "ghcr.io/isanto1306/update-monitor:latest", "Labels": {}},
+        }
+        self.assertTrue(self.helper(helper_row))
+        self.assertFalse(self.helper(app_row))
+        self.assertEqual(self.selector([helper_row, app_row]), [app_row])
+
+    def test_helper_role_label_is_excluded_even_with_other_name(self):
+        helper_row = {
+            "Name": "/temporary-helper",
+            "Config": {"Labels": {
+                "io.github.isanto1306.update-monitor.role": "self-update-helper",
+            }},
+        }
+        self.assertEqual(self.selector([helper_row]), [])
+
+    def test_regular_lookalike_name_is_not_excluded(self):
+        row = {"Name": "/update-monitor-self-update-custom",
+               "Config": {"Labels": {}}}
+        self.assertEqual(self.selector([row]), [row])
+
+    def test_persisted_duplicate_is_pruned_without_deleting_real_app(self):
+        scan = {
+            "apps": [
+                {"stack_key": "container:update-monitor-self-update-7bae0aeb37",
+                 "containers": [{"name": "update-monitor-self-update-7bae0aeb37"}]},
+                {"stack_key": "project:update-monitor",
+                 "containers": [{"name": "update-monitor"}]},
+            ],
+            "results": [
+                {"stack_key": "container:update-monitor-self-update-7bae0aeb37",
+                 "containers": [{"name": "update-monitor-self-update-7bae0aeb37"}]},
+                {"stack_key": "project:update-monitor",
+                 "containers": [{"name": "update-monitor"}]},
+            ],
+            "local_cache_snapshot": {"stacks": {
+                "container:update-monitor-self-update-7bae0aeb37": {},
+                "project:update-monitor": {},
+            }},
+        }
+        self.assertTrue(self.prune(scan))
+        self.assertEqual(len(scan["apps"]), 1)
+        self.assertEqual(len(scan["results"]), 1)
+        self.assertEqual(list(scan["local_cache_snapshot"]["stacks"]), ["project:update-monitor"])
+        self.assertFalse(self.prune(scan))
+
+
+class DeferredPolicyVerificationTests(unittest.TestCase):
+    def test_verified_restart_commits_policy(self):
+        events = []
+        marker = {
+            "old_container_id": "old-1", "stack_key": "project:update-monitor",
+            "image_ref": "ghcr.io/isanto1306/update-monitor:latest",
+            "expected_digests": ["sha256:new"],
+            "policy_after_success": {"mode": "follow", "target_tag": "latest"},
+        }
+        def record(path, value):
+            events.append(("marker", dict(value)))
+        def change(key, mode, tag, **kwargs):
+            events.append(("policy", mode, tag))
+        fn = load("reconcile_self_update_after_restart", {
+            "load_json": lambda *args: dict(marker),
+            "SELF_UPDATE_STATE_FILE": "marker.json",
+            "update_monitor_self_identity": lambda: {
+                "container_id": "new-2", "container_name": "update-monitor",
+            },
+            "docker_container_image_id": lambda name: "sha256:actual-new",
+            "parse_image_ref": lambda ref: {"normalized_repo": "ghcr.io/isanto1306/update-monitor"},
+            "docker_image_repo_digests": lambda *args: ["sha256:new"],
+            "docker_container_runtime_snapshot": lambda name: {
+                "status": "running", "restarting": False, "health": "healthy",
+            },
+            "get_monitor_policy": lambda key: {
+                "mode": "fixed", "auto_enabled": False,
+                "auto_time": "03:00", "auto_timezone": "Europe/Berlin",
+                "auto_days": [0,1,2,3,4,5,6], "auto_backup_mode": "quick",
+            },
+            "save_monitor_policy": change,
+            "utc_now": lambda: "2026-10-18T18:00:00Z",
+            "save_json": record,
+            "schedule_app_scan": lambda *args, **kwargs: events.append(("scan", args)),
+            "time": SimpleNamespace(time=lambda: 0, sleep=lambda _: None),
+            "str": str,
+        })
+        self.assertTrue(fn())
+        self.assertEqual(events[0], ("policy", "follow", "latest"))
+        self.assertTrue(events[1][1]["consumed_at"])
+        self.assertEqual(events[-1][0], "scan")
+
+    def test_no_policy_change_when_original_is_still_running(self):
+        # The old process must not quietly opt in to automatic follow-tag.
+        marker = {
+            "old_container_id": "old-1", "stack_key": "self",
+            "image_ref": "ghcr.io/isanto1306/update-monitor:latest",
+            "expected_digests": ["sha256:new"],
+            "policy_after_success": {"mode": "follow", "target_tag": "latest"},
+        }
+        events = []
+        tick = {"n": 0}
+        def clock():
+            tick["n"] += 100
+            return tick["n"]
+        fn = load("reconcile_self_update_after_restart", {
+            "load_json": lambda *args: dict(marker),
+            "SELF_UPDATE_STATE_FILE": "marker.json",
+            "update_monitor_self_identity": lambda: {
+                "container_id": "old-1", "container_name": "update-monitor",
+            },
+            "save_monitor_policy": lambda *args, **kwargs: events.append("policy"),
+            "utc_now": lambda: "now",
+            "save_json": lambda *args: events.append("marker"),
+            "time": SimpleNamespace(time=clock, sleep=lambda _: None),
+        })
+        self.assertFalse(fn())
+        self.assertNotIn("policy", events)
 
 if __name__ == "__main__":
     unittest.main()
