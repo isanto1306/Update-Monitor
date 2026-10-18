@@ -9050,22 +9050,51 @@ def docker_json(*args):
         return None
 
 
-try:
-    time.sleep(4.0)
-    write_marker('recreate-requested')
+compose_payload_path = None
+compose_data = None
+compose_applied = False
+base = ''
 
-    base = Path('/host/run/casaos/app-management.url').read_text(encoding='utf-8').strip().rstrip('/')
-    old_id = str(payload['old_container_id'])
+
+def compose_request(yaml_value=None):
+    app_id = urllib.parse.quote(str(payload['compose_project']), safe='')
+    query = urllib.parse.urlencode({
+        'dry_run': 'false',
+        'check_port_conflict': 'false',
+        'app:name': str(payload['compose_project']),
+    })
+    path = '/v2/app_management/compose/' + app_id
+    if yaml_value is None:
+        request = urllib.request.Request(
+            base + path,
+            method='GET',
+            headers={'Accept': 'application/yaml'},
+        )
+        with urllib.request.urlopen(request, timeout=25) as response:
+            if response.status != 200:
+                raise RuntimeError(f'ZimaOS compose read HTTP {response.status}')
+            return response.read().decode('utf-8', 'replace')
+    request = urllib.request.Request(
+        base + path + '?' + query,
+        data=yaml_value.encode('utf-8'),
+        method='PUT',
+        headers={'Accept': 'application/json', 'Content-Type': 'application/yaml'},
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        if response.status != 200:
+            raise RuntimeError(f'ZimaOS compose apply HTTP {response.status}')
+        response.read(1024 * 1024)
+
+
+def recreate(container_id):
     project = str(payload.get('compose_project') or '').strip()
     query = {'pull': 'true', 'force': 'true'}
     if project:
         query['app:name'] = project
     url = (
-        base
-        + '/v2/app_management/container/'
-        + urllib.parse.quote(old_id, safe='')
-        + '?'
-        + urllib.parse.urlencode(query)
+        base + '/v2/app_management/container/'
+        + urllib.parse.quote(str(container_id), safe='')
+        + '?' + urllib.parse.urlencode(query)
     )
     request = urllib.request.Request(
         url,
@@ -9078,7 +9107,55 @@ try:
         response.read(1024 * 1024)
     if not 200 <= status < 300:
         raise RuntimeError(f'ZimaOS recreate returned HTTP {status}')
-    write_marker('recreate-accepted', recreate_http_status=status)
+    return status
+
+
+try:
+    time.sleep(4.0)
+    base = Path('/host/run/casaos/app-management.url').read_text(encoding='utf-8').strip().rstrip('/')
+    parsed_base = urllib.parse.urlsplit(base)
+    if parsed_base.scheme != 'http' or parsed_base.hostname not in {'127.0.0.1', 'localhost'}:
+        raise RuntimeError('Unsafe ZimaOS management address')
+    old_id = str(payload['old_container_id'])
+    project = str(payload.get('compose_project') or '').strip()
+    payload_filename = str(payload.get('compose_payload_file') or '').strip()
+    if payload_filename:
+        compose_payload_path = Path(payload_filename)
+        if (compose_payload_path.parent != Path('/app/cache')
+                or not compose_payload_path.name.startswith('self-update-compose-')
+                or compose_payload_path.suffix != '.json'):
+            raise RuntimeError('Unexpected self update Compose payload path')
+        compose_data = json.loads(compose_payload_path.read_text(encoding='utf-8'))
+        if not all(compose_data.get(key) for key in ('original_yaml', 'target_yaml', 'target_ref')):
+            raise RuntimeError('Incomplete self update Compose payload')
+        write_marker('compose-applying')
+        compose_request(str(compose_data['target_yaml']))
+        compose_applied = True
+        persisted_yaml = compose_request()
+        if str(compose_data['target_ref']) not in persisted_yaml:
+            raise RuntimeError('ZimaOS did not persist the target Compose image')
+        write_marker('compose-applied')
+
+    write_marker('recreate-requested')
+    query = {'pull': 'true', 'force': 'true'}
+    if project:
+        query['app:name'] = project
+    # Compose PUT can recreate the service immediately. Never issue a second
+    # PATCH against the container that has already been replaced.
+    if compose_applied:
+        time.sleep(2.0)
+    current = docker_json('inspect', str(payload['container_name']))
+    current_row = current[0] if isinstance(current, list) and current else {}
+    current_id = str(current_row.get('Id') or '').strip()
+    if current_id == old_id:
+        status = recreate(old_id)
+        write_marker('recreate-accepted', recreate_http_status=status)
+    elif current_id:
+        write_marker('recreate-accepted', recreate_http_status=None)
+    else:
+        # The Compose service might be temporarily absent during recreation.
+        # Let the verification loop find its replacement.
+        write_marker('recreate-accepted', recreate_http_status=None)
 
     name = str(payload['container_name'])
     expected = {
@@ -9126,6 +9203,10 @@ try:
                 and expected
                 and repo_digests.intersection(expected)
             ):
+                if compose_applied:
+                    persisted_yaml = compose_request()
+                    if str(compose_data['target_ref']) not in persisted_yaml:
+                        raise RuntimeError('Verified image but persisted Compose target disagrees')
                 write_marker(
                     'restarted-verified',
                     new_container_id=current_id,
@@ -9137,7 +9218,20 @@ try:
     else:
         write_marker('verification-timeout', last_runtime=last_state)
 except Exception as exc:
-    write_marker('failed', error=str(exc)[:1000])
+    rollback_note = None
+    if compose_applied and compose_data:
+        try:
+            compose_request(str(compose_data['original_yaml']))
+            rollback_note = 'original-compose-restored'
+        except Exception as restore_exc:
+            rollback_note = 'compose-rollback-failed: ' + str(restore_exc)[:350]
+    write_marker('failed', error=str(exc)[:1000], rollback=rollback_note)
+finally:
+    if compose_payload_path is not None:
+        try:
+            compose_payload_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 """
 
 
