@@ -1,0 +1,26 @@
+name: Install Monitor integration regression
+
+on:
+  push:
+    branches: [fix/install-monitor-main-and-icon]
+  pull_request:
+    paths:
+      - 'app/main.py'
+      - 'tests/test_primary_group_selection.py'
+      - '.github/workflows/install-monitor-integration-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile production backend
+        run: python -m py_compile app/main.py
+      - name: Test main service identity and registry sidecars
+        run: python -m unittest discover -s tests -p 'test_primary_group_selection.py' -v
