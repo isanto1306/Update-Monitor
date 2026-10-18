@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.424"
+VERSION = "0.3.425"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -8254,10 +8254,6 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         or not target_repo_text
     ):
         raise RuntimeError("Incomplete update channel switch plan")
-    if is_update_monitor_self_app(app_item):
-        raise RuntimeError(
-            "Update Monitor cannot change its own Docker channel while it is running"
-        )
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", target_tag):
         raise RuntimeError("Invalid Docker update channel")
     if not _is_update_channel_tag(target_tag):
@@ -8290,6 +8286,14 @@ def perform_image_channel_switch(app_item, image_key, target_tag, source_id=None
         target_ref,
     ):
         raise RuntimeError("The selected update channel is already active")
+
+    # Our own container cannot safely PUT its Compose file while it is running.
+    # Delegate the validated channel change to the already proven external
+    # self-update helper, which persists Compose and verifies the new digest.
+    if is_update_monitor_self_app(app_item):
+        return perform_self_compose_update_handoff(
+            app_item, item, target_tag, policy_mode="follow",
+        )
 
     service_names = _image_source_service_names(item)
     container_names = _image_source_container_names(item)
@@ -9046,22 +9050,51 @@ def docker_json(*args):
         return None
 
 
-try:
-    time.sleep(4.0)
-    write_marker('recreate-requested')
+compose_payload_path = None
+compose_data = None
+compose_applied = False
+base = ''
 
-    base = Path('/host/run/casaos/app-management.url').read_text(encoding='utf-8').strip().rstrip('/')
-    old_id = str(payload['old_container_id'])
+
+def compose_request(yaml_value=None):
+    app_id = urllib.parse.quote(str(payload['compose_project']), safe='')
+    query = urllib.parse.urlencode({
+        'dry_run': 'false',
+        'check_port_conflict': 'false',
+        'app:name': str(payload['compose_project']),
+    })
+    path = '/v2/app_management/compose/' + app_id
+    if yaml_value is None:
+        request = urllib.request.Request(
+            base + path,
+            method='GET',
+            headers={'Accept': 'application/yaml'},
+        )
+        with urllib.request.urlopen(request, timeout=25) as response:
+            if response.status != 200:
+                raise RuntimeError(f'ZimaOS compose read HTTP {response.status}')
+            return response.read().decode('utf-8', 'replace')
+    request = urllib.request.Request(
+        base + path + '?' + query,
+        data=yaml_value.encode('utf-8'),
+        method='PUT',
+        headers={'Accept': 'application/json', 'Content-Type': 'application/yaml'},
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        if response.status != 200:
+            raise RuntimeError(f'ZimaOS compose apply HTTP {response.status}')
+        response.read(1024 * 1024)
+
+
+def recreate(container_id):
     project = str(payload.get('compose_project') or '').strip()
     query = {'pull': 'true', 'force': 'true'}
     if project:
         query['app:name'] = project
     url = (
-        base
-        + '/v2/app_management/container/'
-        + urllib.parse.quote(old_id, safe='')
-        + '?'
-        + urllib.parse.urlencode(query)
+        base + '/v2/app_management/container/'
+        + urllib.parse.quote(str(container_id), safe='')
+        + '?' + urllib.parse.urlencode(query)
     )
     request = urllib.request.Request(
         url,
@@ -9074,7 +9107,55 @@ try:
         response.read(1024 * 1024)
     if not 200 <= status < 300:
         raise RuntimeError(f'ZimaOS recreate returned HTTP {status}')
-    write_marker('recreate-accepted', recreate_http_status=status)
+    return status
+
+
+try:
+    time.sleep(4.0)
+    base = Path('/host/run/casaos/app-management.url').read_text(encoding='utf-8').strip().rstrip('/')
+    parsed_base = urllib.parse.urlsplit(base)
+    if parsed_base.scheme != 'http' or parsed_base.hostname not in {'127.0.0.1', 'localhost'}:
+        raise RuntimeError('Unsafe ZimaOS management address')
+    old_id = str(payload['old_container_id'])
+    project = str(payload.get('compose_project') or '').strip()
+    payload_filename = str(payload.get('compose_payload_file') or '').strip()
+    if payload_filename:
+        compose_payload_path = Path(payload_filename)
+        if (compose_payload_path.parent != Path('/app/cache')
+                or not compose_payload_path.name.startswith('self-update-compose-')
+                or compose_payload_path.suffix != '.json'):
+            raise RuntimeError('Unexpected self update Compose payload path')
+        compose_data = json.loads(compose_payload_path.read_text(encoding='utf-8'))
+        if not all(compose_data.get(key) for key in ('original_yaml', 'target_yaml', 'target_ref')):
+            raise RuntimeError('Incomplete self update Compose payload')
+        write_marker('compose-applying')
+        compose_request(str(compose_data['target_yaml']))
+        compose_applied = True
+        persisted_yaml = compose_request()
+        if str(compose_data['target_ref']) not in persisted_yaml:
+            raise RuntimeError('ZimaOS did not persist the target Compose image')
+        write_marker('compose-applied')
+
+    write_marker('recreate-requested')
+    query = {'pull': 'true', 'force': 'true'}
+    if project:
+        query['app:name'] = project
+    # Compose PUT can recreate the service immediately. Never issue a second
+    # PATCH against the container that has already been replaced.
+    if compose_applied:
+        time.sleep(2.0)
+    current = docker_json('inspect', str(payload['container_name']))
+    current_row = current[0] if isinstance(current, list) and current else {}
+    current_id = str(current_row.get('Id') or '').strip()
+    if current_id == old_id:
+        status = recreate(old_id)
+        write_marker('recreate-accepted', recreate_http_status=status)
+    elif current_id:
+        write_marker('recreate-accepted', recreate_http_status=None)
+    else:
+        # The Compose service might be temporarily absent during recreation.
+        # Let the verification loop find its replacement.
+        write_marker('recreate-accepted', recreate_http_status=None)
 
     name = str(payload['container_name'])
     expected = {
@@ -9122,6 +9203,10 @@ try:
                 and expected
                 and repo_digests.intersection(expected)
             ):
+                if compose_applied:
+                    persisted_yaml = compose_request()
+                    if str(compose_data['target_ref']) not in persisted_yaml:
+                        raise RuntimeError('Verified image but persisted Compose target disagrees')
                 write_marker(
                     'restarted-verified',
                     new_container_id=current_id,
@@ -9133,7 +9218,43 @@ try:
     else:
         write_marker('verification-timeout', last_runtime=last_state)
 except Exception as exc:
-    write_marker('failed', error=str(exc)[:1000])
+    rollback_note = None
+    if compose_applied and compose_data:
+        try:
+            compose_request(str(compose_data['original_yaml']))
+            # Returning the Compose document alone is not proof of rollback:
+            # ZimaOS sometimes persists YAML without recreating its container.
+            # Verify the original image ID is actually running; if necessary
+            # request a forced recreate against the reverted Compose source.
+            original_image_id = str(payload.get('old_image_id') or '').strip()
+            name = str(payload.get('container_name') or '').strip()
+            deadline = time.time() + 90
+            recreated = False
+            rollback_note = 'original-compose-restored; runtime-not-verified'
+            while original_image_id and name and time.time() < deadline:
+                rows = docker_json('inspect', name)
+                row = rows[0] if isinstance(rows, list) and rows else {}
+                runtime_id = str(row.get('Id') or '').strip()
+                runtime_image = str(row.get('Image') or '').strip()
+                runtime_state = row.get('State') if isinstance(row.get('State'), dict) else {}
+                if (runtime_image == original_image_id
+                        and runtime_state.get('Running')
+                        and not runtime_state.get('Restarting')):
+                    rollback_note = 'original-compose-and-runtime-restored'
+                    break
+                if runtime_id and not recreated:
+                    recreated = True
+                    recreate(runtime_id)
+                time.sleep(2.0)
+        except Exception as restore_exc:
+            rollback_note = 'compose-or-runtime-rollback-failed: ' + str(restore_exc)[:350]
+    write_marker('failed', error=str(exc)[:1000], rollback=rollback_note)
+finally:
+    if compose_payload_path is not None:
+        try:
+            compose_payload_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 """
 
 
@@ -9171,6 +9292,161 @@ def _launch_self_update_helper(marker):
     marker["helper_started_at"] = utc_now()
     save_json(SELF_UPDATE_STATE_FILE, marker)
     return helper_name
+
+
+
+def perform_self_compose_update_handoff(app_item, item, target_tag, policy_mode="follow"):
+    """Change our own Compose image by an external, digest-verifying helper.
+
+    Both policy-driven version updates and Update Kanal changes use this path.
+    The app process NEVER applies its own Compose YAML in place.
+    """
+    if not is_update_monitor_self_app(app_item):
+        raise RuntimeError("Self update handoff was requested for a different app")
+
+    project = str(app_item.get("compose_project") or "").strip()
+    stack_key = str(app_item.get("stack_key") or "").strip()
+    target_tag = str(target_tag or "").strip()
+    if not project or not stack_key or not target_tag:
+        raise RuntimeError("Incomplete self update plan")
+    if policy_mode not in {"follow", "upgrade"}:
+        raise RuntimeError("Unsupported self update policy")
+    if policy_mode == "follow" and not _is_update_channel_tag(target_tag):
+        raise RuntimeError("Self update follow mode requires a moving Docker tag")
+
+    identity = update_monitor_self_identity()
+    self_name = str(identity.get("container_name") or "update-monitor").strip().lstrip("/")
+    old_id = str(identity.get("container_id") or "").strip() or str(docker_container_id(self_name) or "").strip()
+    if not old_id:
+        raise RuntimeError("Could not resolve the running Update Monitor container")
+
+    all_names = {
+        str(container.get("name") or "").strip().lstrip("/")
+        for container in app_item.get("containers") or []
+        if str(container.get("name") or "").strip()
+    }
+    services = {
+        str(container.get("compose_service") or "").strip()
+        for container in item.get("containers") or []
+        if str(container.get("compose_service") or "").strip()
+    }
+    # A self update must never recreate an unrelated sidecar.
+    if all_names != {self_name} or len(services) != 1:
+        raise RuntimeError("Self update requires one isolated Compose service")
+
+    current_ref = str(docker_container_config_image(self_name) or "").strip()
+    if not current_ref:
+        raise RuntimeError("Could not read the active Update Monitor image")
+    parsed = parse_image_ref(current_ref)
+    if not parsed.get("repo"):
+        raise RuntimeError("Could not determine the active Update Monitor registry")
+    if (
+        item.get("compose_digest_pin_proven")
+        or parse_image_ref(str(item.get("image_ref") or "")).get("pinned_digest")
+        or parsed.get("pinned_digest")
+    ):
+        raise RuntimeError("Digest-pinned self updates need a separate explicit restore workflow")
+
+    target_ref = f"{parsed['repo']}:{target_tag}"
+    original_yaml = casaos_compose_yaml(project)
+    updated_yaml, replacements, changed_services = replace_compose_service_images(
+        original_yaml, sorted(services), target_ref,
+    )
+    if replacements != 1 or set(changed_services) != services:
+        raise RuntimeError("Could not safely change the Update Monitor Compose service")
+    if original_yaml == updated_yaml:
+        raise RuntimeError("The selected version is already configured")
+    casaos_apply_compose(project, updated_yaml, dry_run=True)
+
+    with scan_lock:
+        platform = str(scan_state.get("platform") or "").strip()
+    if not platform:
+        rc, value, err = run(["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"], timeout=20)
+        if rc != 0:
+            raise RuntimeError(err or "Could not determine Docker platform")
+        platform = {"linux/x86_64": "linux/amd64", "linux/aarch64": "linux/arm64"}.get(value.strip(), value.strip())
+
+    update_action_progress(stack_key, phase="pulling")
+    pulled = docker_pull_verified(target_ref, platform)
+    expected = sorted({
+        str(value or "").strip().lower()
+        for value in pulled.get("expected_digests") or []
+        if str(value or "").strip()
+    })
+    if not expected:
+        raise RuntimeError("No verified target digest is available for the self update")
+
+    # Compose may include secrets. Keep the original/target YAML only in a
+    # short-lived, mode-0600 file shared with the helper, never in action logs,
+    # Docker environment, or the persistent self-update marker.
+    compose_path = CACHE_DIR / ("self-update-compose-" + secrets.token_hex(12) + ".json")
+    compose_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(compose_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({
+                "original_yaml": original_yaml,
+                "target_yaml": updated_yaml,
+                "target_ref": target_ref,
+            }, stream)
+    except Exception:
+        compose_path.unlink(missing_ok=True)
+        raise
+
+    before_image_id = str(docker_container_image_id(self_name) or "").strip()
+    if not before_image_id:
+        compose_path.unlink(missing_ok=True)
+        raise RuntimeError("Could not verify the old Update Monitor image for rollback")
+    marker = {
+        "schema": 2,
+        "stack_key": stack_key,
+        "compose_project": project,
+        "container_name": self_name,
+        "old_container_id": old_id,
+        "old_image_id": before_image_id or None,
+        "image_ref": target_ref,
+        "expected_digests": expected,
+        "compose_payload_file": str(compose_path),
+        "requested_at": utc_now(),
+        "service_started_at": SERVICE_STARTED_AT,
+        "status": "prepared",
+    }
+    try:
+        save_json(SELF_UPDATE_STATE_FILE, marker)
+        update_action_progress(stack_key, phase="restarting")
+        helper_name = _launch_self_update_helper(marker)
+    except Exception:
+        compose_path.unlink(missing_ok=True)
+        raise
+
+    # The helper is running independently now. Do not initiate an in-process
+    # Compose write or claim the replacement has already been verified.
+    previous = get_monitor_policy(stack_key)
+    after = save_monitor_policy(
+        stack_key,
+        "follow" if policy_mode == "follow" else "fixed",
+        target_tag if policy_mode == "follow" else None,
+        auto_enabled=bool(previous.get("auto_enabled")) if policy_mode == "follow" else False,
+        auto_immediate=bool(previous.get("auto_immediate")) if policy_mode == "follow" else False,
+        auto_time=previous.get("auto_time"),
+        auto_days=previous.get("auto_days"),
+        auto_timezone=previous.get("auto_timezone"),
+        auto_backup_mode=previous.get("auto_backup_mode"),
+    )
+    return {
+        "project": project,
+        "containers": [self_name],
+        "old_image_ref": current_ref,
+        "new_image_ref": target_ref,
+        "target_tag": target_tag,
+        "compose_services": sorted(services),
+        "target_verification": pulled,
+        "self_update_handoff": True,
+        "restart_expected": True,
+        "helper_container_name": helper_name,
+        "policy_after_update": after,
+        "engine": "verified-pull+self-compose-handoff",
+    }
 
 
 def perform_self_image_update_handoff(app_item):
@@ -18621,6 +18897,22 @@ def perform_version_update(app_item):
             if str(item.get("image_ref") or "").strip()
         }
 
+    if is_update_monitor_self_app(app_item):
+        identity = update_monitor_self_identity()
+        own_name = str(identity.get("container_name") or "update-monitor").strip().lstrip("/")
+        self_items = [
+            item for item in group_items
+            if any(
+                str(container.get("name") or "").strip().lstrip("/") == own_name
+                for container in item.get("containers") or []
+            )
+        ]
+        if len(self_items) != 1 or len(group_items) != 1:
+            raise RuntimeError("Self update requires one unambiguous primary image")
+        return perform_self_compose_update_handoff(
+            app_item, self_items[0], target_tag, policy_mode=mode,
+        )
+
     if len(target_map) != len(group_items):
         raise RuntimeError(
             "The selected version is not available for every image in the version group"
@@ -21063,7 +21355,8 @@ def image_channel_switch(data: ImageChannelSwitchRequest, request: Request):
         )
         if isinstance(result, dict):
             result["backup"] = backup_result
-        register_successful_image_source_switch(app_item, result)
+        if not (isinstance(result, dict) and result.get("self_update_handoff")):
+            register_successful_image_source_switch(app_item, result)
         finish_action_progress(data.stack_key, True)
     except BackupCancelledError:
         cancelled = True

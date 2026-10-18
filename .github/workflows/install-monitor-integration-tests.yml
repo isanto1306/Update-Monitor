@@ -7,6 +7,7 @@ on:
     paths:
       - 'app/main.py'
       - 'tests/test_primary_group_selection.py'
+      - 'tests/test_self_update_channel.py'
       - '.github/workflows/install-monitor-integration-tests.yml'
 
 permissions:
@@ -24,3 +25,30 @@ jobs:
         run: python -m py_compile app/main.py
       - name: Test main service identity and registry sidecars
         run: python -m unittest discover -s tests -p 'test_primary_group_selection.py' -v
+      - name: Test self-update tag handoff and rollback safeguards
+        run: python -m unittest discover -s tests -p 'test_self_update_channel.py' -v
+      - name: Run all backend regression tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Check frontend synchronization and JavaScript syntax
+        run: |
+          python .github/scripts/sync_frontend.py
+          python .github/scripts/check_inline_scripts.py
+          node --check static/update-channel.js
+          node --check static/backup-overview.js
+          node --check static/layout-options.js
+      - name: Audit all five languages
+        run: python .github/scripts/audit_translations.py
+      - name: Confirm staged release markers
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          src=Path("app/main.py").read_text()
+          compose=Path("docker-compose.zimaos.yml").read_text()
+          html=Path("static/index.html").read_text()
+          version=re.search(r'^VERSION = "([^"]+)"',src,re.M).group(1)
+          assert version=="0.3.425",version
+          assert f'version: "{version}"' in compose
+          assert f'id="systemInfoVersion">v{version}</div>' in html
+          print("Release markers synchronized:",version)
+          PY
