@@ -9283,10 +9283,8 @@ except Exception as exc:
             # A timed-out PUT can have been applied even though the HTTP
             # client never received its acknowledgement.
             current_compose = compose_request()
-            if str(compose_data['target_ref']) in current_compose:
+            if str(current_compose).strip() != str(compose_data['original_yaml']).strip():
                 compose_request(str(compose_data['original_yaml']))
-            elif str(compose_data['target_ref']) not in str(compose_data['original_yaml']):
-                rollback_note = 'compose-no-longer-at-target; verifying original runtime'
             persisted_original = compose_request()
             if str(compose_data['target_ref']) in persisted_original:
                 raise RuntimeError('Compose rollback failed: target image remains configured')
