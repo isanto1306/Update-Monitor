@@ -262,7 +262,7 @@ class SimulatedHelperExecutionTests(unittest.TestCase):
                 prelude = """
 import json, os, subprocess, time, types, urllib.request
 scenario = os.environ['TEST_SCENARIO']
-state = {'persisted': 'services:\\\\n  update-monitor:\\\\n    image: example/app:0.3.423\\\\n',
+mock_state = {'persisted': 'services:\\\\n  update-monitor:\\\\n    image: example/app:0.3.423\\\\n',
          'new': False, 'rolled_back': False}
 class Response:
     status = 200
@@ -276,23 +276,23 @@ def fake_open(request, timeout=None):
     if '/compose/' in url:
         if method == 'PUT':
             body = request.data.decode('utf-8')
-            state['persisted'] = body
-            if 'example/app:latest' in body: state['new'] = True
+            mock_state['persisted'] = body
+            if 'example/app:latest' in body: mock_state['new'] = True
             else:
-                state['new'] = False
-                state['rolled_back'] = True
+                mock_state['new'] = False
+                mock_state['rolled_back'] = True
             return Response(b'{}')
         if method == 'GET':
-            if scenario == 'rollback' and state['new']:
+            if scenario == 'rollback' and mock_state['new']:
                 return Response(b'wrong persisted compose')
-            return Response(state['persisted'].encode())
+            return Response(mock_state['persisted'].encode())
     if '/container/' in url and method == 'PATCH':
-        state['new'] = True
+        mock_state['new'] = True
         return Response(b'{}')
     raise RuntimeError('Unexpected ZimaOS request: ' + method + ' ' + url)
 def fake_run(args, **kwargs):
     if args[:2] == ['docker', 'inspect']:
-        new = state['new']
+        new = mock_state['new']
         rows = [{'Id': 'new-id' if new else 'old-id',
                  'Image': 'sha256:new' if new else 'sha256:old',
                  'State': {'Running': True, 'Restarting': False,
