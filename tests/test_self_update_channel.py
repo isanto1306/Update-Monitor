@@ -318,7 +318,7 @@ time.sleep = lambda n: None
                 self.assertEqual(result.returncode, 0, result.stderr)
                 status = json.loads(marker.read_text(encoding="utf-8"))
                 if scenario == "success":
-                    self.assertEqual(status["status"], "restarted-verified")
+                    self.assertEqual(status["status"], "restarted-verified", status)
                     self.assertEqual(status["matched_digests"], ["sha256:newimage"])
                 else:
                     self.assertEqual(status["status"], "failed")
