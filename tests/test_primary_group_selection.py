@@ -1,5 +1,6 @@
 """Regression tests for app-level primary image selection."""
 import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,7 @@ class PrimaryGroupTests(unittest.TestCase):
             },
             "_version_group_published_port_count": lambda group: 0,
             "_version_group_score": lambda group, app: 0,
+            "re": re,
             "_version_group_has_direct_app_identity": lambda group, app: any(
                 app["name"].lower() in i["image_ref"].lower()
                 for i in group["items"]
@@ -64,6 +66,33 @@ class PrimaryGroupTests(unittest.TestCase):
         self.assertIs(self.ns["select_primary_version_group"]({
             "name": "Project", "main_service": "frontend"
         }), right)
+
+    def test_install_monitor_main_before_registry_sidecar(self):
+        registry = {"items": [item("registry", "registry", "2.8.3")]}
+        main = {"items": [item("ghcr.io/isanto1306/install-monitor", "install-monitor", "0.2.56-beta.2")]}
+        self.groups = [registry, main]
+        app = {"name": "Install Monitor", "compose_project": "install-monitor"}
+        self.assertIs(self.ns["select_primary_version_group"](app), main)
+
+    def test_only_registry_sidecar_must_not_be_reported_as_install_monitor_version(self):
+        registry = {"items": [item("registry", "registry", "2.8.3")]}
+        self.groups = [registry]
+        self.assertIsNone(self.ns["select_primary_version_group"]({
+            "name": "Install Monitor", "compose_project": "install-monitor"
+        }))
+
+    def test_standalone_registry_is_still_selectable(self):
+        registry = {"items": [item("registry", "registry", "2.8.3")]}
+        self.groups = [registry]
+        self.assertIs(self.ns["select_primary_version_group"]({
+            "name": "Registry", "compose_project": "registry"
+        }), registry)
+
+    def test_hyphenated_name_requires_exact_match_not_substring(self):
+        group = {"items": [item("ghcr.io/other/install-monitor-helper", "install-monitor-helper", "1.0")]}
+        self.assertFalse(self.ns["_version_group_has_direct_app_identity"](
+            group, {"name": "Install Monitor", "compose_project": "install-monitor"}
+        ))
 
     def test_ambiguous_unchanged(self):
         self.groups = [

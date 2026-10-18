@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.422"
+VERSION = "0.3.423"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -4443,7 +4443,7 @@ _INFRASTRUCTURE_IMAGE_HINTS = {
     "postgres", "postgresql", "postgis", "redis", "valkey", "mariadb", "mysql",
     "mongodb", "mongo", "elasticsearch", "opensearch", "rabbitmq", "memcached",
     "clickhouse", "typesense", "meilisearch", "solr", "influxdb", "prometheus",
-    "grafana", "minio",
+    "grafana", "minio", "registry",
 }
 
 
@@ -4676,20 +4676,26 @@ def _version_group_is_infrastructure(group):
 
 
 def _version_group_has_direct_app_identity(group, app_item):
-    """Return True only for a strong direct app-name -> image identity match."""
-    tokens = _version_group_name_tokens(app_item)
-    if not tokens:
-        return False
+    """Match exact whole app/service identities across spaces and hyphens.
+
+    Install Monitor -> install-monitor matches its app image, not the registry
+    sidecar. Arbitrary partial matches are intentionally disallowed.
+    """
+    app = app_item or {}
+    names = (str(app.get("name") or ""), str(app.get("compose_project") or ""))
+    identities = {re.sub(r"[^a-z0-9]", "", value.casefold()) for value in names if value}
+    identities.discard("")
     for item in (group or {}).get("items") or []:
         repo = _version_item_repo_key(item)
         repo_leaf = repo.rsplit("/", 1)[-1].lower() if repo else ""
-        services = {
+        services = [
             str(container.get("compose_service") or "").strip().lower()
             for container in item.get("containers") or []
-            if str(container.get("compose_service") or "").strip()
-        }
-        if any(token == repo_leaf or token in services for token in tokens):
-            return True
+        ]
+        for candidate in [repo_leaf, *services]:
+            compact = re.sub(r"[^a-z0-9]", "", candidate)
+            if len(compact) >= 4 and compact in identities:
+                return True
     return False
 
 
@@ -4710,7 +4716,7 @@ def _primary_group_service_match(group, name):
 
 def _primary_group_auxiliary(group):
     auxiliary = {"watchtower", "scrypted-watchtower", "mongodb", "mongo",
-                 "redis", "valkey", "postgres", "postgresql", "mariadb",
+                 "redis", "valkey", "registry", "postgres", "postgresql", "mariadb",
                  "mysql", "rabbitmq", "memcached"}
     items = list((group or {}).get("items") or [])
     if not items:
@@ -4748,7 +4754,14 @@ def select_primary_version_group(app_item):
     if not groups:
         return None
     if len(groups) == 1:
-        return groups[0]
+        only_group = groups[0]
+        # Never pass the version of a lone infrastructure sidecar off as the
+        # version of a different, missing main application.
+        if ((app_item or {}).get("compose_project")
+                and _primary_group_auxiliary(only_group)
+                and not _version_group_has_direct_app_identity(only_group, app_item)):
+            return None
+        return only_group
 
     explicit_service = _primary_group_explicit_service(app_item)
     if explicit_service:
@@ -9493,6 +9506,18 @@ def build_apps(results):
 
         app_ports.sort(key=app_port_sort_key)
 
+        # Some ZimaOS-managed apps have their icon on the app rather than on
+        # individual Docker services. Use the unchanged upstream app icon only
+        # when the actual Install Monitor image is present in this stack.
+        if not app_item.get("icon_url") and any(
+            _version_item_repo_key(item) == "ghcr.io/isanto1306/install-monitor"
+            for item in items
+        ):
+            app_item["icon_url"] = (
+                "https://raw.githubusercontent.com/isanto1306/Install-Monitor/"
+                "main/static/install-monitor-icon.png"
+            )
+
         built_app = {
             "stack_key": app_item["stack_key"],
             "name": name,
@@ -10354,6 +10379,7 @@ def scan_all(stack_key=None):
             # Titles are a separate display-only concern: use ZimaOS' own custom
             # app title where available, without changing stack keys or update logic.
             zima_title_catalog = casaos_title_catalog()
+            zima_icon_catalog = casaos_icon_catalog()
 
             # One deployment record per image + Compose stack. This prevents a shared
             # image (for example redis:alpine) from merging two unrelated apps.
@@ -10411,6 +10437,16 @@ def scan_all(stack_key=None):
                         display_title = zima_title_catalog[alias_key]
                         break
 
+                canonical_icon = next((
+                    str(zima_icon_catalog.get(str(alias).strip()) or "").strip()
+                    for alias in (
+                        meta.get("compose_project"),
+                        meta.get("stack_name"),
+                        meta.get("compose_service"),
+                        name,
+                    )
+                    if alias and zima_icon_catalog.get(str(alias).strip())
+                ), "")
                 key = (ref, meta["stack_key"])
                 entry = deployments.setdefault(key, {
                     "image_ref": ref,
@@ -10419,7 +10455,7 @@ def scan_all(stack_key=None):
                     "compose_project": meta["compose_project"],
                     "compose_working_dir": meta["compose_working_dir"],
                     "compose_config_files": meta["compose_config_files"],
-                    "icon_url": meta.get("icon_url"),
+                    "icon_url": meta.get("icon_url") or canonical_icon,
                     "project_url": meta.get("project_url"),
                     "project_provider": meta.get("project_provider"),
                     "project_url_source": meta.get("project_url_source"),
@@ -10429,8 +10465,8 @@ def scan_all(stack_key=None):
                     "runtime_image_refs": set(),
                     "compose_literal_refs": {},
                 })
-                if not entry.get("icon_url") and meta.get("icon_url"):
-                    entry["icon_url"] = meta.get("icon_url")
+                if not entry.get("icon_url") and (meta.get("icon_url") or canonical_icon):
+                    entry["icon_url"] = meta.get("icon_url") or canonical_icon
                 if not entry.get("project_url") and meta.get("project_url"):
                     entry["project_url"] = meta.get("project_url")
                     entry["project_provider"] = meta.get("project_provider")
