@@ -7,6 +7,7 @@ on:
     paths:
       - 'app/main.py'
       - 'tests/test_primary_group_selection.py'
+      - 'tests/test_self_update_channel.py'
       - '.github/workflows/install-monitor-integration-tests.yml'
 
 permissions:
@@ -24,3 +25,5 @@ jobs:
         run: python -m py_compile app/main.py
       - name: Test main service identity and registry sidecars
         run: python -m unittest discover -s tests -p 'test_primary_group_selection.py' -v
+      - name: Test self-update tag handoff and rollback safeguards
+        run: python -m unittest discover -s tests -p 'test_self_update_channel.py' -v
