@@ -88,9 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.422**
+Current release: **v0.3.423**
 
-v0.3.422 adds a localized backup expiry column using the current global retention policy and surfaces primary-image version hints when exact digest resolution is unavailable, without changing version-update eligibility.
+v0.3.423 fixes Install Monitor main-container detection, prevents the Registry sidecar from being mistaken for the app, and resolves the published app icon when ZimaOS omits service-level labels.\n\nv0.3.422 adds a localized backup expiry column using the current global retention policy and surfaces primary-image version hints when exact digest resolution is unavailable, without changing version-update eligibility.
 
 v0.3.421 prioritizes primary application image groups over auxiliary Watchtower/database containers for app-level version display and policy selection.
 
