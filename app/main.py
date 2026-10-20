@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-VERSION = "0.3.426"
+VERSION = "0.3.427"
 STATIC_DIR = Path(os.getenv("UPDATE_MONITOR_STATIC_DIR", "/app/static"))
 CACHE_DIR = Path(os.getenv("UPDATE_MONITOR_CACHE_DIR", "/app/cache"))
 SCAN_FILE = CACHE_DIR / "scan.json"
@@ -9725,6 +9725,41 @@ def _aggregate_app_runtime(containers):
     return runtime_state, running_count, len(completed), len(active)
 
 
+def _split_app_version_updates(app_item):
+    """Separate main-app versions from independent sidecar versions.
+
+    The primary family is already selected by apply_monitor_policy_fields().
+    Unclassified/ambiguous families retain the legacy count rather than
+    silently hiding updates. Only VERSION_UPDATE is classified here;
+    same-tag IMAGE_UPDATE eligibility stays unchanged for every image.
+    """
+    updates = [
+        item for item in (app_item.get("items") or [])
+        if item.get("status") == "VERSION_UPDATE"
+    ]
+    primary_refs = {
+        str(ref or "").strip()
+        for ref in ((app_item.get("version_group") or {}).get("image_refs") or [])
+        if str(ref or "").strip()
+    }
+    if not primary_refs:
+        return len(updates), []
+
+    primary_count = 0
+    supplemental = []
+    for item in updates:
+        image_ref = str(item.get("image_ref") or "").strip()
+        if image_ref in primary_refs:
+            primary_count += 1
+        else:
+            supplemental.append({
+                "image_ref": image_ref,
+                "installed_tag": str(item.get("tag") or "").strip(),
+                "available_tag": str(item.get("newer_tag") or "").strip(),
+            })
+    return primary_count, supplemental
+
+
 def build_apps(results):
     managed_compose_projects = casaos_compose_project_names(timeout=5)
     grouped = {}
@@ -9921,9 +9956,13 @@ def build_apps(results):
         # chose to keep the configured version, so that newer tag must not be
         # counted or presented as an actionable update.  Same-tag IMAGE updates
         # remain actionable because they do not change the configured version.
+        primary_version_count, supplemental_versions = _split_app_version_updates(built_app)
+        built_app["primary_version_update_count"] = primary_version_count
+        built_app["supplemental_version_updates"] = supplemental_versions
+        built_app["supplemental_version_update_count"] = len(supplemental_versions)
         policy_mode = str((built_app.get("monitor_policy") or {}).get("mode") or "fixed")
         effective_version_update_count = (
-            0 if policy_mode == "fixed" else int(built_app.get("version_update_count") or 0)
+            0 if policy_mode == "fixed" else primary_version_count
         )
         if policy_mode != "fixed" and built_app.get("can_version_update"):
             effective_version_update_count = max(1, effective_version_update_count)
