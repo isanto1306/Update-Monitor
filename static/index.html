@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.426"
+        href="favicon.ico?v=0.3.427"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.426"
+        href="favicon-16x16.png?v=0.3.427"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.426"
+        href="favicon-32x32.png?v=0.3.427"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.426"
+        href="apple-touch-icon.png?v=0.3.427"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.426"
+        href="site.webmanifest?v=0.3.427"
     >
 
     <meta
@@ -18403,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.426</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.427</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18752,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.426"></script>
+<script src="/update-channel.js?v=0.3.427"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.426';
+const UPDATE_MONITOR_VERSION = 'v0.3.427';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -20147,7 +20147,7 @@ function renderPolicyWorkbench(app,index){
           <span><strong>${Number(app.container_count)||0}</strong> ${esc(t('containers'))}</span>
           <span><strong>${imageCount}</strong> Images</span>
           <span>${esc(t('port'))} <strong>${esc(portText)}</strong></span>
-          <span class="${Number(app.update_count)>0?'has-update':''}"><strong>${Number(app.update_count)||0}</strong> ${esc(Number(app.update_count)===1?t('updateSingular'):t('updatePlural'))}</span>
+          <span class="${appEffectiveUpdateCount(app)>0?'has-update':''}"><strong>${appEffectiveUpdateCount(app)}</strong> ${esc(appEffectiveUpdateCount(app)===1?t('updateSingular'):t('updatePlural'))}</span>
         </div>
 
         <div class="policy-modal-content-single">
@@ -20916,7 +20916,13 @@ function appAvailableVersionLabel(app){
   }
 
   if(appEffectiveUpdateCount(app)>0){
+    const primaryRefs=new Set(
+      Array.isArray(app.version_group&&app.version_group.image_refs)
+        ? app.version_group.image_refs.map(value=>String(value||'').trim()).filter(Boolean)
+        : []
+    );
     for(const item of items){
+      if(primaryRefs.size&&!primaryRefs.has(String(item.image_ref||'').trim()))continue;
       const available=String(itemAvailable(item)||'').trim();
       if(available&&available!=='-')return available;
     }
@@ -21097,7 +21103,7 @@ function renderAppCard(app,index){
     </div>
     ${renderPolicyPanel(app,index)}
     ${messageHtml}
-    <div class="update-card-details-motion"><div class="update-card-details">${details}${renderUpdateChannelEntry(app)}${renderImageSourceEntry(app)}${renderBackupDetails(app)}${renderUninstallPanel(app,index)}</div></div>
+    <div class="update-card-details-motion"><div class="update-card-details">${details}${typeof renderSupplementalVersionNotice==='function'?renderSupplementalVersionNotice(app):''}${renderUpdateChannelEntry(app)}${renderImageSourceEntry(app)}${renderBackupDetails(app)}${renderUninstallPanel(app,index)}</div></div>
   </article>`;
 }
 function getUpdateColumnCount(grid){
