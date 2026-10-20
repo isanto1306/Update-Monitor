@@ -604,4 +604,32 @@ if broken_uninstall_tail in text:
 if broken_uninstall_tail in text:
     raise SystemExit("Uninstall dialog syntax repair failed")
 
+# Keep supplementary version changes distinct from the main app.
+# All changes are idempotent because this script also runs after every release.
+old_details = '${details}${renderUpdateChannelEntry(app)}'
+new_details = "${details}${typeof renderSupplementalVersionNotice==='function'?renderSupplementalVersionNotice(app):''}${renderUpdateChannelEntry(app)}"
+if new_details not in text:
+    replace_once(old_details, new_details, "separate sidecar version notice")
+
+old_fallback = """  if(appEffectiveUpdateCount(app)>0){
+    for(const item of items){
+      const available=String(itemAvailable(item)||'').trim();"""
+new_fallback = """  if(appEffectiveUpdateCount(app)>0){
+    const primaryRefs=new Set(
+      Array.isArray(app.version_group&&app.version_group.image_refs)
+        ? app.version_group.image_refs.map(value=>String(value||'').trim()).filter(Boolean)
+        : []
+    );
+    for(const item of items){
+      if(primaryRefs.size&&!primaryRefs.has(String(item.image_ref||'').trim()))continue;
+      const available=String(itemAvailable(item)||'').trim();"""
+if new_fallback not in text:
+    replace_once(old_fallback, new_fallback, "prevent sidecar version in main version field")
+
+old_policy_stats = '<span class="${Number(app.update_count)>0?\'has-update\':\'\'}"><strong>${Number(app.update_count)||0}</strong> ${esc(Number(app.update_count)===1?t(\'updateSingular\'):t(\'updatePlural\'))}</span>'
+new_policy_stats = '<span class="${appEffectiveUpdateCount(app)>0?\'has-update\':\'\'}"><strong>${appEffectiveUpdateCount(app)}</strong> ${esc(appEffectiveUpdateCount(app)===1?t(\'updateSingular\'):t(\'updatePlural\'))}</span>'
+if new_policy_stats not in text:
+    replace_once(old_policy_stats, new_policy_stats, "policy summary uses actionable update count")
+
+
 path.write_text(text, encoding="utf-8")

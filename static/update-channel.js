@@ -17,7 +17,7 @@ function channelEsc(value){
 }
 
 var style=document.createElement('style');
-style.id='um-update-channel-v0426';
+style.id='um-update-channel-v0427';
 style.textContent=[
 '.update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}',
 '.update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}',
@@ -86,6 +86,34 @@ window.renderUpdateChannelEntry=function(app){
         channelEsc(app.stack_key||'')+'">'+channelEsc(channelText('Update Kanal wählen','Choose update channel'))+'</button>'+
     '</div>'+
   '</div>';
+};
+
+// The main application may be current even if a separate pinned sidecar has
+// a newer version. Keep these informational changes visible, not installable.
+style.textContent += '.um-supplemental-version-note{margin:10px 0 13px;padding:9px 11px;border:1px solid rgba(120,154,194,.30);border-radius:8px;background:rgba(35,65,98,.16);font-size:11px;line-height:1.5;color:#b9d4ed}.um-supplemental-version-note strong{color:#e3f0ff}.um-supplemental-version-note small{display:block;color:#93adc4;margin-top:3px}';
+
+window.renderSupplementalVersionNotice=function(app){
+  var updates=app&&Array.isArray(app.supplemental_version_updates)
+    ?app.supplemental_version_updates:[];
+  if(!updates.length)return '';
+  var locale='en';
+  try{locale=String(localStorage.getItem('updateMonitorLanguage')||'en');}catch(e){}
+  var copy={
+    de:['Zusatzimage: neue Version verfügbar','Unabhängiger Versionswechsel – kein Update der Hauptanwendung. Nur nach Kompatibilitätsprüfung manuell wechseln.'],
+    en:['Sidecar: newer version available','Independent version change – not a main application update. Switch manually only after checking compatibility.'],
+    fr:['Image auxiliaire : nouvelle version disponible','Changement de version indépendant, pas une mise à jour de l’application principale. Vérifiez la compatibilité avant un changement manuel.'],
+    pt:['Imagem auxiliar: nova versão disponível','Mudança de versão independente, não uma atualização da aplicação principal. Verifique a compatibilidade antes de alterar manualmente.'],
+    es:['Imagen auxiliar: nueva versión disponible','Cambio de versión independiente, no una actualización de la aplicación principal. Compruebe la compatibilidad antes de cambiarla manualmente.']
+  };
+  var words=copy[locale]||copy.en;
+  var detail=updates.map(function(item){
+    var image=String(item.image_ref||'').trim();
+    var version=String(item.available_tag||'').trim();
+    return channelEsc(image)+(version?' → '+channelEsc(version):'');
+  }).join(' · ');
+  return '<div class="um-supplemental-version-note" role="note"><strong>'+
+    channelEsc(words[0])+'</strong>: '+detail+'<small>'+
+    channelEsc(words[1])+'</small></div>';
 };
 
 function images(){

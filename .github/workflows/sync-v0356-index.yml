@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -34,6 +37,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_primary_group_selection.py' -v
+
+      - name: Test sidecar versus primary version updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_supplemental_version_updates.py' -v
 
       - name: Test exclusive AppData cleanup safety
         shell: bash
@@ -518,6 +527,7 @@ jobs:
           PY
 
       - name: Commit synchronized frontend
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
