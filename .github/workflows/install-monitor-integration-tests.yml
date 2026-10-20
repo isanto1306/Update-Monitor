@@ -47,7 +47,7 @@ jobs:
           compose=Path("docker-compose.zimaos.yml").read_text()
           html=Path("static/index.html").read_text()
           version=re.search(r'^VERSION = "([^"]+)"',src,re.M).group(1)
-          assert re.fullmatch(r"0\\.3\\.\\d+",version),version
+          assert re.fullmatch(r"0[.]3[.][0-9]+",version),version
           assert f'version: "{version}"' in compose
           assert f'id="systemInfoVersion">v{version}</div>' in html
           print("Release markers synchronized:",version)
