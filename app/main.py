@@ -408,6 +408,7 @@ def begin_action_progress(stack_key, kind, app_item, automatic=False):
         "progress": 0 if kind == "uninstall" else None,
         "determinate": kind == "uninstall",
         "phase": "starting",
+        "current_container": None,
         "started_at": utc_now(),
         "updated_at": utc_now(),
         "finished": False,
@@ -423,7 +424,7 @@ def begin_action_progress(stack_key, kind, app_item, automatic=False):
         action_progress[stack_key] = record
 
 
-def update_action_progress(stack_key, progress=None, *, determinate=None, phase=None):
+def update_action_progress(stack_key, progress=None, *, determinate=None, phase=None, container_name=None):
     stack_key = str(stack_key or "").strip()
     if not stack_key:
         return
@@ -445,6 +446,8 @@ def update_action_progress(stack_key, progress=None, *, determinate=None, phase=
             record["determinate"] = bool(determinate)
         if phase:
             record["phase"] = str(phase)
+        if container_name is not None:
+            record["current_container"] = str(container_name).strip() or None
         record["updated_at"] = utc_now()
 
 
@@ -475,6 +478,16 @@ def finish_action_progress(stack_key, success, error=None):
         record["finished"] = True
         record["success"] = bool(success)
         record["error"] = str(error) if error else None
+        if not success and record.get("kind") == "update":
+            # Diagnostic metadata only; the update and rollback decisions stay unchanged.
+            technical = str(error or "Unknown update error").strip()
+            technical = re.sub(r"(?i)(\\b(?:password|token|secret|api[_-]?key)\\s*[:=]\\s*)\\S+", r"\\1[redacted]", technical)
+            technical = re.sub(r"(https?://)[^\\s/@:]+:[^\\s/@]+@", r"\\1[redacted]@", technical)
+            record["update_diagnostic"] = {
+                "step": str(record.get("phase") or "unknown"),
+                "container": str(record.get("current_container") or ""),
+                "technical_detail": technical[:800],
+            }
         record["updated_at"] = utc_now()
         if success:
             record["progress"] = 100
@@ -12800,7 +12813,13 @@ _INDEX_ASYNC_UPDATE_BRIDGE = r'''<script id="um-async-update-bridge-v0366">
       }
 
       if(info&&info.success===false){
-        throw new Error(String(info.error||'Update failed'));
+        const failure=new Error(String(info.error||'Update failed'));
+        failure.updateMonitorDiagnostic=info.update_diagnostic||{
+          step:String(info.phase||'unknown'),
+          container:'',
+          technical_detail:String(info.error||'Update failed')
+        };
+        throw failure;
       }
 
       return {...result,accepted:false,completed:true};
@@ -13877,6 +13896,30 @@ _INDEX_ERROR_LOCALIZATION_BRIDGE = r'''<script id="um-error-localization-v0373">
     return value;
   }
 
+  function formatManualUpdateDiagnostic(info,lang){
+    const labels={
+      de:{step:'Schritt',container:'Container',reason:'Technische Ursache',
+          phases:{pulling:'Docker-Image herunterladen',verifying:'Image-Digest prüfen',recreating:'Container neu erstellen',starting:'Update vorbereiten',backup_prepare:'Backup vorbereiten',backup:'Backup erstellen'}},
+      en:{step:'Step',container:'Container',reason:'Technical cause',
+          phases:{pulling:'Pull Docker image',verifying:'Verify image digest',recreating:'Recreate container',starting:'Prepare update',backup_prepare:'Prepare backup',backup:'Create backup'}},
+      fr:{step:'Étape',container:'Conteneur',reason:'Cause technique',
+          phases:{pulling:'Télécharger l’image Docker',verifying:'Vérifier le digest',recreating:'Recréer le conteneur',starting:'Préparer la mise à jour',backup_prepare:'Préparer la sauvegarde',backup:'Créer la sauvegarde'}},
+      pt:{step:'Etapa',container:'Contentor',reason:'Causa técnica',
+          phases:{pulling:'Descarregar imagem Docker',verifying:'Verificar digest',recreating:'Recriar contentor',starting:'Preparar atualização',backup_prepare:'Preparar backup',backup:'Criar backup'}},
+      es:{step:'Paso',container:'Contenedor',reason:'Causa técnica',
+          phases:{pulling:'Descargar imagen Docker',verifying:'Verificar digest',recreating:'Recrear contenedor',starting:'Preparar actualización',backup_prepare:'Preparar copia',backup:'Crear copia'}}
+    };
+    const words=labels[lang]||labels.en;
+    const step=String(info&&info.step||'').trim();
+    const container=String(info&&info.container||'').trim();
+    const detail=String(info&&info.technical_detail||'').trim();
+    const parts=[];
+    if(step)parts.push(words.step+': '+(words.phases[step]||step));
+    if(container)parts.push(words.container+': '+container.slice(0,180));
+    if(detail)parts.push(words.reason+': '+detail.slice(0,800));
+    return parts.join(' | ');
+  }
+
   window.updateMonitorLocalizeBackendMessage=localizeBackendMessage;
 
   api=async function(url,options={}){
@@ -13885,6 +13928,12 @@ _INDEX_ERROR_LOCALIZATION_BRIDGE = r'''<script id="um-error-localization-v0373">
       return localizePayload(result);
     }catch(error){
       if(!error||String(error.message||'')==='auth')throw error;
+      if(error.updateMonitorDiagnostic){
+        const message=formatManualUpdateDiagnostic(error.updateMonitorDiagnostic,currentLanguage());
+        const wrapped=new Error(message||String(error.message||'Update failed'));
+        wrapped.name=error.name||'Error';
+        throw wrapped;
+      }
       const translated=localizeBackendMessage(error.message,true);
       if(translated===String(error.message||''))throw error;
       const wrapped=new Error(translated);
@@ -19645,6 +19694,11 @@ def perform_image_update(app_item):
     target_verification = {}
     for item in targets:
         image_ref = _update_target_ref_on_active_registry(item)
+        item_names = [str(c.get("name") or "").strip() for c in item.get("containers") or []]
+        update_action_progress(
+            stack_key, phase="pulling",
+            container_name=", ".join(name for name in item_names if name),
+        )
         if not image_ref:
             raise RuntimeError("Could not determine same-tag target image")
         if image_ref in target_verification:
@@ -19739,6 +19793,7 @@ def perform_image_update(app_item):
                 "tag before the update"
             )
 
+        update_action_progress(stack_key, phase="recreating", container_name="")
         # ZimaOS-managed latest@digest references and restore-generated digest
         # locks must first be returned to the real rolling tag. The target image
         # was already pulled and digest-verified above.
@@ -19752,6 +19807,7 @@ def perform_image_update(app_item):
         image_ref = target["image_ref"]
         expected_digests = target["expected_digests"]
 
+        update_action_progress(stack_key, phase="verifying", container_name=name)
         old_container_id = docker_container_id(name)
         old_image_id = docker_container_image_id(name)
         if not old_container_id or not old_image_id:
@@ -19760,7 +19816,7 @@ def perform_image_update(app_item):
             )
         before_image_ids[name] = old_image_id
 
-        update_action_progress(stack_key, phase="verifying")
+        update_action_progress(stack_key, phase="verifying", container_name=name)
 
         if tracking_pin_applied:
             # Applying the normalized tracking tag already lets ZimaOS recreate
@@ -19809,7 +19865,7 @@ def perform_image_update(app_item):
                     "container did not reach the verified update digest"
                 )
         else:
-            update_action_progress(stack_key, phase="recreating")
+            update_action_progress(stack_key, phase="recreating", container_name=name)
             casaos_recreate_container(old_container_id, project)
 
             verified = wait_for_container_recreate_target_digest(
