@@ -50,6 +50,12 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_manual_update_diagnostics.py' -v
 
+      - name: Test toolbar sort label spacing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_toolbar_sort_spacing.py' -v
+
       - name: Test exclusive AppData cleanup safety
         shell: bash
         run: |

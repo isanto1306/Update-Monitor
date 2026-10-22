@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.428**
+Current release: **v0.3.429**
+
+v0.3.429 fixes chevron collision in the localized toolbar sort selector by slightly widening only this dropdown and reserving space for its icon; unrelated selectors and Docker update logic are unchanged.
 
 v0.3.428 preserves the real manual Docker update failure diagnostics in the UI: failing step, affected container, and original technical cause with credential redaction. The Docker update, backup and digest-verification decisions are unchanged.
 

@@ -16,8 +16,19 @@ function channelEsc(value){
     .replace(/'/g,'&#39;');
 }
 
+// Only the toolbar sort selector needs additional room for long localized labels.
+// Keep the arrow in its own lane; other Backup/Policy selectors stay untouched.
+var sortSpacing=document.createElement('style');
+sortSpacing.id='um-sort-label-spacing-v0429';
+sortSpacing.textContent=[
+  '.toolbar-current-sort .backup-retention-control{flex:0 0 205px !important;width:205px !important;min-width:205px !important;}',
+  '.toolbar-current-sort [data-current-sort-select-label]{display:block;min-width:0;box-sizing:border-box;padding-right:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+  '@media(max-width:560px){.toolbar-current-sort .backup-retention-control{flex:0 1 205px !important;width:min(205px,65vw) !important;min-width:0 !important;}}'
+].join('');
+document.head.appendChild(sortSpacing);
+
 var style=document.createElement('style');
-style.id='um-update-channel-v0428';
+style.id='um-update-channel-v0429';
 style.textContent=[
 '.update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}',
 '.update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}',
