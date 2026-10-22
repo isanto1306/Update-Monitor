@@ -17,11 +17,16 @@ function channelEsc(value){
 }
 
 var style=document.createElement('style');
-style.id='um-update-channel-v0428';
+style.id='um-update-channel-v0429';
 style.textContent=[
 '.update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}',
 '.update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}',
 '.update-channel-entry + .image-source-entry{border-top:1px solid rgba(91,156,255,.42);}',
+'/* Only the toolbar sorting selector needs room for long translations. */',
+'.toolbar-current-sort .backup-retention-control{flex:0 1 218px!important;width:218px!important;min-width:0!important;max-width:100%;}',
+'[data-current-sort-select-wrap] .backup-retention-select-button{padding-right:40px!important;}',
+'[data-current-sort-select-wrap] [data-current-sort-select-label]{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+'@media(max-width:560px){.toolbar-current-sort .backup-retention-control{flex:0 1 218px!important;width:min(218px,58vw)!important;min-width:0!important;}}',
 '.update-channel-current{display:inline-flex;margin-left:6px;padding:2px 6px;border:1px solid rgba(91,156,255,.28);border-radius:999px;background:rgba(91,156,255,.06);color:#9fc8ff;font-size:8.5px;font-weight:800;vertical-align:middle;}',
 '.update-channel-modal .image-source-option{cursor:pointer;}',
 '.update-channel-modal .image-source-option:disabled{cursor:not-allowed;opacity:.58;}',
