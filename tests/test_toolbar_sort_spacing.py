@@ -15,7 +15,7 @@ class SortSpacingTests(unittest.TestCase):
 
     def test_control_is_wider_than_old_174_px(self):
         m = re.search(
-            r"\\.toolbar-current-sort \\.backup-retention-control\\{[^}]*width:(\\d+)px",
+            r"\.toolbar-current-sort \.backup-retention-control\{[^}]*width:(\d+)px",
             JS,
         )
         self.assertIsNotNone(m)
