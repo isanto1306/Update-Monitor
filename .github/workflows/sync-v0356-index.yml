@@ -115,6 +115,13 @@ jobs:
           node --check /tmp/um-async-update-bridge.js
           node --check /tmp/um-error-localization.js
 
+      - name: Test sorting dropdown spacing and JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check static/update-channel.js
+          python3 -m unittest discover -s tests -p 'test_sort_dropdown_spacing.py' -v
+
       - name: Validate central backup interface syntax
         shell: bash
         run: |
