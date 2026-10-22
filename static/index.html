@@ -15,7 +15,7 @@
 
     <link
         rel="icon"
-        href="favicon.ico?v=0.3.427"
+        href="favicon.ico?v=0.3.428"
         type="image/x-icon"
     >
 
@@ -23,25 +23,25 @@
         rel="icon"
         type="image/png"
         sizes="16x16"
-        href="favicon-16x16.png?v=0.3.427"
+        href="favicon-16x16.png?v=0.3.428"
     >
 
     <link
         rel="icon"
         type="image/png"
         sizes="32x32"
-        href="favicon-32x32.png?v=0.3.427"
+        href="favicon-32x32.png?v=0.3.428"
     >
 
     <link
         rel="apple-touch-icon"
         sizes="180x180"
-        href="apple-touch-icon.png?v=0.3.427"
+        href="apple-touch-icon.png?v=0.3.428"
     >
 
     <link
         rel="manifest"
-        href="site.webmanifest?v=0.3.427"
+        href="site.webmanifest?v=0.3.428"
     >
 
     <meta
@@ -18403,7 +18403,7 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoVersionLabel">Version</div>
-    <div class="system-info-value" id="systemInfoVersion">v0.3.427</div>
+    <div class="system-info-value" id="systemInfoVersion">v0.3.428</div>
   </div>
   <div class="system-info-row">
     <div class="system-info-label" id="systemInfoZimaLabel">ZimaOS App Management</div>
@@ -18752,10 +18752,10 @@ html[lang="es"] .policy-auto-layout-behavior .policy-backup-select-button{
 }
 </style>
 
-<script src="/update-channel.js?v=0.3.427"></script>
+<script src="/update-channel.js?v=0.3.428"></script>
 
 <script>
-const UPDATE_MONITOR_VERSION = 'v0.3.427';
+const UPDATE_MONITOR_VERSION = 'v0.3.428';
 let updateMonitorReloadStarted=false;
 function normalizeUpdateMonitorVersion(value){
   return String(value||'').trim().replace(/^v/i,'');
@@ -27077,6 +27077,30 @@ document.addEventListener('keydown',event=>{
     return value;
   }
 
+  function formatManualUpdateDiagnostic(info,lang){
+    const labels={
+      de:{step:'Schritt',container:'Container',reason:'Technische Ursache',
+          phases:{pulling:'Docker-Image herunterladen',verifying:'Image-Digest prüfen',recreating:'Container neu erstellen',starting:'Update vorbereiten',backup_prepare:'Backup vorbereiten',backup:'Backup erstellen'}},
+      en:{step:'Step',container:'Container',reason:'Technical cause',
+          phases:{pulling:'Pull Docker image',verifying:'Verify image digest',recreating:'Recreate container',starting:'Prepare update',backup_prepare:'Prepare backup',backup:'Create backup'}},
+      fr:{step:'Étape',container:'Conteneur',reason:'Cause technique',
+          phases:{pulling:'Télécharger l’image Docker',verifying:'Vérifier le digest',recreating:'Recréer le conteneur',starting:'Préparer la mise à jour',backup_prepare:'Préparer la sauvegarde',backup:'Créer la sauvegarde'}},
+      pt:{step:'Etapa',container:'Contentor',reason:'Causa técnica',
+          phases:{pulling:'Descarregar imagem Docker',verifying:'Verificar digest',recreating:'Recriar contentor',starting:'Preparar atualização',backup_prepare:'Preparar backup',backup:'Criar backup'}},
+      es:{step:'Paso',container:'Contenedor',reason:'Causa técnica',
+          phases:{pulling:'Descargar imagen Docker',verifying:'Verificar digest',recreating:'Recrear contenedor',starting:'Preparar actualización',backup_prepare:'Preparar copia',backup:'Crear copia'}}
+    };
+    const words=labels[lang]||labels.en;
+    const step=String(info&&info.step||'').trim();
+    const container=String(info&&info.container||'').trim();
+    const detail=String(info&&info.technical_detail||'').trim();
+    const parts=[];
+    if(step)parts.push(words.step+': '+(words.phases[step]||step));
+    if(container)parts.push(words.container+': '+container.slice(0,180));
+    if(detail)parts.push(words.reason+': '+detail.slice(0,800));
+    return parts.join(' | ');
+  }
+
   window.updateMonitorLocalizeBackendMessage=localizeBackendMessage;
 
   api=async function(url,options={}){
@@ -27085,6 +27109,12 @@ document.addEventListener('keydown',event=>{
       return localizePayload(result);
     }catch(error){
       if(!error||String(error.message||'')==='auth')throw error;
+      if(error.updateMonitorDiagnostic){
+        const message=formatManualUpdateDiagnostic(error.updateMonitorDiagnostic,currentLanguage());
+        const wrapped=new Error(message||String(error.message||'Update failed'));
+        wrapped.name=error.name||'Error';
+        throw wrapped;
+      }
       const translated=localizeBackendMessage(error.message,true);
       if(translated===String(error.message||''))throw error;
       const wrapped=new Error(translated);
