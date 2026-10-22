@@ -44,6 +44,12 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_supplemental_version_updates.py' -v
 
+      - name: Test update failure diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_manual_update_diagnostics.py' -v
+
       - name: Test exclusive AppData cleanup safety
         shell: bash
         run: |

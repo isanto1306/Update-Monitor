@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.427**
+Current release: **v0.3.428**
+
+v0.3.428 preserves the real manual Docker update failure diagnostics in the UI: failing step, affected container, and original technical cause with credential redaction. The Docker update, backup and digest-verification decisions are unchanged.
 
 v0.3.427 separates main-application version updates from newer independent sidecar versions. Auxiliary VERSION_UPDATE results remain visible as informational details, without triggering whole-app update status or a cross-tag automatic installation. Same-tag IMAGE_UPDATE handling, digest verification and backup/restore workflows remain unchanged. Regression tests cover Nametag with Alpine, primary-version updates, and shared-release image groups.
 
