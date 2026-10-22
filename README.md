@@ -88,7 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.428**
+Current release: **v0.3.429**
+
+v0.3.429 increases the width of the dashboard sorting selector only and reserves space between long translated labels (including German ‘Nach letzter Aktualisierung’) and the dropdown chevron, with mobile ellipsis protection. No Docker update, backup or policy behavior has changed.
 
 v0.3.428 preserves the real manual Docker update failure diagnostics in the UI: failing step, affected container, and original technical cause with credential redaction. The Docker update, backup and digest-verification decisions are unchanged.
 
