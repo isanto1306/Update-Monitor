@@ -481,8 +481,8 @@ def finish_action_progress(stack_key, success, error=None):
         if not success and record.get("kind") == "update":
             # Diagnostic metadata only; the update and rollback decisions stay unchanged.
             technical = str(error or "Unknown update error").strip()
-            technical = re.sub(r"(?i)(\\b(?:password|token|secret|api[_-]?key)\\s*[:=]\\s*)\\S+", r"\\1[redacted]", technical)
-            technical = re.sub(r"(https?://)[^\\s/@:]+:[^\\s/@]+@", r"\\1[redacted]@", technical)
+            technical = re.sub(r"(?i)(\b(?:password|token|secret|api[_-]?key)\s*[:=]\s*)\S+", r"\1[redacted]", technical)
+            technical = re.sub(r"(https?://)[^\s/@:]+:[^\s/@]+@", r"\1[redacted]@", technical)
             record["update_diagnostic"] = {
                 "step": str(record.get("phase") or "unknown"),
                 "container": str(record.get("current_container") or ""),
