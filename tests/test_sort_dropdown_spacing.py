@@ -8,7 +8,7 @@ SOURCE = (ROOT / "static/update-channel.js").read_text(encoding="utf-8")
 class SortDropdownSpacingTests(unittest.TestCase):
     def test_only_sort_dropdown_gets_wider(self):
         self.assertIn(".toolbar-current-sort .backup-retention-control{flex:0 1 218px!important;width:218px!important;", SOURCE)
-        self.assertNotIn(".backup-retention-control{flex:0 1 218px", SOURCE)
+        self.assertNotIn("\'.backup-retention-control{flex:0 1 218px", SOURCE)
 
     def test_label_cannot_cover_chevron(self):
         self.assertIn("[data-current-sort-select-wrap] .backup-retention-select-button{padding-right:40px!important;}", SOURCE)
