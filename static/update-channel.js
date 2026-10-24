@@ -676,5 +676,63 @@ document.addEventListener('keydown',function(event){
   if(event.key==='Escape'&&backdrop.classList.contains('visible')) closeDialog(false);
 });
 
+// Reconcile completed automatic updates with the authoritative status data.
+// The lightweight runtime poll alone can otherwise leave INSTALLATION 100% on
+// the card until a manual F5 reload.
+(function(){
+  var completedRuns=new Set();
+  function installCompletionRefresh(){
+    var original=window.syncAutomaticLiveActionsNoRender;
+    if(typeof original!=='function'||original.__umCompletionRefreshWrapped)return;
+    var wrapped=function(actions){
+      var records=(actions&&typeof actions==='object')?actions:{};
+      var activeBefore=new Set(state.autoLiveActions);
+      var result=original.call(this,actions);
+      var refresh=false;
+      Object.entries(records).forEach(function(entry){
+        var key=String(entry[0]||'');
+        var info=entry[1];
+        if(!key||!info||info.kind!=='update'||!info.automatic||!info.finished)return;
+        var signature=key+'|'+String(info.started_at||info.updated_at||'');
+        if(!completedRuns.has(signature)){
+          completedRuns.add(signature);
+          if(completedRuns.size>100)completedRuns.delete(completedRuns.values().next().value);
+          refresh=true;
+        }
+        // Finished backend progress is never an active installation.
+        if(!state.autoLiveActions.has(key))state.actionProgress.delete(key);
+      });
+      activeBefore.forEach(function(key){
+        if(Object.prototype.hasOwnProperty.call(records,key))return;
+        // The backend expires finished progress records after a short period;
+        // recover sessions that were hidden during the completion event.
+        if(typeof stopActionProgressPolling==='function')stopActionProgressPolling(key);
+        state.autoLiveActions.delete(key);
+        state.updatingApps.delete(key);
+        state.actionProgress.delete(key);
+        state.verifyingApps.delete(key);
+        state.verificationBaselines.delete(key);
+        refresh=true;
+      });
+      if(refresh&&!document.hidden&&typeof loadStatus==='function'){
+        Promise.resolve().then(function(){return loadStatus();}).catch(function(error){
+          console.debug('Automatic update status refresh failed',error);
+        });
+      }
+      return result;
+    };
+    wrapped.__umCompletionRefreshWrapped=true;
+    window.syncAutomaticLiveActionsNoRender=wrapped;
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',installCompletionRefresh,{once:true});
+  }else{
+    setTimeout(installCompletionRefresh,0);
+  }
+  document.addEventListener('visibilitychange',function(){
+    if(!document.hidden&&typeof loadStatus==='function')loadStatus();
+  });
+})();
+
 window.openImageChannelDialog=openDialog;
 })();
