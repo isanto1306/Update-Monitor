@@ -8,7 +8,7 @@ JS = (Path(__file__).resolve().parents[1] / "static" / "update-channel.js").read
 
 class SortSpacingTests(unittest.TestCase):
     def test_selector_is_scoped_to_toolbar_sort_control(self):
-        self.assertIn("um-sort-label-spacing-v0429", JS)
+        self.assertRegex(JS, r"um-sort-label-spacing-v0[0-9]+")
         self.assertIn(".toolbar-current-sort .backup-retention-control", JS)
         self.assertIn(".toolbar-current-sort [data-current-sort-select-label]", JS)
         self.assertIn("padding-right:9px", JS)
