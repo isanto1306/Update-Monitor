@@ -19,7 +19,7 @@ function channelEsc(value){
 // Only the toolbar sort selector needs additional room for long localized labels.
 // Keep the arrow in its own lane; other Backup/Policy selectors stay untouched.
 var sortSpacing=document.createElement('style');
-sortSpacing.id='um-sort-label-spacing-v0430';
+sortSpacing.id='um-sort-label-spacing-v0431';
 sortSpacing.textContent=[
   '.toolbar-current-sort .backup-retention-control{flex:0 0 205px !important;width:205px !important;min-width:205px !important;}',
   '.toolbar-current-sort [data-current-sort-select-label]{display:block;min-width:0;box-sizing:border-box;padding-right:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
@@ -28,7 +28,7 @@ sortSpacing.textContent=[
 document.head.appendChild(sortSpacing);
 
 var style=document.createElement('style');
-style.id='um-update-channel-v0430';
+style.id='um-update-channel-v0431';
 style.textContent=[
 '.update-channel-entry{margin-top:10px;padding-top:10px;border-top:0;}',
 '.update-detail-image:has(+ .update-channel-entry){border-bottom:1px solid rgba(91,156,255,.42) !important;}',
@@ -732,6 +732,60 @@ document.addEventListener('keydown',function(event){
   document.addEventListener('visibilitychange',function(){
     if(!document.hidden&&typeof loadStatus==='function')loadStatus();
   });
+})();
+
+// v0.3.431: finish manual update UI from authoritative worker completion.
+// The normal HTTP request/compatibility bridge remains intact; this is a
+// fallback for a browser promise that lingers after the worker has finished.
+(function(){
+  function installCompletionBridge(){
+    if(window.__umManualCompletionBridgeV0431)return;
+    if(typeof api!=='function'||typeof state==='undefined')return;
+    window.__umManualCompletionBridgeV0431=true;
+    const baseApi=api;
+    api=async function(url,options={}){
+      if(url!=='/api/app-update')return baseApi(url,options);
+      let key='';
+      try{key=String(JSON.parse(String(options.body||'{}')).stack_key||'');}catch(_){}
+      if(!key)return baseApi(url,options);
+      const app=(state.data&&Array.isArray(state.data.apps))
+        ?state.data.apps.find(item=>String(item.stack_key||'')===key):null;
+      if(app&&app.self_protected)return baseApi(url,options);
+      let timer=null;
+      let stopped=false;
+      const completion=new Promise((resolve,reject)=>{
+        const check=()=>{
+          if(stopped)return;
+          const info=state.actionProgress.get(key);
+          if(!info||info.kind!=='update'||info.finished!==true)return;
+          if(info.cancelled||info.success===true||info.success===false){
+            stopped=true;
+            if(timer!==null)clearInterval(timer);
+            if(info.cancelled)return resolve({cancelled:true});
+            if(info.success===false){
+              const error=new Error(String(info.error||'Update failed'));
+              error.updateMonitorDiagnostic=info.update_diagnostic||null;
+              return reject(error);
+            }
+            resolve({completed:true});
+          }
+        };
+        timer=setInterval(check,250);
+        check();
+      });
+      try{
+        return await Promise.race([baseApi(url,options),completion]);
+      }finally{
+        stopped=true;
+        if(timer!==null)clearInterval(timer);
+      }
+    };
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',installCompletionBridge,{once:true});
+  }else{
+    setTimeout(installCompletionBridge,0);
+  }
 })();
 
 window.openImageChannelDialog=openDialog;

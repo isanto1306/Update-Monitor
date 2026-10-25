@@ -88,9 +88,9 @@ The repository contains no user-specific `.env`, cache data, backup data, NAS ho
 
 ## Version
 
-Current release: **v0.3.430**
+Current release: **v0.3.431**
 
-v0.3.430 refreshes cards after automatic Docker updates finish so a completed `INSTALLATION 100 %` is not left on screen until F5. No Docker update execution logic or approved card layout was changed.
+v0.3.431 handles confirmed manual-update completion when a browser request remains pending, so INSTALLATION 100 % no longer remains stuck. Docker update operations and the card layout remain unchanged.\n\nv0.3.430 refreshes cards after automatic Docker updates finish so a completed `INSTALLATION 100 %` is not left on screen until F5. No Docker update execution logic or approved card layout was changed.
 
 v0.3.429 fixes chevron collision in the localized toolbar sort selector by slightly widening only this dropdown and reserving space for its icon; unrelated selectors and Docker update logic are unchanged.
 
