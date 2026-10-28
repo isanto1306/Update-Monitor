@@ -27,6 +27,13 @@ sortSpacing.textContent=[
 ].join('');
 document.head.appendChild(sortSpacing);
 
+// Keep descenders (g, j, p, q, y) visible in the two-line app titles.
+// The fixed card-header height and the rest of the layout are unchanged.
+var cardTitleDescenderFix=document.createElement('style');
+cardTitleDescenderFix.id='um-card-title-descender-fix';
+cardTitleDescenderFix.textContent='.update-card-title{line-height:1.18 !important;padding-bottom:2px !important;}';
+document.head.appendChild(cardTitleDescenderFix);
+
 var style=document.createElement('style');
 style.id='um-update-channel-v0431';
 style.textContent=[
